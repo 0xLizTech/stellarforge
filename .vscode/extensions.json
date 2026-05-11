@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "tamasfe.even-better-toml",
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "ms-vscode.vscode-typescript-next",
+    "GitHub.vscode-pull-request-github",
+    "usernamehw.errorlens"
+  ]
+}
