@@ -1,7 +1,12 @@
 # ─── Rust / Cargo ────────────────────────────────────────────────────────────
+# Cargo.lock is tracked: these crates compile to deployed on-chain wasm, so
+# builds must be reproducible byte-for-byte.
 /target/
 **/*.rs.bk
 Cargo.lock.bak
+
+# Regenerated on every `cargo test` run by the Soroban test harness.
+**/test_snapshots/
 
 # ─── Node / TypeScript ────────────────────────────────────────────────────────
 node_modules/
