@@ -24,7 +24,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/stellarforge/stellarforge"
+    "url": "https://github.com/0xLizTech/stellarforge"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^13.0.0"

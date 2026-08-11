@@ -1,7 +1,7 @@
 import {
   Contract,
   Networks,
-  SorobanRpc,
+  rpc,
   TransactionBuilder,
   BASE_FEE,
   xdr,
@@ -23,7 +23,7 @@ import type { AssetMetadata, KycRecord, StellarForgeConfig } from "./types.js";
  * optional `signerSecret` for automated/server contexts only.
  */
 export class RwaAssetClient {
-  private readonly server: SorobanRpc.Server;
+  private readonly server: rpc.Server;
   private readonly contract: Contract;
   private readonly config: StellarForgeConfig;
 
@@ -32,7 +32,7 @@ export class RwaAssetClient {
       throw new Error("contracts.rwaAsset address is required");
     }
     this.config = config;
-    this.server = new SorobanRpc.Server(config.rpcUrl, { allowHttp: false });
+    this.server = new rpc.Server(config.rpcUrl, { allowHttp: false });
     this.contract = new Contract(config.contracts.rwaAsset);
   }
 
@@ -100,7 +100,7 @@ export class RwaAssetClient {
 
     const simResult = await this.server.simulateTransaction(tx);
 
-    if (SorobanRpc.Api.isSimulationError(simResult)) {
+    if (rpc.Api.isSimulationError(simResult)) {
       throw new Error(`Simulation error: ${simResult.error}`);
     }
 
@@ -115,7 +115,7 @@ export class RwaAssetClient {
 // ─── ComplianceClient ─────────────────────────────────────────────────────────
 
 export class ComplianceClient {
-  private readonly server: SorobanRpc.Server;
+  private readonly server: rpc.Server;
   private readonly contract: Contract;
   private readonly config: StellarForgeConfig;
 
@@ -124,7 +124,7 @@ export class ComplianceClient {
       throw new Error("contracts.compliance address is required");
     }
     this.config = config;
-    this.server = new SorobanRpc.Server(config.rpcUrl, { allowHttp: false });
+    this.server = new rpc.Server(config.rpcUrl, { allowHttp: false });
     this.contract = new Contract(config.contracts.compliance);
   }
 
@@ -148,7 +148,7 @@ export class ComplianceClient {
 
     const simResult = await this.server.simulateTransaction(tx);
 
-    if (SorobanRpc.Api.isSimulationError(simResult)) {
+    if (rpc.Api.isSimulationError(simResult)) {
       throw new Error(`Simulation error: ${simResult.error}`);
     }
 
