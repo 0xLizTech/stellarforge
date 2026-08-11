@@ -15,7 +15,7 @@ build:
 	$(STELLAR_CLI) contract build --manifest-path contracts/registry/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/compliance/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/governance/Cargo.toml
-	@echo "Build complete. Artifacts in target/wasm32-unknown-unknown/release/"
+	@echo "Build complete. Artifacts in target/wasm32v1-none/release/"
 
 test:
 	@echo "Running contract tests..."
@@ -48,7 +48,7 @@ deploy-testnet: build
 	@echo "Deploying to Stellar testnet..."
 	@echo "Ensure STELLAR_ACCOUNT env var is set to a funded testnet keypair."
 	$(STELLAR_CLI) contract deploy \
-		--wasm target/wasm32-unknown-unknown/release/rwa_asset.wasm \
+		--wasm target/wasm32v1-none/release/rwa_asset.wasm \
 		--network $(NETWORK) \
 		--source $(STELLAR_ACCOUNT)
 

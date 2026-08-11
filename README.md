@@ -94,7 +94,7 @@ stellarforge/
 | Tool | Version | Install |
 |------|---------|---------|
 | Rust | ≥ 1.81 | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| wasm32 target | any | `rustup target add wasm32-unknown-unknown` |
+| wasm32 target | any | `rustup target add wasm32v1-none` |
 | stellar-cli | ≥ 22.0 | `cargo install --locked stellar-cli --features opt` |
 | Node.js | ≥ 20 | [nodejs.org](https://nodejs.org) |
 | npm | ≥ 10 | bundled with Node |
@@ -112,7 +112,7 @@ cd stellarforge
 make build
 ```
 
-Compiled `.wasm` files appear in `target/wasm32-unknown-unknown/release/`.
+Compiled `.wasm` files appear in `target/wasm32v1-none/release/`.
 
 ### 3. Run contract tests
 

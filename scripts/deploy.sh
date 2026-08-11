@@ -31,16 +31,16 @@ deploy_contract() {
 }
 
 RWA_ASSET_ID=$(deploy_contract "rwa-asset" \
-  "target/wasm32-unknown-unknown/release/rwa_asset.wasm")
+  "target/wasm32v1-none/release/rwa_asset.wasm")
 
 REGISTRY_ID=$(deploy_contract "registry" \
-  "target/wasm32-unknown-unknown/release/registry.wasm")
+  "target/wasm32v1-none/release/registry.wasm")
 
 COMPLIANCE_ID=$(deploy_contract "compliance" \
-  "target/wasm32-unknown-unknown/release/compliance.wasm")
+  "target/wasm32v1-none/release/compliance.wasm")
 
 GOVERNANCE_ID=$(deploy_contract "governance" \
-  "target/wasm32-unknown-unknown/release/governance.wasm")
+  "target/wasm32v1-none/release/governance.wasm")
 
 echo "==> Writing $OUTPUT_FILE"
 jq -n \
