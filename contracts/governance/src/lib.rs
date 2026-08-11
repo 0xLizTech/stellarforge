@@ -61,12 +61,7 @@ impl GovernanceContract {
         voting_period_ledgers: u32,
     ) -> u64 {
         proposer.require_auth();
-        let id: u64 = env
-            .storage()
-            .instance()
-            .get(&PROP_COUNT)
-            .unwrap_or(0)
-            + 1;
+        let id: u64 = env.storage().instance().get(&PROP_COUNT).unwrap_or(0) + 1;
 
         let proposal = Proposal {
             id,

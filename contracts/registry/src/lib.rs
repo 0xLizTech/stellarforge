@@ -49,15 +49,11 @@ impl RegistryContract {
             .get(&DataKey::AssetList)
             .unwrap_or(Vec::new(&env));
         list.push_back(entry.contract);
-        env.storage()
-            .persistent()
-            .set(&DataKey::AssetList, &list);
+        env.storage().persistent().set(&DataKey::AssetList, &list);
     }
 
     pub fn get_asset(env: Env, contract: Address) -> Option<AssetEntry> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Asset(contract))
+        env.storage().persistent().get(&DataKey::Asset(contract))
     }
 
     pub fn list_assets(env: Env) -> Vec<Address> {

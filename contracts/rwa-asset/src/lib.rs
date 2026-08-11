@@ -1,8 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short,
-    Address, Bytes, Env, String, Symbol,
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Symbol,
 };
 
 // ─── Storage Keys ────────────────────────────────────────────────────────────
@@ -49,19 +48,19 @@ impl RwaAssetContract {
     // ── Initialisation ────────────────────────────────────────────────────────
 
     /// Deploy and configure this asset. Can only be called once.
-    pub fn initialize(
-        env: Env,
-        admin: Address,
-        metadata: AssetMetadata,
-    ) {
+    pub fn initialize(env: Env, admin: Address, metadata: AssetMetadata) {
         if env.storage().instance().has(&ADMIN_KEY) {
             panic!("already initialized");
         }
         admin.require_auth();
         env.storage().instance().set(&ADMIN_KEY, &admin);
         env.storage().instance().set(&PAUSED_KEY, &false);
-        env.storage().persistent().set(&DataKey::Metadata, &metadata);
-        env.storage().persistent().set(&DataKey::TotalSupply, &0_i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Metadata, &metadata);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalSupply, &0_i128);
     }
 
     // ── Issuer Management ─────────────────────────────────────────────────────
@@ -93,11 +92,7 @@ impl RwaAssetContract {
         );
         assert!(amount > 0, "amount must be positive");
 
-        let meta: AssetMetadata = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Metadata)
-            .unwrap();
+        let meta: AssetMetadata = env.storage().persistent().get(&DataKey::Metadata).unwrap();
         let total: i128 = env
             .storage()
             .persistent()
@@ -173,13 +168,7 @@ impl RwaAssetContract {
             .set(&DataKey::Allowance(owner, spender), &amount);
     }
 
-    pub fn transfer_from(
-        env: Env,
-        spender: Address,
-        from: Address,
-        to: Address,
-        amount: i128,
-    ) {
+    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
         spender.require_auth();
         Self::require_not_paused(&env);
         assert!(amount > 0, "amount must be positive");
@@ -196,9 +185,10 @@ impl RwaAssetContract {
 
         let to_bal = Self::balance(env.clone(), to.clone());
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Allowance(from.clone(), spender), &(allowance - amount));
+        env.storage().persistent().set(
+            &DataKey::Allowance(from.clone(), spender),
+            &(allowance - amount),
+        );
         env.storage()
             .persistent()
             .set(&DataKey::Balance(from), &(from_bal - amount));
@@ -245,10 +235,7 @@ impl RwaAssetContract {
     }
 
     pub fn paused(env: Env) -> bool {
-        env.storage()
-            .instance()
-            .get(&PAUSED_KEY)
-            .unwrap_or(false)
+        env.storage().instance().get(&PAUSED_KEY).unwrap_or(false)
     }
 
     // ── Admin Operations ──────────────────────────────────────────────────────
@@ -283,11 +270,7 @@ impl RwaAssetContract {
     }
 
     fn require_not_paused(env: &Env) {
-        let paused: bool = env
-            .storage()
-            .instance()
-            .get(&PAUSED_KEY)
-            .unwrap_or(false);
+        let paused: bool = env.storage().instance().get(&PAUSED_KEY).unwrap_or(false);
         assert!(!paused, "contract is paused");
     }
 }
