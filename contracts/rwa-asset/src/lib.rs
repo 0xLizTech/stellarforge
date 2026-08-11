@@ -1,13 +1,22 @@
 #![no_std]
 
+mod error;
+
+pub use error::RwaError;
+
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Symbol,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Bytes, Env,
+    String, Symbol,
 };
 
 // ─── Storage Keys ────────────────────────────────────────────────────────────
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
+
+/// Upper bound on `AssetMetadata::decimals`. Beyond this a whole token no
+/// longer fits sensibly in `i128` alongside realistic supply figures.
+const MAX_DECIMALS: u32 = 18;
 
 #[contracttype]
 #[derive(Clone)]
@@ -50,9 +59,11 @@ impl RwaAssetContract {
     /// Deploy and configure this asset. Can only be called once.
     pub fn initialize(env: Env, admin: Address, metadata: AssetMetadata) {
         if env.storage().instance().has(&ADMIN_KEY) {
-            panic!("already initialized");
+            panic_with_error!(&env, RwaError::AlreadyInitialized);
         }
         admin.require_auth();
+        Self::validate_metadata(&env, &metadata);
+
         env.storage().instance().set(&ADMIN_KEY, &admin);
         env.storage().instance().set(&PAUSED_KEY, &false);
         env.storage()
@@ -86,56 +97,50 @@ impl RwaAssetContract {
     pub fn mint(env: Env, issuer: Address, to: Address, amount: i128) {
         issuer.require_auth();
         Self::require_not_paused(&env);
-        assert!(
-            Self::is_issuer(env.clone(), issuer.clone()),
-            "caller is not an issuer"
-        );
-        assert!(amount > 0, "amount must be positive");
+        if !Self::is_issuer(env.clone(), issuer.clone()) {
+            panic_with_error!(&env, RwaError::NotIssuer);
+        }
+        Self::require_positive(&env, amount);
 
-        let meta: AssetMetadata = env.storage().persistent().get(&DataKey::Metadata).unwrap();
-        let total: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalSupply)
-            .unwrap_or(0);
+        let meta = Self::metadata(env.clone());
+        let total = Self::total_supply(env.clone());
+        let new_total = Self::checked_add(&env, total, amount);
 
-        if meta.max_supply > 0 {
-            assert!(
-                total.checked_add(amount).unwrap() <= meta.max_supply,
-                "exceeds max supply"
-            );
+        if meta.max_supply > 0 && new_total > meta.max_supply {
+            panic_with_error!(&env, RwaError::ExceedsMaxSupply);
         }
 
         let bal = Self::balance(env.clone(), to.clone());
+        let new_bal = Self::checked_add(&env, bal, amount);
+
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(to), &(bal + amount));
+            .set(&DataKey::Balance(to), &new_bal);
         env.storage()
             .persistent()
-            .set(&DataKey::TotalSupply, &(total + amount));
+            .set(&DataKey::TotalSupply, &new_total);
     }
 
     /// Burn tokens from caller's balance.
     pub fn burn(env: Env, from: Address, amount: i128) {
         from.require_auth();
         Self::require_not_paused(&env);
-        assert!(amount > 0, "amount must be positive");
+        Self::require_positive(&env, amount);
 
         let bal = Self::balance(env.clone(), from.clone());
-        assert!(bal >= amount, "insufficient balance");
+        if bal < amount {
+            panic_with_error!(&env, RwaError::InsufficientBalance);
+        }
 
-        let total: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalSupply)
-            .unwrap_or(0);
+        let total = Self::total_supply(env.clone());
 
         env.storage()
             .persistent()
             .set(&DataKey::Balance(from), &(bal - amount));
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalSupply, &(total - amount));
+        env.storage().persistent().set(
+            &DataKey::TotalSupply,
+            &Self::checked_sub(&env, total, amount),
+        );
     }
 
     // ── Transfers ─────────────────────────────────────────────────────────────
@@ -144,10 +149,12 @@ impl RwaAssetContract {
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
         Self::require_not_paused(&env);
-        assert!(amount > 0, "amount must be positive");
+        Self::require_positive(&env, amount);
 
         let from_bal = Self::balance(env.clone(), from.clone());
-        assert!(from_bal >= amount, "insufficient balance");
+        if from_bal < amount {
+            panic_with_error!(&env, RwaError::InsufficientBalance);
+        }
 
         // A self-transfer must be a no-op. Writing both legs would target the
         // same storage key, and the credit would overwrite the debit and mint
@@ -157,19 +164,24 @@ impl RwaAssetContract {
         }
 
         let to_bal = Self::balance(env.clone(), to.clone());
+        let to_new = Self::checked_add(&env, to_bal, amount);
 
         env.storage()
             .persistent()
             .set(&DataKey::Balance(from), &(from_bal - amount));
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(to), &(to_bal + amount));
+            .set(&DataKey::Balance(to), &to_new);
     }
 
     // ── Allowances ────────────────────────────────────────────────────────────
 
     pub fn approve(env: Env, owner: Address, spender: Address, amount: i128) {
         owner.require_auth();
+        Self::require_not_paused(&env);
+        if amount < 0 {
+            panic_with_error!(&env, RwaError::InvalidAmount);
+        }
         env.storage()
             .persistent()
             .set(&DataKey::Allowance(owner, spender), &amount);
@@ -178,17 +190,17 @@ impl RwaAssetContract {
     pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
         spender.require_auth();
         Self::require_not_paused(&env);
-        assert!(amount > 0, "amount must be positive");
+        Self::require_positive(&env, amount);
 
-        let allowance: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Allowance(from.clone(), spender.clone()))
-            .unwrap_or(0);
-        assert!(allowance >= amount, "allowance exceeded");
+        let allowance = Self::allowance(env.clone(), from.clone(), spender.clone());
+        if allowance < amount {
+            panic_with_error!(&env, RwaError::InsufficientAllowance);
+        }
 
         let from_bal = Self::balance(env.clone(), from.clone());
-        assert!(from_bal >= amount, "insufficient balance");
+        if from_bal < amount {
+            panic_with_error!(&env, RwaError::InsufficientBalance);
+        }
 
         // The spender exercised their authorisation, so the allowance is
         // consumed either way.
@@ -202,13 +214,14 @@ impl RwaAssetContract {
         // `amount` out of nothing.
         if from != to {
             let to_bal = Self::balance(env.clone(), to.clone());
+            let to_new = Self::checked_add(&env, to_bal, amount);
 
             env.storage()
                 .persistent()
                 .set(&DataKey::Balance(from), &(from_bal - amount));
             env.storage()
                 .persistent()
-                .set(&DataKey::Balance(to), &(to_bal + amount));
+                .set(&DataKey::Balance(to), &to_new);
         }
     }
 
@@ -236,17 +249,17 @@ impl RwaAssetContract {
     }
 
     pub fn metadata(env: Env) -> AssetMetadata {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Metadata)
-            .expect("not initialized")
+        match env.storage().persistent().get(&DataKey::Metadata) {
+            Some(m) => m,
+            None => panic_with_error!(&env, RwaError::NotInitialized),
+        }
     }
 
     pub fn admin(env: Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&ADMIN_KEY)
-            .expect("not initialized")
+        match env.storage().instance().get(&ADMIN_KEY) {
+            Some(a) => a,
+            None => panic_with_error!(&env, RwaError::NotInitialized),
+        }
     }
 
     pub fn paused(env: Env) -> bool {
@@ -262,6 +275,7 @@ impl RwaAssetContract {
 
     pub fn update_metadata(env: Env, metadata: AssetMetadata) {
         Self::require_admin(&env);
+        Self::validate_metadata(&env, &metadata);
         env.storage()
             .persistent()
             .set(&DataKey::Metadata, &metadata);
@@ -276,16 +290,43 @@ impl RwaAssetContract {
     // ── Private Helpers ───────────────────────────────────────────────────────
 
     fn require_admin(env: &Env) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&ADMIN_KEY)
-            .expect("not initialized");
-        admin.require_auth();
+        Self::admin(env.clone()).require_auth();
     }
 
     fn require_not_paused(env: &Env) {
-        let paused: bool = env.storage().instance().get(&PAUSED_KEY).unwrap_or(false);
-        assert!(!paused, "contract is paused");
+        if Self::paused(env.clone()) {
+            panic_with_error!(env, RwaError::ContractPaused);
+        }
+    }
+
+    fn require_positive(env: &Env, amount: i128) {
+        if amount <= 0 {
+            panic_with_error!(env, RwaError::InvalidAmount);
+        }
+    }
+
+    /// Rejects metadata that would make supply accounting unrepresentable.
+    fn validate_metadata(env: &Env, metadata: &AssetMetadata) {
+        if metadata.decimals > MAX_DECIMALS
+            || metadata.max_supply < 0
+            || metadata.symbol.is_empty()
+            || metadata.name.is_empty()
+        {
+            panic_with_error!(env, RwaError::InvalidMetadata);
+        }
+    }
+
+    fn checked_add(env: &Env, a: i128, b: i128) -> i128 {
+        match a.checked_add(b) {
+            Some(v) => v,
+            None => panic_with_error!(env, RwaError::Overflow),
+        }
+    }
+
+    fn checked_sub(env: &Env, a: i128, b: i128) -> i128 {
+        match a.checked_sub(b) {
+            Some(v) => v,
+            None => panic_with_error!(env, RwaError::Overflow),
+        }
     }
 }

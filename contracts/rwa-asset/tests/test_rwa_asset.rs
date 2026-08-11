@@ -2,7 +2,7 @@
 
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String};
 
-use rwa_asset::{AssetMetadata, RwaAssetContract, RwaAssetContractClient};
+use rwa_asset::{AssetMetadata, RwaAssetContract, RwaAssetContractClient, RwaError};
 
 /// One whole token in base units. The asset uses 7 decimals, matching the
 /// Stellar convention where 1 XLM = 10_000_000 stroops.
@@ -62,10 +62,10 @@ fn test_initialize_not_paused() {
 }
 
 #[test]
-#[should_panic(expected = "already initialized")]
 fn test_double_initialize_fails() {
     let (env, admin, client) = setup();
-    client.initialize(&admin, &default_metadata(&env));
+    let res = client.try_initialize(&admin, &default_metadata(&env));
+    assert_eq!(res, Err(Ok(RwaError::AlreadyInitialized.into())));
 }
 
 // ─── Issuer Tests ──────────────────────────────────────────────────────────
@@ -99,23 +99,23 @@ fn test_mint_increases_balance_and_supply() {
 }
 
 #[test]
-#[should_panic(expected = "caller is not an issuer")]
 fn test_mint_fails_for_non_issuer() {
     let (env, _, client) = setup();
     let non_issuer = Address::generate(&env);
     let recipient = Address::generate(&env);
-    client.mint(&non_issuer, &recipient, &100);
+    let res = client.try_mint(&non_issuer, &recipient, &100);
+    assert_eq!(res, Err(Ok(RwaError::NotIssuer.into())));
 }
 
 #[test]
-#[should_panic(expected = "exceeds max supply")]
 fn test_mint_over_cap_fails() {
     let (env, _, client) = setup();
     let issuer = Address::generate(&env);
     let recipient = Address::generate(&env);
     client.set_issuer(&issuer, &true);
     // Minting a single token beyond the ceiling must be rejected.
-    client.mint(&issuer, &recipient, &(MAX_SUPPLY + UNIT));
+    let res = client.try_mint(&issuer, &recipient, &(MAX_SUPPLY + UNIT));
+    assert_eq!(res, Err(Ok(RwaError::ExceedsMaxSupply.into())));
 }
 
 // ─── Transfer Tests ────────────────────────────────────────────────────────
@@ -137,12 +137,12 @@ fn test_transfer_moves_balance() {
 }
 
 #[test]
-#[should_panic(expected = "insufficient balance")]
 fn test_transfer_insufficient_balance_fails() {
     let (env, _, client) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
-    client.transfer(&alice, &bob, &1);
+    let res = client.try_transfer(&alice, &bob, &1);
+    assert_eq!(res, Err(Ok(RwaError::InsufficientBalance.into())));
 }
 
 // ─── Allowance Tests ───────────────────────────────────────────────────────
@@ -187,7 +187,6 @@ fn test_burn_reduces_balance_and_supply() {
 // ─── Pause Tests ───────────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "contract is paused")]
 fn test_pause_blocks_transfers() {
     let (env, _, client) = setup();
     let issuer = Address::generate(&env);
@@ -198,7 +197,8 @@ fn test_pause_blocks_transfers() {
     client.mint(&issuer, &alice, &500);
     client.set_paused(&true);
 
-    client.transfer(&alice, &bob, &100);
+    let res = client.try_transfer(&alice, &bob, &100);
+    assert_eq!(res, Err(Ok(RwaError::ContractPaused.into())));
 }
 
 #[test]
