@@ -303,3 +303,106 @@ fn test_supply_invariant_holds_across_operations() {
     client.burn(&bob, &(100 * UNIT));
     assert_supply_invariant(&client, &holders);
 }
+
+// ─── Validation & Overflow Tests ───────────────────────────────────────────
+
+/// Registers a contract with caller-supplied metadata, bypassing the capped
+/// default, so supply-boundary behaviour can be exercised directly.
+fn setup_with(metadata: AssetMetadata, env: &Env) -> (Address, RwaAssetContractClient<'static>) {
+    let admin = Address::generate(env);
+    let contract_id = env.register(RwaAssetContract, ());
+    let client = RwaAssetContractClient::new(env, &contract_id);
+    client.initialize(&admin, &metadata);
+    (admin, client)
+}
+
+fn uncapped_metadata(env: &Env) -> AssetMetadata {
+    let mut m = default_metadata(env);
+    m.max_supply = 0; // 0 means uncapped
+    m
+}
+
+#[test]
+fn test_mint_overflow_is_rejected() {
+    let env = create_env();
+    env.mock_all_auths();
+    let (_, client) = setup_with(uncapped_metadata(&env), &env);
+
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    client.set_issuer(&issuer, &true);
+
+    client.mint(&issuer, &alice, &i128::MAX);
+    assert_eq!(client.total_supply(), i128::MAX);
+
+    // One more unit would overflow i128 rather than wrap.
+    let res = client.try_mint(&issuer, &alice, &1);
+    assert_eq!(res, Err(Ok(RwaError::Overflow.into())));
+}
+
+#[test]
+fn test_zero_and_negative_amounts_are_rejected() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+
+    let expected = Err(Ok(RwaError::InvalidAmount.into()));
+    assert_eq!(client.try_transfer(&alice, &bob, &0), expected);
+    assert_eq!(client.try_transfer(&alice, &bob, &-1), expected);
+    assert_eq!(client.try_mint(&issuer, &bob, &0), expected);
+    assert_eq!(client.try_burn(&alice, &0), expected);
+    assert_eq!(client.try_approve(&alice, &bob, &-1), expected);
+}
+
+#[test]
+fn test_transfer_from_without_allowance_is_rejected() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+
+    let res = client.try_transfer_from(&bob, &alice, &bob, &100);
+    assert_eq!(res, Err(Ok(RwaError::InsufficientAllowance.into())));
+}
+
+#[test]
+fn test_invalid_metadata_is_rejected() {
+    let env = create_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+
+    let cases = {
+        let mut too_many_decimals = default_metadata(&env);
+        too_many_decimals.decimals = 19;
+
+        let mut negative_cap = default_metadata(&env);
+        negative_cap.max_supply = -1;
+
+        let mut empty_symbol = default_metadata(&env);
+        empty_symbol.symbol = String::from_str(&env, "");
+
+        [too_many_decimals, negative_cap, empty_symbol]
+    };
+
+    for meta in cases {
+        let contract_id = env.register(RwaAssetContract, ());
+        let client = RwaAssetContractClient::new(&env, &contract_id);
+        let res = client.try_initialize(&admin, &meta);
+        assert_eq!(res, Err(Ok(RwaError::InvalidMetadata.into())));
+    }
+}
+
+#[test]
+fn test_self_transfer_still_validates_balance() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+
+    // The no-op path must not become a way to bypass the balance check.
+    let res = client.try_transfer(&alice, &alice, &100);
+    assert_eq!(res, Err(Ok(RwaError::InsufficientBalance.into())));
+}
