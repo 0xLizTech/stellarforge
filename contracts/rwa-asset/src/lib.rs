@@ -1,8 +1,11 @@
 #![no_std]
 
 mod error;
+mod storage;
 
 pub use error::RwaError;
+
+use storage::{extend_instance, extend_persistent};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Bytes, Env,
@@ -72,6 +75,10 @@ impl RwaAssetContract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalSupply, &0_i128);
+
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::Metadata);
+        extend_persistent(&env, &DataKey::TotalSupply);
     }
 
     // ── Issuer Management ─────────────────────────────────────────────────────
@@ -79,9 +86,11 @@ impl RwaAssetContract {
     /// Grant or revoke issuer role for an address.
     pub fn set_issuer(env: Env, issuer: Address, approved: bool) {
         Self::require_admin(&env);
+        extend_instance(&env);
         env.storage()
             .persistent()
-            .set(&DataKey::Issuer(issuer), &approved);
+            .set(&DataKey::Issuer(issuer.clone()), &approved);
+        extend_persistent(&env, &DataKey::Issuer(issuer));
     }
 
     pub fn is_issuer(env: Env, issuer: Address) -> bool {
@@ -115,10 +124,14 @@ impl RwaAssetContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(to), &new_bal);
+            .set(&DataKey::Balance(to.clone()), &new_bal);
         env.storage()
             .persistent()
             .set(&DataKey::TotalSupply, &new_total);
+
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::Balance(to));
+        extend_persistent(&env, &DataKey::TotalSupply);
     }
 
     /// Burn tokens from caller's balance.
@@ -136,11 +149,15 @@ impl RwaAssetContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(from), &(bal - amount));
+            .set(&DataKey::Balance(from.clone()), &(bal - amount));
         env.storage().persistent().set(
             &DataKey::TotalSupply,
             &Self::checked_sub(&env, total, amount),
         );
+
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::Balance(from));
+        extend_persistent(&env, &DataKey::TotalSupply);
     }
 
     // ── Transfers ─────────────────────────────────────────────────────────────
@@ -168,10 +185,14 @@ impl RwaAssetContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(from), &(from_bal - amount));
+            .set(&DataKey::Balance(from.clone()), &(from_bal - amount));
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(to), &to_new);
+            .set(&DataKey::Balance(to.clone()), &to_new);
+
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::Balance(from));
+        extend_persistent(&env, &DataKey::Balance(to));
     }
 
     // ── Allowances ────────────────────────────────────────────────────────────
@@ -184,7 +205,10 @@ impl RwaAssetContract {
         }
         env.storage()
             .persistent()
-            .set(&DataKey::Allowance(owner, spender), &amount);
+            .set(&DataKey::Allowance(owner.clone(), spender.clone()), &amount);
+
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::Allowance(owner, spender));
     }
 
     pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
@@ -205,7 +229,7 @@ impl RwaAssetContract {
         // The spender exercised their authorisation, so the allowance is
         // consumed either way.
         env.storage().persistent().set(
-            &DataKey::Allowance(from.clone(), spender),
+            &DataKey::Allowance(from.clone(), spender.clone()),
             &(allowance - amount),
         );
 
@@ -218,11 +242,17 @@ impl RwaAssetContract {
 
             env.storage()
                 .persistent()
-                .set(&DataKey::Balance(from), &(from_bal - amount));
+                .set(&DataKey::Balance(from.clone()), &(from_bal - amount));
             env.storage()
                 .persistent()
-                .set(&DataKey::Balance(to), &to_new);
+                .set(&DataKey::Balance(to.clone()), &to_new);
+
+            extend_persistent(&env, &DataKey::Balance(to));
         }
+
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::Balance(from.clone()));
+        extend_persistent(&env, &DataKey::Allowance(from, spender));
     }
 
     // ── Read-only Views ───────────────────────────────────────────────────────
