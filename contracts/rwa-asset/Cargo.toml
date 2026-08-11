@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["StellarForge Contributors"]
 description = "Core RWA asset contract for the StellarForge protocol"
 license = "Apache-2.0"
-repository = "https://github.com/stellarforge/stellarforge"
+repository = "https://github.com/0xLizTech/stellarforge"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -14,17 +14,7 @@ crate-type = ["cdylib", "rlib"]
 testutils = ["soroban-sdk/testutils"]
 
 [dependencies]
-soroban-sdk = { version = "22.0.0" }
+soroban-sdk = { workspace = true }
 
 [dev-dependencies]
-soroban-sdk = { version = "22.0.0", features = ["testutils"] }
-
-[profile.release]
-opt-level = "z"
-overflow-checks = true
-debug = 0
-strip = "symbols"
-debug-assertions = false
-panic = "abort"
-codegen-units = 1
-lto = true
+soroban-sdk = { workspace = true, features = ["testutils"] }
