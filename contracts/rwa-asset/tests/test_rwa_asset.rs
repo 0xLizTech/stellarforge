@@ -216,3 +216,24 @@ fn test_unpause_allows_transfers() {
 
     assert_eq!(client.balance(&bob), 100);
 }
+
+// ─── Self-Transfer Invariant Tests ─────────────────────────────────────────
+
+#[test]
+fn test_self_transfer_does_not_create_tokens() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+
+    client.transfer(&alice, &alice, &400);
+
+    assert_eq!(
+        client.balance(&alice),
+        1_000,
+        "self-transfer changed balance"
+    );
+    assert_eq!(client.total_supply(), 1_000, "supply desynchronised");
+}

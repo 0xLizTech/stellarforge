@@ -149,6 +149,13 @@ impl RwaAssetContract {
         let from_bal = Self::balance(env.clone(), from.clone());
         assert!(from_bal >= amount, "insufficient balance");
 
+        // A self-transfer must be a no-op. Writing both legs would target the
+        // same storage key, and the credit would overwrite the debit and mint
+        // `amount` out of nothing.
+        if from == to {
+            return;
+        }
+
         let to_bal = Self::balance(env.clone(), to.clone());
 
         env.storage()
