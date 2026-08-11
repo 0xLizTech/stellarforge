@@ -263,3 +263,43 @@ fn test_self_transfer_from_does_not_create_tokens() {
         "allowance not spent"
     );
 }
+
+/// Asserts the protocol's central accounting invariant: the sum of every
+/// holder's balance must equal the reported total supply. Both self-transfer
+/// bugs broke exactly this relationship while leaving each individual
+/// balance query looking plausible.
+fn assert_supply_invariant(client: &RwaAssetContractClient, holders: &[&Address]) {
+    let sum: i128 = holders.iter().map(|h| client.balance(h)).sum();
+    assert_eq!(sum, client.total_supply(), "sum(balances) != total_supply");
+}
+
+#[test]
+fn test_supply_invariant_holds_across_operations() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    let holders = [&alice, &bob, &carol];
+
+    client.mint(&issuer, &alice, &(1_000 * UNIT));
+    assert_supply_invariant(&client, &holders);
+
+    client.transfer(&alice, &bob, &(250 * UNIT));
+    assert_supply_invariant(&client, &holders);
+
+    client.transfer(&alice, &alice, &(100 * UNIT));
+    assert_supply_invariant(&client, &holders);
+
+    client.approve(&alice, &bob, &(300 * UNIT));
+    client.transfer_from(&bob, &alice, &carol, &(200 * UNIT));
+    assert_supply_invariant(&client, &holders);
+
+    client.transfer_from(&bob, &alice, &alice, &(50 * UNIT));
+    assert_supply_invariant(&client, &holders);
+
+    client.burn(&bob, &(100 * UNIT));
+    assert_supply_invariant(&client, &holders);
+}
