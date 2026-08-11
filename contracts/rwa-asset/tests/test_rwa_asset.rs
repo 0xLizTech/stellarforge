@@ -237,3 +237,29 @@ fn test_self_transfer_does_not_create_tokens() {
     );
     assert_eq!(client.total_supply(), 1_000, "supply desynchronised");
 }
+
+#[test]
+fn test_self_transfer_from_does_not_create_tokens() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let spender = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+    client.approve(&alice, &spender, &500);
+
+    client.transfer_from(&spender, &alice, &alice, &400);
+
+    assert_eq!(
+        client.balance(&alice),
+        1_000,
+        "self-transfer changed balance"
+    );
+    assert_eq!(client.total_supply(), 1_000, "supply desynchronised");
+    assert_eq!(
+        client.allowance(&alice, &spender),
+        100,
+        "allowance not spent"
+    );
+}

@@ -190,18 +190,26 @@ impl RwaAssetContract {
         let from_bal = Self::balance(env.clone(), from.clone());
         assert!(from_bal >= amount, "insufficient balance");
 
-        let to_bal = Self::balance(env.clone(), to.clone());
-
+        // The spender exercised their authorisation, so the allowance is
+        // consumed either way.
         env.storage().persistent().set(
             &DataKey::Allowance(from.clone(), spender),
             &(allowance - amount),
         );
-        env.storage()
-            .persistent()
-            .set(&DataKey::Balance(from), &(from_bal - amount));
-        env.storage()
-            .persistent()
-            .set(&DataKey::Balance(to), &(to_bal + amount));
+
+        // Skip the balance legs when from == to: both writes target the same
+        // storage key, and the credit would overwrite the debit and mint
+        // `amount` out of nothing.
+        if from != to {
+            let to_bal = Self::balance(env.clone(), to.clone());
+
+            env.storage()
+                .persistent()
+                .set(&DataKey::Balance(from), &(from_bal - amount));
+            env.storage()
+                .persistent()
+                .set(&DataKey::Balance(to), &(to_bal + amount));
+        }
     }
 
     // ── Read-only Views ───────────────────────────────────────────────────────
