@@ -1,11 +1,15 @@
 #![cfg(test)]
 
-use soroban_sdk::{
-    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
-    vec, Address, Bytes, Env, IntoVal, String,
-};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String};
 
 use rwa_asset::{AssetMetadata, RwaAssetContract, RwaAssetContractClient};
+
+/// One whole token in base units. The asset uses 7 decimals, matching the
+/// Stellar convention where 1 XLM = 10_000_000 stroops.
+const UNIT: i128 = 10_000_000;
+
+/// Supply ceiling configured by [`default_metadata`], in base units.
+const MAX_SUPPLY: i128 = 1_000_000 * UNIT;
 
 fn create_env() -> Env {
     Env::default()
@@ -18,7 +22,7 @@ fn default_metadata(env: &Env) -> AssetMetadata {
         decimals: 7,
         asset_class: String::from_str(env, "real_estate"),
         legal_doc_hash: Bytes::from_array(env, &[0u8; 32]),
-        max_supply: 1_000_000_0000000_i128,
+        max_supply: MAX_SUPPLY,
     }
 }
 
@@ -88,10 +92,10 @@ fn test_mint_increases_balance_and_supply() {
     let recipient = Address::generate(&env);
 
     client.set_issuer(&issuer, &true);
-    client.mint(&issuer, &recipient, &1_000_0000000);
+    client.mint(&issuer, &recipient, &(1_000 * UNIT));
 
-    assert_eq!(client.balance(&recipient), 1_000_0000000);
-    assert_eq!(client.total_supply(), 1_000_0000000);
+    assert_eq!(client.balance(&recipient), 1_000 * UNIT);
+    assert_eq!(client.total_supply(), 1_000 * UNIT);
 }
 
 #[test]
@@ -110,8 +114,8 @@ fn test_mint_over_cap_fails() {
     let issuer = Address::generate(&env);
     let recipient = Address::generate(&env);
     client.set_issuer(&issuer, &true);
-    // max_supply is 1_000_000_0000000; try to mint more
-    client.mint(&issuer, &recipient, &1_000_001_0000000);
+    // Minting a single token beyond the ceiling must be rejected.
+    client.mint(&issuer, &recipient, &(MAX_SUPPLY + UNIT));
 }
 
 // ─── Transfer Tests ────────────────────────────────────────────────────────
@@ -183,6 +187,7 @@ fn test_burn_reduces_balance_and_supply() {
 // ─── Pause Tests ───────────────────────────────────────────────────────────
 
 #[test]
+#[should_panic(expected = "contract is paused")]
 fn test_pause_blocks_transfers() {
     let (env, _, client) = setup();
     let issuer = Address::generate(&env);
@@ -193,10 +198,7 @@ fn test_pause_blocks_transfers() {
     client.mint(&issuer, &alice, &500);
     client.set_paused(&true);
 
-    let result = std::panic::catch_unwind(|| {
-        client.transfer(&alice, &bob, &100);
-    });
-    assert!(result.is_err());
+    client.transfer(&alice, &bob, &100);
 }
 
 #[test]
