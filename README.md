@@ -1,8 +1,8 @@
 # StellarForge
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Contracts CI](https://github.com/stellarforge/stellarforge/actions/workflows/contracts-ci.yml/badge.svg)](https://github.com/stellarforge/stellarforge/actions/workflows/contracts-ci.yml)
-[![SDK CI](https://github.com/stellarforge/stellarforge/actions/workflows/sdk-ci.yml/badge.svg)](https://github.com/stellarforge/stellarforge/actions/workflows/sdk-ci.yml)
+[![Contracts CI](https://github.com/0xLizTech/stellarforge/actions/workflows/contracts-ci.yml/badge.svg)](https://github.com/0xLizTech/stellarforge/actions/workflows/contracts-ci.yml)
+[![SDK CI](https://github.com/0xLizTech/stellarforge/actions/workflows/sdk-ci.yml/badge.svg)](https://github.com/0xLizTech/stellarforge/actions/workflows/sdk-ci.yml)
 [![Discord](https://img.shields.io/discord/placeholder?label=Discord&logo=discord)](https://discord.gg/stellarforge)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
@@ -95,14 +95,14 @@ stellarforge/
 |------|---------|---------|
 | Rust | ≥ 1.81 | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | wasm32 target | any | `rustup target add wasm32v1-none` |
-| stellar-cli | ≥ 22.0 | `cargo install --locked stellar-cli --features opt` |
+| stellar-cli | ≥ 27.0 | `cargo install --locked stellar-cli` |
 | Node.js | ≥ 20 | [nodejs.org](https://nodejs.org) |
 | npm | ≥ 10 | bundled with Node |
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/stellarforge/stellarforge.git
+git clone https://github.com/0xLizTech/stellarforge.git
 cd stellarforge
 ```
 
@@ -173,11 +173,23 @@ console.log(`${meta.symbol} — total supply: ${supply}`);
 | `set_paused(paused)` | admin | Emergency circuit breaker |
 | `update_metadata(metadata)` | admin | Update asset metadata |
 | `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `set_compliance(compliance, min_level)` | admin | Point at a compliance contract, or `None` to disable screening |
 | `balance(owner)` | — | Query balance |
+| `allowance(owner, spender)` | — | Query allowance |
 | `total_supply()` | — | Query supply |
 | `metadata()` | — | Query metadata |
+| `admin()` | — | Query admin address |
 | `is_issuer(address)` | — | Query issuer status |
 | `paused()` | — | Query pause state |
+| `compliance_contract()` | — | Query the configured compliance contract |
+| `min_compliance_level()` | — | Query the required verification level |
+
+**Transfer screening.** When `set_compliance` names a contract, `mint`,
+`transfer` and `transfer_from` require every counterparty to hold a valid
+verification record at or above `min_level` (0 none, 1 basic, 2 full,
+3 accredited). `burn` is deliberately exempt, so a holder whose verification
+has lapsed can still exit their position. Screening is skipped entirely while
+no compliance contract is configured.
 
 ### Compliance
 
@@ -232,7 +244,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started. Areas where we especiall
 
 | Channel | Purpose |
 |---|---|
-| [GitHub Discussions](https://github.com/stellarforge/stellarforge/discussions) | Architecture, proposals, Q&A |
+| [GitHub Discussions](https://github.com/0xLizTech/stellarforge/discussions) | Architecture, proposals, Q&A |
 | [Discord](https://discord.gg/stellarforge) | Real-time chat, dev support |
 | [Twitter/X](https://twitter.com/stellarforge_io) | Announcements |
 

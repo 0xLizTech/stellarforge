@@ -46,4 +46,21 @@ const PAUSED_KEY: Symbol = symbol_short!("PAUSED");  // instance
 
 - Consistent patterns across all contracts make auditing easier.
 - `instance` storage is always loaded with the contract — keeping it small (admin + pause only) minimizes per-invocation overhead.
-- `persistent` storage entries are subject to Soroban state rent; callers must extend TTL for long-lived entries (handled automatically by `stellar-cli` for now; we will add explicit TTL extension in Phase 2).
+- `persistent` storage entries are subject to Soroban state rent, and an entry whose TTL lapses is archived and unreadable until restored. Contracts must therefore extend the TTL of entries they touch; this cannot be deferred to `stellar-cli`, which only covers entries a CLI invocation happens to write.
+
+## Amendment (2026-06) — TTL extension is the contract's job
+
+This ADR originally assumed TTL extension was handled by tooling and could be
+deferred to Phase 2. That was wrong, and shipped as **SF-2026-002**: no entry
+point extended the entries it wrote, so a holder who did not transact for long
+enough would have found their balance archived and transfers involving them
+failing.
+
+`rwa-asset` now centralises the policy in
+[`contracts/rwa-asset/src/storage.rs`](../../contracts/rwa-asset/src/storage.rs)
+— instance storage extended 7 days, persistent entries 30 days — and every
+write path bumps what it touched. The remaining Phase 1 contracts
+(`registry`, `compliance`, `governance`) have **not** yet adopted it. This
+matters most for `compliance`: an archived `KycRecord` cannot be read at all,
+so the cross-contract `is_compliant` call from `rwa-asset` fails until the
+record is restored — blocking transfers for a holder who is in fact verified.

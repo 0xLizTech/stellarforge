@@ -40,9 +40,9 @@ Serious or repeated violations may result in removal from the project. Report is
 
 **New to the project?** Look for issues tagged:
 
-- [`good first issue`](https://github.com/stellarforge/stellarforge/issues?q=label%3A%22good+first+issue%22) — small, well-scoped tasks ideal for first-timers
-- [`help wanted`](https://github.com/stellarforge/stellarforge/issues?q=label%3A%22help+wanted%22) — tasks where we especially welcome outside help
-- [`documentation`](https://github.com/stellarforge/stellarforge/issues?q=label%3Adocumentation) — no Rust required; improve docs, ADRs, or examples
+- [`good first issue`](https://github.com/0xLizTech/stellarforge/issues?q=label%3A%22good+first+issue%22) — small, well-scoped tasks ideal for first-timers
+- [`help wanted`](https://github.com/0xLizTech/stellarforge/issues?q=label%3A%22help+wanted%22) — tasks where we especially welcome outside help
+- [`documentation`](https://github.com/0xLizTech/stellarforge/issues?q=label%3Adocumentation) — no Rust required; improve docs, ADRs, or examples
 
 **New to Stellar/Soroban?** Start here:
 - [Soroban documentation](https://soroban.stellar.org/docs)
@@ -63,8 +63,9 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup target add wasm32v1-none
 rustup component add rustfmt clippy
 
-# Stellar CLI (includes Soroban)
-cargo install --locked stellar-cli --features opt
+# Stellar CLI (includes Soroban). The `opt` feature no longer exists; the
+# version must track the soroban-sdk major pinned in Cargo.toml.
+cargo install --locked stellar-cli
 
 # Node.js >= 20 (for the SDK)
 # Use https://volta.sh or https://nvm.sh for version management
@@ -76,7 +77,7 @@ cargo install cargo-watch    # auto-rerun tests on save
 ### Initial Setup
 
 ```bash
-git clone https://github.com/stellarforge/stellarforge.git
+git clone https://github.com/0xLizTech/stellarforge.git
 cd stellarforge
 
 # Build everything
@@ -151,7 +152,7 @@ Each contract is an independent Cargo package inside the workspace. They share n
 # Fork on GitHub, then:
 git clone https://github.com/YOUR_USERNAME/stellarforge.git
 cd stellarforge
-git remote add upstream https://github.com/stellarforge/stellarforge.git
+git remote add upstream https://github.com/0xLizTech/stellarforge.git
 git checkout -b feat/your-feature-name
 ```
 
@@ -306,7 +307,7 @@ We are a small core team with a large vision. Here are the areas where outside c
 
 ### High Priority
 
-- **Fractionalization vault contract** (Phase 2) — the core vault that holds an underlying asset and issues fractional shares. Design discussion open in [#discussions](https://github.com/stellarforge/stellarforge/discussions).
+- **Fractionalization vault contract** (Phase 2) — the core vault that holds an underlying asset and issues fractional shares. Design discussion open in [#discussions](https://github.com/0xLizTech/stellarforge/discussions).
 - **Yield distribution engine** (Phase 2) — distributing income from underlying assets to fractional token holders.
 - **Compliance middleware hook** — integrating the Compliance contract as a transfer guard in RwaAsset (requires a design discussion first).
 - **SDK: transaction builder helpers** — right now clients only do read-only simulation; we need write path helpers for `mint`, `transfer`, etc.
