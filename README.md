@@ -64,6 +64,7 @@ StellarForge is an open-source, permissionless protocol for **Real World Asset (
 ```
 stellarforge/
 ├── contracts/
+│   ├── common/             # Shared storage/TTL policy (library, not deployed)
 │   ├── rwa-asset/          # Core tokenization contract (Soroban/Rust)
 │   ├── registry/           # Global asset registry
 │   ├── compliance/         # KYC/AML compliance engine
@@ -199,15 +200,17 @@ no compliance contract is configured.
 | `revoke_kyc(subject)` | admin | Remove KYC record |
 | `is_compliant(subject, min_level)` | — | Check compliance |
 | `get_kyc(subject)` | — | Read KYC record |
+| `admin()` | — | Query admin address |
 
 ### Registry
 
 | Function | Auth | Description |
 |---|---|---|
-| `register(entry)` | admin | Register new asset contract |
+| `register(entry)` | admin | Register a new asset contract, or update a registered one |
 | `set_active(contract, active)` | admin | Activate/deactivate asset |
 | `get_asset(contract)` | — | Look up asset entry |
-| `list_assets()` | — | List all registered contracts |
+| `list_assets()` | — | List all registered contracts, each exactly once |
+| `admin()` | — | Query admin address |
 
 ### Governance
 
@@ -215,9 +218,21 @@ no compliance contract is configured.
 |---|---|---|
 | `propose(proposer, title, hash, period)` | proposer | Create proposal |
 | `vote(voter, id, support, weight)` | voter | Cast vote |
-| `finalize(id)` | — | Tally and finalize |
+| `finalize(id)` | — | Tally and finalize; a tie is rejected |
 | `get_proposal(id)` | — | Read proposal |
+| `has_voted(id, voter)` | — | Whether an address has voted on a proposal |
 | `proposal_count()` | — | Count proposals |
+| `admin()` | — | Query admin address |
+
+> **Phase 1 caveat.** `vote` accepts a caller-supplied `weight` and does not
+> check it against any token balance or voting-power source, and `finalize`
+> applies no quorum. Governance is a skeleton until the `SFORGE` token and
+> execution hooks land in Phase 3 — do not treat a passed proposal as a
+> trustworthy signal before then.
+
+**Error codes.** Every contract returns a typed `contracterror` enum, so
+clients match on a stable numeric code. Discriminants are part of the public
+interface: variants keep their values and new ones are appended.
 
 ---
 

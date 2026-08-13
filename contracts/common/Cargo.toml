@@ -1,0 +1,16 @@
+[package]
+name = "stellarforge-common"
+version = "0.1.0"
+edition = "2021"
+authors = ["StellarForge Contributors"]
+description = "Shared storage and TTL policy for the StellarForge contracts"
+license = "Apache-2.0"
+repository = "https://github.com/0xLizTech/stellarforge"
+
+# A support library, not a deployable contract: no cdylib, and it is not built
+# by `make build`.
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }

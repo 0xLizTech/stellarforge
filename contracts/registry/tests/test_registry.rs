@@ -1,0 +1,257 @@
+#![cfg(test)]
+
+use soroban_sdk::{
+    testutils::{
+        storage::{Instance as _, Persistent as _},
+        Address as _, Ledger,
+    },
+    Address, Env, String,
+};
+
+use registry::{AssetEntry, DataKey, RegistryContract, RegistryContractClient, RegistryError};
+use stellarforge_common::storage::{INSTANCE_BUMP_AMOUNT, PERSISTENT_BUMP_AMOUNT};
+
+struct Harness<'a> {
+    env: Env,
+    admin: Address,
+    contract_id: Address,
+    client: RegistryContractClient<'a>,
+}
+
+impl Harness<'_> {
+    /// Ledgers remaining before the given persistent entry is archived.
+    fn ttl_of(&self, key: &DataKey) -> u32 {
+        self.env.as_contract(&self.contract_id, || {
+            self.env.storage().persistent().get_ttl(key)
+        })
+    }
+
+    fn instance_ttl(&self) -> u32 {
+        self.env.as_contract(&self.contract_id, || {
+            self.env.storage().instance().get_ttl()
+        })
+    }
+}
+
+fn setup() -> Harness<'static> {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register(RegistryContract, ());
+    let client = RegistryContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    Harness {
+        env,
+        admin,
+        contract_id,
+        client,
+    }
+}
+
+fn entry(env: &Env, contract: &Address, asset_class: &str, active: bool) -> AssetEntry {
+    AssetEntry {
+        contract: contract.clone(),
+        asset_class: String::from_str(env, asset_class),
+        active,
+    }
+}
+
+// ─── Initialisation ────────────────────────────────────────────────────────
+
+#[test]
+fn test_initialize_sets_admin() {
+    let h = setup();
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+#[test]
+fn test_initialize_starts_with_an_empty_directory() {
+    let h = setup();
+    assert_eq!(h.client.list_assets().len(), 0);
+}
+
+#[test]
+fn test_double_initialize_fails() {
+    let h = setup();
+    let res = h.client.try_initialize(&h.admin);
+    assert_eq!(res, Err(Ok(RegistryError::AlreadyInitialized.into())));
+}
+
+#[test]
+fn test_admin_before_initialize_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = RegistryContractClient::new(&env, &env.register(RegistryContract, ()));
+
+    assert_eq!(
+        client.try_admin(),
+        Err(Ok(RegistryError::NotInitialized.into()))
+    );
+}
+
+// ─── Registration ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_register_then_get_asset() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+
+    let stored = h.client.get_asset(&asset).unwrap();
+    assert_eq!(stored.contract, asset);
+    assert_eq!(stored.asset_class, String::from_str(&h.env, "real_estate"));
+    assert!(stored.active);
+
+    assert_eq!(h.client.list_assets().len(), 1);
+    assert_eq!(h.client.list_assets().get(0).unwrap(), asset);
+}
+
+#[test]
+fn test_get_unknown_asset_returns_none() {
+    let h = setup();
+    assert!(h.client.get_asset(&Address::generate(&h.env)).is_none());
+}
+
+#[test]
+fn test_registering_distinct_assets_lists_each_once() {
+    let h = setup();
+    let first = Address::generate(&h.env);
+    let second = Address::generate(&h.env);
+
+    h.client
+        .register(&entry(&h.env, &first, "real_estate", true));
+    h.client
+        .register(&entry(&h.env, &second, "commodity", true));
+
+    assert_eq!(h.client.list_assets().len(), 2);
+}
+
+#[test]
+fn test_reregistering_an_asset_does_not_duplicate_the_directory() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+    h.client
+        .register(&entry(&h.env, &asset, "infrastructure", true));
+    h.client
+        .register(&entry(&h.env, &asset, "infrastructure", false));
+
+    // Three registrations, one asset: a consumer iterating the directory must
+    // not see the same contract three times.
+    let listed = h.client.list_assets();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed.get(0).unwrap(), asset);
+}
+
+#[test]
+fn test_reregistering_updates_the_stored_entry() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+    h.client
+        .register(&entry(&h.env, &asset, "infrastructure", false));
+
+    let stored = h.client.get_asset(&asset).unwrap();
+    assert_eq!(
+        stored.asset_class,
+        String::from_str(&h.env, "infrastructure")
+    );
+    assert!(!stored.active);
+}
+
+// ─── Activation ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_set_active_toggles_the_entry() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+
+    h.client.set_active(&asset, &false);
+    assert!(!h.client.get_asset(&asset).unwrap().active);
+
+    h.client.set_active(&asset, &true);
+    assert!(h.client.get_asset(&asset).unwrap().active);
+}
+
+#[test]
+fn test_set_active_on_unknown_asset_is_rejected() {
+    let h = setup();
+    let res = h.client.try_set_active(&Address::generate(&h.env), &false);
+    assert_eq!(res, Err(Ok(RegistryError::AssetNotFound.into())));
+}
+
+#[test]
+fn test_set_active_does_not_touch_the_directory() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+
+    h.client.set_active(&asset, &false);
+    assert_eq!(h.client.list_assets().len(), 1);
+}
+
+// ─── Storage lifetime ──────────────────────────────────────────────────────
+
+// Since protocol 23 the test environment auto-restores archived entries, so
+// advancing the ledger past an expiry proves nothing. These tests assert the
+// TTL itself, which is what the extension is for.
+
+#[test]
+fn test_register_extends_the_entry_and_the_directory() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+
+    assert_eq!(h.ttl_of(&DataKey::Asset(asset)), PERSISTENT_BUMP_AMOUNT);
+    assert_eq!(h.ttl_of(&DataKey::AssetList), PERSISTENT_BUMP_AMOUNT);
+    assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
+}
+
+#[test]
+fn test_reads_extend_ttl_so_an_untouched_entry_does_not_archive() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+
+    // A registry entry is written once and then only read. If the read paths
+    // did not extend, this idle period would run the entry down to archival
+    // with no way to revive it short of a write.
+    let idle = 100_000;
+    h.env.ledger().with_mut(|li| li.sequence_number += idle);
+    assert_eq!(
+        h.ttl_of(&DataKey::Asset(asset.clone())),
+        PERSISTENT_BUMP_AMOUNT - idle
+    );
+
+    h.client.get_asset(&asset);
+    assert_eq!(h.ttl_of(&DataKey::Asset(asset)), PERSISTENT_BUMP_AMOUNT);
+
+    h.client.list_assets();
+    assert_eq!(h.ttl_of(&DataKey::AssetList), PERSISTENT_BUMP_AMOUNT);
+}
+
+#[test]
+fn test_set_active_extends_the_entry() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+
+    h.env.ledger().with_mut(|li| li.sequence_number += 100_000);
+    h.client.set_active(&asset, &false);
+
+    assert_eq!(h.ttl_of(&DataKey::Asset(asset)), PERSISTENT_BUMP_AMOUNT);
+    assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
+}

@@ -122,6 +122,7 @@ STELLAR_ACCOUNT=devkey make deploy-testnet
 ```
 stellarforge/
 ├── contracts/              # All Soroban smart contracts (Rust)
+│   ├── common/             # Shared storage/TTL policy; a library, never deployed
 │   ├── rwa-asset/          # Core RWA token (mint, burn, transfer, metadata)
 │   ├── registry/           # Global registry of deployed asset contracts
 │   ├── compliance/         # KYC/AML record management
@@ -140,7 +141,7 @@ stellarforge/
     └── workflows/          # GitHub Actions CI
 ```
 
-Each contract is an independent Cargo package inside the workspace. They share no runtime dependencies on each other — cross-contract calls happen via Soroban's `env.invoke_contract` interface, keeping each contract independently deployable and upgradeable.
+Each contract is an independent Cargo package inside the workspace. They share no runtime dependencies on each other — cross-contract calls happen via Soroban's `env.invoke_contract` interface, keeping each contract independently deployable and upgradeable. `contracts/common` is the one exception, and only at compile time: it holds policy that must be identical everywhere (currently the storage TTL constants) and is never deployed as a contract of its own.
 
 ---
 

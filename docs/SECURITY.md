@@ -81,4 +81,7 @@ their balance unreadable and transfers involving them failing. The contract
 instance, holding the admin address and pause flag, was subject to the same
 expiry.
 
-*Fixed in `848feda`. Policy is centralised in `contracts/rwa-asset/src/storage.rs`.*
+*Fixed in `848feda`. Policy is centralised in `contracts/common/src/storage.rs`
+and shared by every Phase 1 contract. Note that `rwa-asset`'s read-only views
+still do not extend, so a holder who is idle long enough can have their
+balance archived; see [ADR-001](architecture/001-storage-key-design.md).*

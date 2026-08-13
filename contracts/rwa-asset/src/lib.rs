@@ -3,13 +3,12 @@
 mod compliance;
 mod error;
 mod events;
-mod storage;
 
 pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::RwaError;
 pub use events::{Approve, Burn, Mint, Paused, Transfer};
 
-use storage::{extend_instance, extend_persistent};
+use stellarforge_common::{extend_instance, extend_persistent};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Bytes, Env,

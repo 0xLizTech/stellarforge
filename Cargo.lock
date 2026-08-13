@@ -305,6 +305,7 @@ name = "compliance"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "stellarforge-common",
 ]
 
 [[package]]
@@ -832,6 +833,7 @@ name = "governance"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "stellarforge-common",
 ]
 
 [[package]]
@@ -1325,6 +1327,7 @@ name = "registry"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "stellarforge-common",
 ]
 
 [[package]]
@@ -1358,6 +1361,7 @@ version = "0.1.0"
 dependencies = [
  "compliance",
  "soroban-sdk",
+ "stellarforge-common",
 ]
 
 [[package]]
@@ -1799,6 +1803,13 @@ dependencies = [
  "serde_with",
  "sha2",
  "stellar-strkey 0.0.13",
+]
+
+[[package]]
+name = "stellarforge-common"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
 ]
 
 [[package]]

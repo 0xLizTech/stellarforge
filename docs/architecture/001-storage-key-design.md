@@ -56,11 +56,29 @@ point extended the entries it wrote, so a holder who did not transact for long
 enough would have found their balance archived and transfers involving them
 failing.
 
-`rwa-asset` now centralises the policy in
-[`contracts/rwa-asset/src/storage.rs`](../../contracts/rwa-asset/src/storage.rs)
-— instance storage extended 7 days, persistent entries 30 days — and every
-write path bumps what it touched. The remaining Phase 1 contracts
-(`registry`, `compliance`, `governance`) have **not** yet adopted it. This
-matters most for `compliance`: an archived `KycRecord` cannot be read at all,
-so the cross-contract `is_compliant` call from `rwa-asset` fails until the
-record is restored — blocking transfers for a holder who is in fact verified.
+The policy now lives in
+[`contracts/common/src/storage.rs`](../../contracts/common/src/storage.rs) —
+instance storage extended 7 days, persistent entries 30 days — and every Phase
+1 contract depends on it. It is a shared crate rather than a copy per contract
+because four independent copies of the constants are four chances to
+reintroduce the same bug. `stellarforge-common` is a compile-time library
+only; it is never deployed, so the contracts remain independently deployable.
+
+### Write paths are not sufficient on their own
+
+Extending only on write covers balances, which are rewritten by every
+transfer. It does not cover an entry that is written once and thereafter only
+read — a `KycRecord`, a registry entry, a finalised proposal. Those would age
+into archival while still in active use.
+
+`compliance` is the sharpest case: an archived `KycRecord` cannot be read at
+all, so the cross-contract `is_compliant` call from `rwa-asset` fails until
+the record is restored, blocking transfers for a holder who is in fact
+verified. `is_compliant`, `get_kyc`, `get_asset`, `list_assets` and
+`get_proposal` therefore extend the entries they read. This makes those calls
+ledger-writing rather than pure reads, which is the deliberate trade.
+
+**Still outstanding:** `rwa-asset`'s own read views (`balance`, `allowance`,
+`metadata`) do not extend. A holder who neither sends nor receives for long
+enough can still have their balance archived — the SF-2026-002 scenario,
+narrowed but not closed.
