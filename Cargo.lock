@@ -305,6 +305,7 @@ name = "compliance"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "stellarforge-common",
 ]
 
 [[package]]
@@ -832,6 +833,7 @@ name = "governance"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "stellarforge-common",
 ]
 
 [[package]]
@@ -1325,6 +1327,7 @@ name = "registry"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "stellarforge-common",
 ]
 
 [[package]]
@@ -1356,7 +1359,9 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 name = "rwa-asset"
 version = "0.1.0"
 dependencies = [
+ "compliance",
  "soroban-sdk",
+ "stellarforge-common",
 ]
 
 [[package]]
@@ -1798,6 +1803,13 @@ dependencies = [
  "serde_with",
  "sha2",
  "stellar-strkey 0.0.13",
+]
+
+[[package]]
+name = "stellarforge-common"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
 ]
 
 [[package]]

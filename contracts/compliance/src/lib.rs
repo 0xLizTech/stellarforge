@@ -3,9 +3,15 @@
 //! Compliance Engine — KYC/AML status registry.
 //! Phase 1 skeleton: address allowlisting + jurisdiction tagging.
 
+mod error;
+
+pub use error::ComplianceError;
+
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
+    Symbol,
 };
+use stellarforge_common::{extend_instance, extend_persistent};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 
@@ -33,18 +39,22 @@ pub struct ComplianceContract;
 impl ComplianceContract {
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().instance().has(&ADMIN_KEY) {
-            panic!("already initialized");
+            panic_with_error!(&env, ComplianceError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&ADMIN_KEY, &admin);
+
+        extend_instance(&env);
     }
 
     /// Set or update KYC record for an address.
     pub fn set_kyc(env: Env, subject: Address, record: KycRecord) {
         Self::require_admin(&env);
-        env.storage()
-            .persistent()
-            .set(&DataKey::KycStatus(subject), &record);
+        let key = DataKey::KycStatus(subject);
+        env.storage().persistent().set(&key, &record);
+
+        extend_instance(&env);
+        extend_persistent(&env, &key);
     }
 
     /// Revoke KYC for an address.
@@ -53,11 +63,48 @@ impl ComplianceContract {
         env.storage()
             .persistent()
             .remove(&DataKey::KycStatus(subject));
+
+        extend_instance(&env);
     }
 
     /// Returns true if the address has at minimum the required verification level
     /// and the record is not expired.
+    ///
+    /// A pure query: it does not touch the ledger. Contracts screening a
+    /// transfer should call [`ComplianceContract::screen`] instead.
     pub fn is_compliant(env: Env, subject: Address, min_level: u32) -> bool {
+        Self::evaluate(&env, subject, min_level)
+    }
+
+    /// Screens `subject` and refreshes the lifetime of the record consulted.
+    ///
+    /// Identical to [`ComplianceContract::is_compliant`] except that it
+    /// extends the record's TTL. A KYC record is written once and thereafter
+    /// only read, so it has no other opportunity to be refreshed; screening is
+    /// the moment the holder is demonstrably active. This is the entry point
+    /// `rwa-asset` binds to, where the caller is already paying for a ledger
+    /// write, which is why the extension does not belong on the pure query.
+    pub fn screen(env: Env, subject: Address, min_level: u32) -> bool {
+        extend_persistent(&env, &DataKey::KycStatus(subject.clone()));
+        Self::evaluate(&env, subject, min_level)
+    }
+
+    pub fn get_kyc(env: Env, subject: Address) -> Option<KycRecord> {
+        env.storage().persistent().get(&DataKey::KycStatus(subject))
+    }
+
+    pub fn admin(env: Env) -> Address {
+        match env.storage().instance().get(&ADMIN_KEY) {
+            Some(a) => a,
+            None => panic_with_error!(&env, ComplianceError::NotInitialized),
+        }
+    }
+
+    fn require_admin(env: &Env) {
+        Self::admin(env.clone()).require_auth();
+    }
+
+    fn evaluate(env: &Env, subject: Address, min_level: u32) -> bool {
         let record: Option<KycRecord> =
             env.storage().persistent().get(&DataKey::KycStatus(subject));
 
@@ -68,18 +115,5 @@ impl ComplianceContract {
                 r.level >= min_level && not_expired
             }
         }
-    }
-
-    pub fn get_kyc(env: Env, subject: Address) -> Option<KycRecord> {
-        env.storage().persistent().get(&DataKey::KycStatus(subject))
-    }
-
-    fn require_admin(env: &Env) {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&ADMIN_KEY)
-            .expect("not initialized");
-        admin.require_auth();
     }
 }

@@ -4,7 +4,7 @@
 # Usage:
 #   STELLAR_ACCOUNT=mykey NETWORK=testnet ./scripts/deploy.sh
 #
-# Requires: stellar-cli >= 22.0.0, jq
+# Requires: stellar-cli >= 27.0.0, jq
 
 set -euo pipefail
 
@@ -12,21 +12,42 @@ NETWORK="${NETWORK:-testnet}"
 ACCOUNT="${STELLAR_ACCOUNT:?Set STELLAR_ACCOUNT to a funded keypair alias}"
 OUTPUT_FILE="deployed-contracts.json"
 
+# Fail before spending any deployments if a tool we need at the end is absent.
+for tool in stellar jq; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "error: $tool is required but not on PATH" >&2
+    exit 1
+  }
+done
+
 echo "==> Building contracts..."
 make build
 
 echo "==> Deploying to $NETWORK as $ACCOUNT"
 
+# Prints the deployed contract ID on stdout, and nothing else — the caller
+# captures it via command substitution. Progress goes to stderr so it stays
+# visible without being captured.
 deploy_contract() {
   local name="$1"
   local wasm="$2"
-  echo -n "  Deploying $name... "
+  printf '  Deploying %s... ' "$name" >&2
+
   local id
   id=$(stellar contract deploy \
     --wasm "$wasm" \
     --network "$NETWORK" \
-    --source "$ACCOUNT" 2>&1 | tail -1)
-  echo "$id"
+    --source "$ACCOUNT")
+
+  # A malformed capture must not reach the output file, where it would be
+  # indistinguishable from a real address until someone tried to use it.
+  if [[ ! "$id" =~ ^C[A-Z2-7]{55}$ ]]; then
+    echo >&2
+    echo "error: $name deploy did not return a contract ID: $id" >&2
+    exit 1
+  fi
+
+  echo "$id" >&2
   echo "$id"
 }
 

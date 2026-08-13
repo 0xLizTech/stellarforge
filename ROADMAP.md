@@ -25,9 +25,9 @@ This document describes the planned evolution of the StellarForge protocol acros
 - [x] `governance` contract: proposal creation, voting, finalization
 - [x] TypeScript SDK: read-only clients for RwaAsset and Compliance
 - [x] CI/CD: GitHub Actions for contracts (check, test, build-wasm) and SDK
-- [ ] Testnet deployment scripts
+- [x] Testnet deployment scripts
 - [ ] Formal security review (internal)
-- [ ] Compliance middleware hook (integrate Compliance into RwaAsset transfer flow)
+- [x] Compliance middleware hook (integrate Compliance into RwaAsset transfer flow)
 - [ ] SDK: write-path transaction builder helpers
 - [ ] SDK: npm package publish to `@stellarforge/sdk`
 
@@ -164,7 +164,7 @@ These are longer-horizon ideas the team is actively researching but has not comm
 
 ## How to Influence the Roadmap
 
-1. Open a [GitHub Discussion](https://github.com/stellarforge/stellarforge/discussions) for major feature proposals.
+1. Open a [GitHub Discussion](https://github.com/0xLizTech/stellarforge/discussions) for major feature proposals.
 2. Comment on existing roadmap issues.
 3. Vote using 👍 reactions on GitHub issues to surface demand.
 4. Once `SFORGE` governance is live, all roadmap changes will be proposed on-chain.

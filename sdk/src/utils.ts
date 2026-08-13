@@ -1,4 +1,4 @@
-import { Keypair, StrKey } from "@stellar/stellar-sdk";
+import { StrKey } from "@stellar/stellar-sdk";
 import { createHash } from "node:crypto";
 
 // ─── Address Utilities ────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "contracts/common",
     "contracts/rwa-asset",
     "contracts/registry",
     "contracts/compliance",
@@ -9,6 +10,7 @@ resolver = "2"
 
 [workspace.dependencies]
 soroban-sdk = { version = "27.0.5" }
+stellarforge-common = { path = "contracts/common" }
 
 [profile.release]
 opt-level = "z"
