@@ -30,4 +30,6 @@ pub enum RwaError {
     Overflow = 9,
     /// Supplied metadata failed validation.
     InvalidMetadata = 10,
+    /// A party to the transfer lacks the required verification level.
+    NotCompliant = 11,
 }

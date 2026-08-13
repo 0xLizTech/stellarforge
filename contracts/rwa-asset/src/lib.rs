@@ -1,8 +1,10 @@
 #![no_std]
 
+mod compliance;
 mod error;
 mod storage;
 
+pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::RwaError;
 
 use storage::{extend_instance, extend_persistent};
@@ -16,6 +18,10 @@ use soroban_sdk::{
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
+/// Address of the compliance contract, absent when screening is disabled.
+const COMPLIANCE_KEY: Symbol = symbol_short!("COMPLY");
+/// Minimum verification level a party must hold to send or receive.
+const MIN_LEVEL_KEY: Symbol = symbol_short!("MINLVL");
 
 /// Upper bound on `AssetMetadata::decimals`. Beyond this a whole token no
 /// longer fits sensibly in `i128` alongside realistic supply figures.
@@ -110,6 +116,7 @@ impl RwaAssetContract {
             panic_with_error!(&env, RwaError::NotIssuer);
         }
         Self::require_positive(&env, amount);
+        Self::require_compliant(&env, &to);
 
         let meta = Self::metadata(env.clone());
         let total = Self::total_supply(env.clone());
@@ -167,6 +174,8 @@ impl RwaAssetContract {
         from.require_auth();
         Self::require_not_paused(&env);
         Self::require_positive(&env, amount);
+        Self::require_compliant(&env, &from);
+        Self::require_compliant(&env, &to);
 
         let from_bal = Self::balance(env.clone(), from.clone());
         if from_bal < amount {
@@ -215,6 +224,8 @@ impl RwaAssetContract {
         spender.require_auth();
         Self::require_not_paused(&env);
         Self::require_positive(&env, amount);
+        Self::require_compliant(&env, &from);
+        Self::require_compliant(&env, &to);
 
         let allowance = Self::allowance(env.clone(), from.clone(), spender.clone());
         if allowance < amount {
@@ -317,6 +328,32 @@ impl RwaAssetContract {
         env.storage().instance().set(&ADMIN_KEY, &new_admin);
     }
 
+    // ── Compliance Configuration ──────────────────────────────────────────────
+
+    /// Point the asset at a compliance contract, or pass `None` to disable
+    /// screening entirely.
+    ///
+    /// `min_level` is the verification level both parties to a transfer must
+    /// meet. It mirrors `ComplianceContract`'s scale: 0 none, 1 basic, 2 full,
+    /// 3 accredited.
+    pub fn set_compliance(env: Env, compliance: Option<Address>, min_level: u32) {
+        Self::require_admin(&env);
+        match compliance {
+            Some(addr) => env.storage().instance().set(&COMPLIANCE_KEY, &addr),
+            None => env.storage().instance().remove(&COMPLIANCE_KEY),
+        }
+        env.storage().instance().set(&MIN_LEVEL_KEY, &min_level);
+        extend_instance(&env);
+    }
+
+    pub fn compliance_contract(env: Env) -> Option<Address> {
+        env.storage().instance().get(&COMPLIANCE_KEY)
+    }
+
+    pub fn min_compliance_level(env: Env) -> u32 {
+        env.storage().instance().get(&MIN_LEVEL_KEY).unwrap_or(0)
+    }
+
     // ── Private Helpers ───────────────────────────────────────────────────────
 
     fn require_admin(env: &Env) {
@@ -326,6 +363,23 @@ impl RwaAssetContract {
     fn require_not_paused(env: &Env) {
         if Self::paused(env.clone()) {
             panic_with_error!(env, RwaError::ContractPaused);
+        }
+    }
+
+    /// Rejects `party` unless it satisfies the configured compliance policy.
+    ///
+    /// When no compliance contract is configured the check is skipped, so an
+    /// asset can be issued and moved before an operator has stood up a KYC
+    /// engine. Screening becomes mandatory the moment `set_compliance` names
+    /// a contract.
+    fn require_compliant(env: &Env, party: &Address) {
+        let Some(compliance) = Self::compliance_contract(env.clone()) else {
+            return;
+        };
+        let min_level = Self::min_compliance_level(env.clone());
+        let client = ComplianceClient::new(env, &compliance);
+        if !client.is_compliant(party, &min_level) {
+            panic_with_error!(env, RwaError::NotCompliant);
         }
     }
 
