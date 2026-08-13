@@ -2,10 +2,12 @@
 
 mod compliance;
 mod error;
+mod events;
 mod storage;
 
 pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::RwaError;
+pub use events::{Approve, Burn, Mint, Paused, Transfer};
 
 use storage::{extend_instance, extend_persistent};
 
@@ -137,8 +139,10 @@ impl RwaAssetContract {
             .set(&DataKey::TotalSupply, &new_total);
 
         extend_instance(&env);
-        extend_persistent(&env, &DataKey::Balance(to));
+        extend_persistent(&env, &DataKey::Balance(to.clone()));
         extend_persistent(&env, &DataKey::TotalSupply);
+
+        events::Mint { issuer, to, amount }.publish(&env);
     }
 
     /// Burn tokens from caller's balance.
@@ -163,8 +167,10 @@ impl RwaAssetContract {
         );
 
         extend_instance(&env);
-        extend_persistent(&env, &DataKey::Balance(from));
+        extend_persistent(&env, &DataKey::Balance(from.clone()));
         extend_persistent(&env, &DataKey::TotalSupply);
+
+        events::Burn { from, amount }.publish(&env);
     }
 
     // ── Transfers ─────────────────────────────────────────────────────────────
@@ -200,8 +206,10 @@ impl RwaAssetContract {
             .set(&DataKey::Balance(to.clone()), &to_new);
 
         extend_instance(&env);
-        extend_persistent(&env, &DataKey::Balance(from));
-        extend_persistent(&env, &DataKey::Balance(to));
+        extend_persistent(&env, &DataKey::Balance(from.clone()));
+        extend_persistent(&env, &DataKey::Balance(to.clone()));
+
+        events::Transfer { from, to, amount }.publish(&env);
     }
 
     // ── Allowances ────────────────────────────────────────────────────────────
@@ -217,7 +225,14 @@ impl RwaAssetContract {
             .set(&DataKey::Allowance(owner.clone(), spender.clone()), &amount);
 
         extend_instance(&env);
-        extend_persistent(&env, &DataKey::Allowance(owner, spender));
+        extend_persistent(&env, &DataKey::Allowance(owner.clone(), spender.clone()));
+
+        events::Approve {
+            owner,
+            spender,
+            amount,
+        }
+        .publish(&env);
     }
 
     pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
@@ -258,12 +273,14 @@ impl RwaAssetContract {
                 .persistent()
                 .set(&DataKey::Balance(to.clone()), &to_new);
 
-            extend_persistent(&env, &DataKey::Balance(to));
+            extend_persistent(&env, &DataKey::Balance(to.clone()));
         }
 
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Balance(from.clone()));
-        extend_persistent(&env, &DataKey::Allowance(from, spender));
+        extend_persistent(&env, &DataKey::Allowance(from.clone(), spender));
+
+        events::Transfer { from, to, amount }.publish(&env);
     }
 
     // ── Read-only Views ───────────────────────────────────────────────────────
@@ -312,6 +329,8 @@ impl RwaAssetContract {
     pub fn set_paused(env: Env, paused: bool) {
         Self::require_admin(&env);
         env.storage().instance().set(&PAUSED_KEY, &paused);
+        extend_instance(&env);
+        events::Paused { paused }.publish(&env);
     }
 
     pub fn update_metadata(env: Env, metadata: AssetMetadata) {
