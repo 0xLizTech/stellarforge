@@ -11,7 +11,7 @@ use soroban_sdk::{
 use governance::{
     DataKey, GovernanceContract, GovernanceContractClient, GovernanceError, ProposalStatus,
 };
-use stellarforge_common::storage::{INSTANCE_BUMP_AMOUNT, PERSISTENT_BUMP_AMOUNT};
+use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 const VOTING_PERIOD: u32 = 1_000;
 
@@ -54,6 +54,12 @@ impl Harness<'_> {
         self.env.as_contract(&self.contract_id, || {
             self.env.storage().instance().get_ttl()
         })
+    }
+
+    /// The network's maximum entry TTL, which is what write paths extend to.
+    fn max_ttl(&self) -> u32 {
+        self.env
+            .as_contract(&self.contract_id, || self.env.storage().max_ttl())
     }
 }
 
@@ -102,6 +108,65 @@ fn test_admin_before_initialize_is_rejected() {
         client.try_admin(),
         Err(Ok(GovernanceError::NotInitialized.into()))
     );
+}
+
+#[test]
+fn test_propose_before_initialize_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, ()));
+
+    // Left unguarded, this proposal would take id 1 and set the counter to 1.
+    // `initialize` resets the counter to 0, so the next proposal would take id
+    // 1 again and overwrite this one — while `DataKey::Vote(1, voter)` records
+    // from the first proposal survive and bar those voters from the second.
+    let res = client.try_propose(
+        &Address::generate(&env),
+        &String::from_str(&env, "premature"),
+        &Bytes::from_array(&env, &[0u8; 32]),
+        &VOTING_PERIOD,
+    );
+    assert_eq!(res, Err(Ok(GovernanceError::NotInitialized.into())));
+    assert_eq!(client.proposal_count(), 0);
+    assert!(client.get_proposal(&1).is_none());
+}
+
+#[test]
+fn test_initialize_after_a_rejected_proposal_leaves_no_vote_history() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let voter = Address::generate(&env);
+    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, ()));
+
+    // Both of these must be refused. Were the proposal to go through, this
+    // vote would be recorded against id 1.
+    let _ = client.try_propose(
+        &Address::generate(&env),
+        &String::from_str(&env, "premature"),
+        &Bytes::from_array(&env, &[0u8; 32]),
+        &VOTING_PERIOD,
+    );
+    let _ = client.try_vote(&voter, &1, &true, &100);
+
+    client.initialize(&admin);
+    let id = client.propose(
+        &Address::generate(&env),
+        &String::from_str(&env, "real"),
+        &Bytes::from_array(&env, &[1u8; 32]),
+        &VOTING_PERIOD,
+    );
+    assert_eq!(id, 1);
+
+    // The first real proposal owns id 1 outright: no stale record underneath
+    // it, and nobody silently barred from voting on it.
+    assert_eq!(
+        client.get_proposal(&id).unwrap().title,
+        String::from_str(&env, "real")
+    );
+    assert!(!client.has_voted(&id, &voter));
+    client.vote(&voter, &id, &true, &100);
+    assert_eq!(client.get_proposal(&id).unwrap().votes_for, 100);
 }
 
 // ─── Proposals ─────────────────────────────────────────────────────────────
@@ -375,12 +440,16 @@ fn test_finalize_unknown_proposal_is_rejected() {
 // advancing the ledger past an expiry proves nothing. These tests assert the
 // TTL itself, which is what the extension is for.
 
+/// Longer than PERSISTENT_REFRESH_INTERVAL, so a write path actually reissues
+/// the extension rather than finding the entry still fresh enough.
+const IDLE: u32 = 600_000;
+
 #[test]
-fn test_propose_extends_the_proposal_and_the_instance() {
+fn test_propose_extends_to_the_network_maximum() {
     let h = setup();
     let id = h.propose();
 
-    assert_eq!(h.ttl_of(&DataKey::Proposal(id)), PERSISTENT_BUMP_AMOUNT);
+    assert_eq!(h.ttl_of(&DataKey::Proposal(id)), h.max_ttl());
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
 
@@ -388,31 +457,32 @@ fn test_propose_extends_the_proposal_and_the_instance() {
 fn test_vote_extends_the_proposal_and_the_vote_record() {
     let h = setup();
     // Long enough that voting is still open after the idle period below.
-    let id = h.propose_for(200_000);
+    let id = h.propose_for(IDLE + 1_000);
     let voter = Address::generate(&h.env);
 
-    // An extension is only issued once the remaining TTL falls below the
-    // threshold, so the idle period has to exceed a day of ledgers to be
-    // observable at all.
-    h.env.ledger().with_mut(|li| li.sequence_number += 100_000);
+    h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
     h.client.vote(&voter, &id, &true, &100);
 
-    assert_eq!(h.ttl_of(&DataKey::Proposal(id)), PERSISTENT_BUMP_AMOUNT);
-    assert_eq!(h.ttl_of(&DataKey::Vote(id, voter)), PERSISTENT_BUMP_AMOUNT);
+    assert_eq!(h.ttl_of(&DataKey::Proposal(id)), h.max_ttl());
+    assert_eq!(h.ttl_of(&DataKey::Vote(id, voter)), h.max_ttl());
 }
 
 #[test]
-fn test_reading_a_finalized_proposal_extends_it() {
+fn test_reading_a_finalized_proposal_does_not_extend_it() {
     let h = setup();
     let id = h.propose();
     h.advance_past_deadline();
     h.client.finalize(&id);
 
-    // Nothing writes to a proposal after finalisation, so without a read-side
-    // extension the historical record would age out.
-    let idle = 100_000;
-    h.env.ledger().with_mut(|li| li.sequence_number += idle);
-    h.client.get_proposal(&id);
+    // Measured rather than assumed: finalisation only reissues the extension
+    // if the entry has decayed past the refresh threshold, which it has not.
+    let before = h.ttl_of(&DataKey::Proposal(id));
+    h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
 
-    assert_eq!(h.ttl_of(&DataKey::Proposal(id)), PERSISTENT_BUMP_AMOUNT);
+    // Reading history is a pure query. The network-maximum bump applied on the
+    // write paths is what keeps the record queryable.
+    h.client.get_proposal(&id);
+    h.client.has_voted(&id, &Address::generate(&h.env));
+
+    assert_eq!(h.ttl_of(&DataKey::Proposal(id)), before - IDLE);
 }

@@ -82,6 +82,9 @@ instance, holding the admin address and pause flag, was subject to the same
 expiry.
 
 *Fixed in `848feda`. Policy is centralised in `contracts/common/src/storage.rs`
-and shared by every Phase 1 contract. Note that `rwa-asset`'s read-only views
-still do not extend, so a holder who is idle long enough can have their
-balance archived; see [ADR-001](architecture/001-storage-key-design.md).*
+and shared by every Phase 1 contract: write paths extend to the network maximum
+TTL, read paths stay pure. Since protocol 23 an archived entry is restored
+automatically by the transaction that touches it, so the residual exposure is a
+restore fee for a holder idle longer than the maximum TTL, not a failed
+transfer. State rent means that exposure cannot be removed, only reassigned;
+[ADR-001](architecture/001-storage-key-design.md) records who pays and why.*

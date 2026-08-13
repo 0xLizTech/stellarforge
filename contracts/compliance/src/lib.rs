@@ -69,30 +69,28 @@ impl ComplianceContract {
 
     /// Returns true if the address has at minimum the required verification level
     /// and the record is not expired.
+    ///
+    /// A pure query: it does not touch the ledger. Contracts screening a
+    /// transfer should call [`ComplianceContract::screen`] instead.
     pub fn is_compliant(env: Env, subject: Address, min_level: u32) -> bool {
-        let key = DataKey::KycStatus(subject);
-        // A KYC record is written once and then only read — every subsequent
-        // transfer screens against it without ever writing it back. Extending
-        // here is what keeps a verified holder's record from being archived
-        // out from under them, which would block their transfers until
-        // someone restored it.
-        extend_persistent(&env, &key);
+        Self::evaluate(&env, subject, min_level)
+    }
 
-        let record: Option<KycRecord> = env.storage().persistent().get(&key);
-
-        match record {
-            None => false,
-            Some(r) => {
-                let not_expired = r.expires_at == 0 || r.expires_at > env.ledger().timestamp();
-                r.level >= min_level && not_expired
-            }
-        }
+    /// Screens `subject` and refreshes the lifetime of the record consulted.
+    ///
+    /// Identical to [`ComplianceContract::is_compliant`] except that it
+    /// extends the record's TTL. A KYC record is written once and thereafter
+    /// only read, so it has no other opportunity to be refreshed; screening is
+    /// the moment the holder is demonstrably active. This is the entry point
+    /// `rwa-asset` binds to, where the caller is already paying for a ledger
+    /// write, which is why the extension does not belong on the pure query.
+    pub fn screen(env: Env, subject: Address, min_level: u32) -> bool {
+        extend_persistent(&env, &DataKey::KycStatus(subject.clone()));
+        Self::evaluate(&env, subject, min_level)
     }
 
     pub fn get_kyc(env: Env, subject: Address) -> Option<KycRecord> {
-        let key = DataKey::KycStatus(subject);
-        extend_persistent(&env, &key);
-        env.storage().persistent().get(&key)
+        env.storage().persistent().get(&DataKey::KycStatus(subject))
     }
 
     pub fn admin(env: Env) -> Address {
@@ -104,5 +102,18 @@ impl ComplianceContract {
 
     fn require_admin(env: &Env) {
         Self::admin(env.clone()).require_auth();
+    }
+
+    fn evaluate(env: &Env, subject: Address, min_level: u32) -> bool {
+        let record: Option<KycRecord> =
+            env.storage().persistent().get(&DataKey::KycStatus(subject));
+
+        match record {
+            None => false,
+            Some(r) => {
+                let not_expired = r.expires_at == 0 || r.expires_at > env.ledger().timestamp();
+                r.level >= min_level && not_expired
+            }
+        }
     }
 }

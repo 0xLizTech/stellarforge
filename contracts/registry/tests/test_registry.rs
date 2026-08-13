@@ -9,7 +9,7 @@ use soroban_sdk::{
 };
 
 use registry::{AssetEntry, DataKey, RegistryContract, RegistryContractClient, RegistryError};
-use stellarforge_common::storage::{INSTANCE_BUMP_AMOUNT, PERSISTENT_BUMP_AMOUNT};
+use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 struct Harness<'a> {
     env: Env,
@@ -30,6 +30,12 @@ impl Harness<'_> {
         self.env.as_contract(&self.contract_id, || {
             self.env.storage().instance().get_ttl()
         })
+    }
+
+    /// The network's maximum entry TTL, which is what write paths extend to.
+    fn max_ttl(&self) -> u32 {
+        self.env
+            .as_contract(&self.contract_id, || self.env.storage().max_ttl())
     }
 }
 
@@ -206,40 +212,41 @@ fn test_set_active_does_not_touch_the_directory() {
 // advancing the ledger past an expiry proves nothing. These tests assert the
 // TTL itself, which is what the extension is for.
 
+/// Longer than PERSISTENT_REFRESH_INTERVAL, so a write path actually reissues
+/// the extension rather than finding the entry still fresh enough.
+const IDLE: u32 = 600_000;
+
 #[test]
-fn test_register_extends_the_entry_and_the_directory() {
+fn test_register_extends_to_the_network_maximum() {
     let h = setup();
     let asset = Address::generate(&h.env);
     h.client
         .register(&entry(&h.env, &asset, "real_estate", true));
 
-    assert_eq!(h.ttl_of(&DataKey::Asset(asset)), PERSISTENT_BUMP_AMOUNT);
-    assert_eq!(h.ttl_of(&DataKey::AssetList), PERSISTENT_BUMP_AMOUNT);
+    let max = h.max_ttl();
+    assert_eq!(h.ttl_of(&DataKey::Asset(asset)), max);
+    assert_eq!(h.ttl_of(&DataKey::AssetList), max);
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
 
 #[test]
-fn test_reads_extend_ttl_so_an_untouched_entry_does_not_archive() {
+fn test_reads_do_not_extend_the_entries_they_touch() {
     let h = setup();
     let asset = Address::generate(&h.env);
     h.client
         .register(&entry(&h.env, &asset, "real_estate", true));
 
-    // A registry entry is written once and then only read. If the read paths
-    // did not extend, this idle period would run the entry down to archival
-    // with no way to revive it short of a write.
-    let idle = 100_000;
-    h.env.ledger().with_mut(|li| li.sequence_number += idle);
-    assert_eq!(
-        h.ttl_of(&DataKey::Asset(asset.clone())),
-        PERSISTENT_BUMP_AMOUNT - idle
-    );
+    let expected = h.max_ttl() - IDLE;
+    h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
 
+    // Lookups are pure queries. Extending here would charge every reader for
+    // a ledger write; the network-maximum bump on the write path is what keeps
+    // the entry alive instead.
     h.client.get_asset(&asset);
-    assert_eq!(h.ttl_of(&DataKey::Asset(asset)), PERSISTENT_BUMP_AMOUNT);
-
     h.client.list_assets();
-    assert_eq!(h.ttl_of(&DataKey::AssetList), PERSISTENT_BUMP_AMOUNT);
+
+    assert_eq!(h.ttl_of(&DataKey::Asset(asset)), expected);
+    assert_eq!(h.ttl_of(&DataKey::AssetList), expected);
 }
 
 #[test]
@@ -249,9 +256,9 @@ fn test_set_active_extends_the_entry() {
     h.client
         .register(&entry(&h.env, &asset, "real_estate", true));
 
-    h.env.ledger().with_mut(|li| li.sequence_number += 100_000);
+    h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
     h.client.set_active(&asset, &false);
 
-    assert_eq!(h.ttl_of(&DataKey::Asset(asset)), PERSISTENT_BUMP_AMOUNT);
+    assert_eq!(h.ttl_of(&DataKey::Asset(asset)), h.max_ttl());
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }

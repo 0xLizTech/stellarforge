@@ -198,9 +198,16 @@ no compliance contract is configured.
 |---|---|---|
 | `set_kyc(subject, record)` | admin | Set KYC record |
 | `revoke_kyc(subject)` | admin | Remove KYC record |
-| `is_compliant(subject, min_level)` | — | Check compliance |
+| `is_compliant(subject, min_level)` | — | Check compliance; pure query, no ledger write |
+| `screen(subject, min_level)` | — | As above, but refreshes the record's TTL; bound by `RwaAsset` |
 | `get_kyc(subject)` | — | Read KYC record |
 | `admin()` | — | Query admin address |
+
+A compliance contract plugged into `RwaAsset` must implement `screen`, not just
+`is_compliant`. The two return identical answers and differ only in that
+`screen` extends the lifetime of the record it consults — a KYC record is
+written once and thereafter only read, and only the compliance contract can
+extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.md).
 
 ### Registry
 

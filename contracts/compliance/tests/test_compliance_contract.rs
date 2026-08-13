@@ -11,7 +11,7 @@ use soroban_sdk::{
 use compliance::{
     ComplianceContract, ComplianceContractClient, ComplianceError, DataKey, KycRecord,
 };
-use stellarforge_common::storage::{INSTANCE_BUMP_AMOUNT, PERSISTENT_BUMP_AMOUNT};
+use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 const LEVEL_BASIC: u32 = 1;
 const LEVEL_FULL: u32 = 2;
@@ -37,6 +37,12 @@ impl Harness<'_> {
         self.env.as_contract(&self.contract_id, || {
             self.env.storage().instance().get_ttl()
         })
+    }
+
+    /// The network's maximum entry TTL, which is what write paths extend to.
+    fn max_ttl(&self) -> u32 {
+        self.env
+            .as_contract(&self.contract_id, || self.env.storage().max_ttl())
     }
 
     fn record(&self, level: u32, expires_at: u64) -> KycRecord {
@@ -206,47 +212,77 @@ fn test_zero_expiry_never_lapses() {
 // advancing the ledger past an expiry proves nothing. These tests assert the
 // TTL itself, which is what the extension is for.
 
+/// Longer than PERSISTENT_REFRESH_INTERVAL, so a write path actually reissues
+/// the extension rather than finding the entry still fresh enough.
+const IDLE: u32 = 600_000;
+
 #[test]
-fn test_set_kyc_extends_the_record_and_the_instance() {
+fn test_set_kyc_extends_to_the_network_maximum() {
     let h = setup();
     let subject = Address::generate(&h.env);
     h.client
         .set_kyc(&subject, &h.record(LEVEL_FULL, NEVER_EXPIRES));
 
-    assert_eq!(h.ttl_of(&subject), PERSISTENT_BUMP_AMOUNT);
+    assert_eq!(h.ttl_of(&subject), h.max_ttl());
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
 
 #[test]
-fn test_screening_extends_the_record_it_reads() {
+fn test_screen_extends_the_record_it_consults() {
     let h = setup();
     let subject = Address::generate(&h.env);
     h.client
         .set_kyc(&subject, &h.record(LEVEL_FULL, NEVER_EXPIRES));
 
-    // A record is set once and then only read, on every transfer the holder
-    // is party to. Without a read-side extension it would run down to
-    // archival while in active use, blocking that holder's transfers.
-    let idle = 100_000;
-    h.env.ledger().with_mut(|li| li.sequence_number += idle);
-    assert_eq!(h.ttl_of(&subject), PERSISTENT_BUMP_AMOUNT - idle);
+    // A record is set once and thereafter only read. Screening is the one
+    // moment the holder is demonstrably active, and it happens inside a
+    // transfer that is already paying for a ledger write.
+    let expected_before = h.max_ttl() - IDLE;
+    h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
+    assert_eq!(h.ttl_of(&subject), expected_before);
 
-    assert!(h.client.is_compliant(&subject, &LEVEL_FULL));
-    assert_eq!(h.ttl_of(&subject), PERSISTENT_BUMP_AMOUNT);
+    assert!(h.client.screen(&subject, &LEVEL_FULL));
+    assert_eq!(h.ttl_of(&subject), h.max_ttl());
 }
 
 #[test]
-fn test_get_kyc_extends_the_record_it_reads() {
+fn test_is_compliant_is_a_pure_query() {
     let h = setup();
     let subject = Address::generate(&h.env);
     h.client
         .set_kyc(&subject, &h.record(LEVEL_FULL, NEVER_EXPIRES));
 
-    let idle = 100_000;
-    h.env.ledger().with_mut(|li| li.sequence_number += idle);
-    h.client.get_kyc(&subject);
+    let expected = h.max_ttl() - IDLE;
+    h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
 
-    assert_eq!(h.ttl_of(&subject), PERSISTENT_BUMP_AMOUNT);
+    // The query path must not write to the ledger — that is the whole reason
+    // `screen` exists as a separate entry point.
+    assert!(h.client.is_compliant(&subject, &LEVEL_FULL));
+    assert_eq!(h.ttl_of(&subject), expected);
+
+    h.client.get_kyc(&subject);
+    assert_eq!(h.ttl_of(&subject), expected);
+}
+
+#[test]
+fn test_screen_and_is_compliant_agree() {
+    let h = setup();
+    let verified = Address::generate(&h.env);
+    let unverified = Address::generate(&h.env);
+    h.client
+        .set_kyc(&verified, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+
+    // The two entry points must differ only in their ledger side effect.
+    for level in [0, LEVEL_BASIC, LEVEL_FULL, LEVEL_ACCREDITED] {
+        assert_eq!(
+            h.client.screen(&verified, &level),
+            h.client.is_compliant(&verified, &level)
+        );
+        assert_eq!(
+            h.client.screen(&unverified, &level),
+            h.client.is_compliant(&unverified, &level)
+        );
+    }
 }
 
 #[test]
@@ -256,6 +292,6 @@ fn test_screening_an_unverified_subject_does_not_create_an_entry() {
 
     // extend_persistent must stay a no-op for a key that was never written,
     // rather than materialising an empty record.
-    assert!(!h.client.is_compliant(&subject, &LEVEL_BASIC));
+    assert!(!h.client.screen(&subject, &LEVEL_BASIC));
     assert!(h.client.get_kyc(&subject).is_none());
 }

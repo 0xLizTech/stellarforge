@@ -71,14 +71,81 @@ transfer. It does not cover an entry that is written once and thereafter only
 read — a `KycRecord`, a registry entry, a finalised proposal. Those would age
 into archival while still in active use.
 
-`compliance` is the sharpest case: an archived `KycRecord` cannot be read at
-all, so the cross-contract `is_compliant` call from `rwa-asset` fails until
-the record is restored, blocking transfers for a holder who is in fact
-verified. `is_compliant`, `get_kyc`, `get_asset`, `list_assets` and
-`get_proposal` therefore extend the entries they read. This makes those calls
-ledger-writing rather than pure reads, which is the deliberate trade.
+**How bad archival actually is.** Since protocol 23 an archived persistent
+entry is restored automatically by the transaction that accesses it, provided
+the submitter's tooling puts it in the restore footprint — RPC simulation does.
+So archival is a restore *fee* charged to whoever touches the entry first, not
+a permanent brick and not a failed transfer. Extending on read is therefore a
+cost trade, not a correctness fix, and a bad one on its own terms: it converts
+one rare restore fee into a small ledger write charged to every reader, and it
+makes a query non-pure.
 
-**Still outstanding:** `rwa-asset`'s own read views (`balance`, `allowance`,
-`metadata`) do not extend. A holder who neither sends nor receives for long
-enough can still have their balance archived — the SF-2026-002 scenario,
-narrowed but not closed.
+**The constraint that shapes the design:** a contract can only extend its
+*own* entries. `rwa-asset` cannot keep a `KycRecord` alive no matter what it
+does on its write path, so any fix for the compliance case has to live inside
+the compliance contract.
+
+### Decision
+
+1. **Write paths extend to the network maximum**, read from the ledger via
+   `env.storage().max_ttl()` rather than hardcoded, since the maximum is a
+   network parameter and extending beyond it is not accepted. An entry is
+   refreshed only once it has decayed by `PERSISTENT_REFRESH_INTERVAL`
+   (30 days), so repeated writes do not pay for ledgers the entry already has.
+
+2. **Reads stay pure.** `get_kyc`, `get_asset`, `list_assets`, `get_proposal`
+   and `has_voted` do not touch the ledger.
+
+3. **Screening is a write path, and is separated from the query.**
+   `ComplianceContract::is_compliant` is a pure query for SDK and off-chain
+   use. `ComplianceContract::screen` is identical except that it extends the
+   record it consults, and it is what `rwa-asset`'s `ComplianceInterface` binds
+   to. Screening happens inside a transfer, which is already paying for a
+   ledger write, and it is the one moment at which the holder is demonstrably
+   active — so the record is refreshed exactly when it is in use, which is the
+   self-maintaining property balances get for free.
+
+### Alternatives not taken
+
+- **Permissionless keeper entry points** (`extend_kyc(subject)` and friends,
+  callable by anyone willing to pay). Deferred until there is evidence anything
+  needs them; the maximum-TTL bump covers roughly a year.
+- **Relying on auto-restoration alone**, with no extension at all. Rejected
+  because the restore fee lands arbitrarily on whichever party transacts first,
+  which is a poor experience for the holder who happens to go next.
+
+### Residual exposure, and why it cannot be eliminated
+
+`rwa-asset`'s read views (`balance`, `allowance`, `metadata`) are pure, in
+line with point 2. A balance is refreshed to the network maximum by every
+mint, burn and transfer it takes part in, so the remaining exposure is a
+holder who neither sends nor receives for longer than the maximum TTL — about
+a year. Their next transfer then pays a restore fee.
+
+This is not an unfixed defect. Entries live only as long as someone pays rent,
+so there is no arrangement in which the exposure disappears; there is only a
+choice of who pays and when:
+
+| Who pays | Mechanism | Cost profile |
+|---|---|---|
+| Whoever transacts next | Auto-restore on access — **chosen** | Lazy. Nothing is spent on holders who never return |
+| Every reader | Extend inside `balance()` | Continuous. Explorers and indexers subsidise idle holders, and the view stops being pure |
+| Issuer or keeper | Permissionless `extend_balance(addr)` | Proactive. O(holders) writes per year regardless of need |
+
+The first is chosen because the cost falls on the party who benefits, at the
+moment they benefit. Note that Soroban's own token reference extends TTL on
+read; that was the right call before protocol 23, when archival was a hard
+failure rather than a fee, and it is worth knowing that the convention
+predates auto-restoration rather than disagreeing with this decision.
+
+**Known limitation.** Idle periods beyond a year are ordinary for a
+buy-and-hold real-world asset, so a meaningful share of holders will meet a
+restore fee rather than this being a rare edge. The fee is small — a balance is
+a single `i128`, and restore cost scales with entry size — and is paid once. If
+it should be made invisible to holders, the third row is the way to do it, as
+an explicit issuer cost; the read path is not. Revisit when there is deployment
+data to measure it against.
+
+Auto-restoration also depends on the submitting client putting the archived
+entry in the restore footprint. RPC simulation does this, so the standard flow
+is unaffected; a hand-built or cached footprint would fail instead.

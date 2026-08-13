@@ -76,16 +76,14 @@ impl RegistryContract {
         extend_persistent(&env, &DataKey::AssetList);
     }
 
+    /// A pure query: registry lookups do not extend the entries they read, so
+    /// they cost the caller nothing. Write paths extend to the network maximum
+    /// instead.
     pub fn get_asset(env: Env, contract: Address) -> Option<AssetEntry> {
-        let key = DataKey::Asset(contract);
-        // A registry entry is written once and read forever, so the read path
-        // is what keeps it alive.
-        extend_persistent(&env, &key);
-        env.storage().persistent().get(&key)
+        env.storage().persistent().get(&DataKey::Asset(contract))
     }
 
     pub fn list_assets(env: Env) -> Vec<Address> {
-        extend_persistent(&env, &DataKey::AssetList);
         env.storage()
             .persistent()
             .get(&DataKey::AssetList)

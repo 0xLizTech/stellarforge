@@ -2,6 +2,19 @@
 
 //! Governance — on-chain proposal & voting skeleton.
 //! Phase 1: create proposals and cast votes; execution hooks in Phase 3.
+//!
+//! # This does not decide anything yet
+//!
+//! `vote` accepts the weight its caller declares and verifies it against
+//! nothing, and `finalize` applies no quorum. Any address can therefore carry
+//! any proposal. Results are advisory until Phase 3 supplies a voting-power
+//! source; nothing here should gate a privileged action.
+//!
+//! Weight is deliberately left unverified rather than wired to a token
+//! balance, because reading a live balance at vote time is worse than not
+//! checking at all: a holder could vote, transfer the same tokens onward and
+//! vote again from the recipient. Correct weighting needs balances snapshotted
+//! at proposal creation, which is Phase 2/3 work alongside `SFORGE`.
 
 mod error;
 
@@ -69,6 +82,13 @@ impl GovernanceContract {
         voting_period_ledgers: u32,
     ) -> u64 {
         proposer.require_auth();
+        // Proposals must not accumulate on a contract that was never
+        // configured. `initialize` resets the counter to zero, so a proposal
+        // created beforehand would have its id handed out a second time: the
+        // later proposal overwrites the earlier one, while the vote records
+        // keyed to that id survive and lock out everyone who already voted.
+        Self::require_initialized(&env);
+
         let count: u64 = env.storage().instance().get(&PROP_COUNT).unwrap_or(0);
         let id = match count.checked_add(1) {
             Some(v) => v,
@@ -169,19 +189,20 @@ impl GovernanceContract {
         extend_persistent(&env, &DataKey::Proposal(proposal_id));
     }
 
+    /// A pure query. Proposals must stay readable long after their deadline,
+    /// which the network-maximum extension on the write paths provides without
+    /// charging every reader for it.
     pub fn get_proposal(env: Env, proposal_id: u64) -> Option<Proposal> {
-        let key = DataKey::Proposal(proposal_id);
-        // Proposals must stay queryable long after their deadline, and nothing
-        // writes to a finalised proposal again, so the read path is what keeps
-        // the record alive.
-        extend_persistent(&env, &key);
-        env.storage().persistent().get(&key)
+        env.storage()
+            .persistent()
+            .get(&DataKey::Proposal(proposal_id))
     }
 
     pub fn has_voted(env: Env, proposal_id: u64, voter: Address) -> bool {
-        let key = DataKey::Vote(proposal_id, voter);
-        extend_persistent(&env, &key);
-        env.storage().persistent().get(&key).unwrap_or(false)
+        env.storage()
+            .persistent()
+            .get(&DataKey::Vote(proposal_id, voter))
+            .unwrap_or(false)
     }
 
     pub fn proposal_count(env: Env) -> u64 {
@@ -192,6 +213,12 @@ impl GovernanceContract {
         match env.storage().instance().get(&ADMIN_KEY) {
             Some(a) => a,
             None => panic_with_error!(&env, GovernanceError::NotInitialized),
+        }
+    }
+
+    fn require_initialized(env: &Env) {
+        if !env.storage().instance().has(&ADMIN_KEY) {
+            panic_with_error!(env, GovernanceError::NotInitialized);
         }
     }
 

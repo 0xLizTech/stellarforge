@@ -396,7 +396,7 @@ impl RwaAssetContract {
         };
         let min_level = Self::min_compliance_level(env.clone());
         let client = ComplianceClient::new(env, &compliance);
-        if !client.is_compliant(party, &min_level) {
+        if !client.screen(party, &min_level) {
             panic_with_error!(env, RwaError::NotCompliant);
         }
     }
