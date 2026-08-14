@@ -1,6 +1,5 @@
 import {
   Contract,
-  Networks,
   rpc,
   TransactionBuilder,
   BASE_FEE,
@@ -42,12 +41,12 @@ export class RwaAssetClient {
     const result = await this.simulateReadOnly("balance", [
       nativeToScVal(ownerAddress, { type: "address" }),
     ]);
-    return BigInt(scValToNative(result) as number);
+    return scValToNative(result) as bigint;
   }
 
   async totalSupply(): Promise<bigint> {
     const result = await this.simulateReadOnly("total_supply", []);
-    return BigInt(scValToNative(result) as number);
+    return scValToNative(result) as bigint;
   }
 
   async metadata(): Promise<AssetMetadata> {
@@ -59,7 +58,7 @@ export class RwaAssetClient {
       decimals: native["decimals"] as number,
       assetClass: native["asset_class"] as AssetMetadata["assetClass"],
       legalDocHash: Buffer.from(native["legal_doc_hash"] as Uint8Array).toString("hex"),
-      maxSupply: BigInt(native["max_supply"] as number),
+      maxSupply: native["max_supply"] as bigint,
     };
   }
 
@@ -80,7 +79,7 @@ export class RwaAssetClient {
       nativeToScVal(ownerAddress, { type: "address" }),
       nativeToScVal(spenderAddress, { type: "address" }),
     ]);
-    return BigInt(scValToNative(result) as number);
+    return scValToNative(result) as bigint;
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────
