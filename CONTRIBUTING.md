@@ -310,22 +310,20 @@ We are a small core team with a large vision. Here are the areas where outside c
 
 - **Fractionalization vault contract** (Phase 2) — the core vault that holds an underlying asset and issues fractional shares. Design discussion open in [#discussions](https://github.com/0xLizTech/stellarforge/discussions).
 - **Yield distribution engine** (Phase 2) — distributing income from underlying assets to fractional token holders.
-- **Compliance middleware hook** — integrating the Compliance contract as a transfer guard in RwaAsset (requires a design discussion first).
-- **SDK: transaction builder helpers** — right now clients only do read-only simulation; we need write path helpers for `mint`, `transfer`, etc.
+- **SDK: transaction builder helpers** — right now clients only do read-only simulation; we need write path helpers for `mint`, `burn`, `transfer`, `approve`, and `transfer_from`.
 
 ### Medium Priority
 
-- **Architecture Decision Records** — we need ADRs written for storage key design, auth patterns, upgrade path strategy, and cross-contract interaction model.
-- **Testnet deployment scripts** — a turnkey `scripts/deploy.ts` that deploys all four contracts in sequence and writes a `deployed-contracts.json`.
+- **Architecture Decision Records** — we need ADRs for the auth patterns, the upgrade path strategy, and the cross-contract interaction model (storage key design is already covered by ADR-001).
+- **SDK clients for `registry` and `governance`** — the SDK currently exposes only `RwaAssetClient` and `ComplianceClient`.
 - **Example apps** — a minimal Next.js or plain-HTML frontend that demonstrates minting and transferring an RWA token.
 
 ### Lower Effort / Great First Issues
 
-- Improve error messages in all contracts (currently bare strings; should be typed error enums by Phase 2).
-- Add `allowance` getter to `RwaAssetClient` in the SDK.
 - Write an ADR for the chosen Stellar network passphrase management approach.
-- Add Dependabot config for automatic dependency updates.
-- Improve GitHub issue and PR templates.
+- Expand `sdk/tests` beyond `utils.test.ts` — mock the Soroban RPC with `vitest` and cover the client methods.
+- Add `#[doc]` comments and improve the wording on each contract error variant.
+- Triage and label open issues with [`good first issue`](https://github.com/0xLizTech/stellarforge/issues?q=label%3A%22good+first+issue%22) and [`help wanted`](https://github.com/0xLizTech/stellarforge/issues?q=label%3A%22help+wanted%22).
 
 ---
 
