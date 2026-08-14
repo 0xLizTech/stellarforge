@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🛡️ Security vulnerability
+    url: https://github.com/0xLizTech/stellarforge/security/advisories/new
+    about: Report a security issue privately — do NOT open a public issue.
+  - name: 💬 Discussion
+    url: https://github.com/0xLizTech/stellarforge/discussions
+    about: Ask questions or discuss design before opening an issue.
+  - name: 🎧 Discord
+    url: https://discord.gg/stellarforge
+    about: Chat with the community and maintainers.
