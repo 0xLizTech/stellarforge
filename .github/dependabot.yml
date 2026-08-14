@@ -14,9 +14,21 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # TypeScript 7 is the new native compiler; tsup + rollup-plugin-dts do not
+      # support it yet (both `tsc` typecheck and `--dts` generation break).
+      # Hold on 5.x until the toolchain catches up.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # Major bumps of GitHub Actions skip several versions and receive no CI
+      # coverage (workflow-only PRs do not trigger the existing checks).
+      # Auto-bump minor/patch only; majors are reviewed and applied manually.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
