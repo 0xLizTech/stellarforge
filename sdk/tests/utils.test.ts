@@ -45,6 +45,19 @@ describe("fromStroops", () => {
   });
 });
 
+describe("toStroops with custom decimals", () => {
+  it("scales by the given number of decimals", () => {
+    expect(toStroops("1.5", 18)).toBe(1_500_000_000_000_000_000n);
+    expect(toStroops("1", 2)).toBe(100n);
+  });
+});
+
+describe("fromStroops with custom decimals", () => {
+  it("round-trips at 18 decimals", () => {
+    expect(fromStroops(toStroops("1.5", 18), 18)).toBe("1.5");
+  });
+});
+
 describe("sha256Hex", () => {
   it("returns 64-character hex string", () => {
     const hash = sha256Hex("hello world");

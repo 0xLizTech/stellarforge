@@ -23,18 +23,23 @@ export function isValidContractId(id: string): boolean {
 
 // ─── Amount Utilities ─────────────────────────────────────────────────────────
 
-/** Convert a human-readable decimal amount to stroops (7 decimal places). */
-export function toStroops(amount: number | string): bigint {
+/** Convert a human-readable decimal amount to base units at `decimals` places.
+ * Defaults to 7 (Stellar's stroop convention). RWA assets may use a different
+ * number of decimals — the contract allows up to 18 — so pass the asset's
+ * decimals when it differs from 7. */
+export function toStroops(amount: number | string, decimals = 7): bigint {
   const [integer, fraction = ""] = String(amount).split(".");
-  const paddedFraction = fraction.padEnd(7, "0").slice(0, 7);
+  const paddedFraction = fraction.padEnd(decimals, "0").slice(0, decimals);
   return BigInt(integer + paddedFraction);
 }
 
-/** Convert stroops back to a human-readable decimal string. */
-export function fromStroops(stroops: bigint): string {
-  const str = stroops.toString().padStart(8, "0");
-  const integer = str.slice(0, -7) || "0";
-  const fraction = str.slice(-7);
+/** Convert base units back to a human-readable decimal string.
+ * Defaults to 7 (Stellar's stroop convention); pass the asset's decimals when
+ * it differs. */
+export function fromStroops(stroops: bigint, decimals = 7): string {
+  const str = stroops.toString().padStart(decimals + 1, "0");
+  const integer = str.slice(0, -decimals) || "0";
+  const fraction = str.slice(-decimals);
   return `${integer}.${fraction}`.replace(/\.?0+$/, "");
 }
 
