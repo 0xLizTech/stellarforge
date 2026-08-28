@@ -27,7 +27,7 @@
     "url": "https://github.com/0xLizTech/stellarforge"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^16.2.0"
+    "@stellar/stellar-sdk": "^17.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
