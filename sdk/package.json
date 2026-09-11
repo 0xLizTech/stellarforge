@@ -30,7 +30,7 @@
     "@stellar/stellar-sdk": "^16.2.0"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.5.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
