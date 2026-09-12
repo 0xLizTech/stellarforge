@@ -97,7 +97,7 @@ stellarforge/
 | Rust | ≥ 1.81 | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | wasm32 target | any | `rustup target add wasm32v1-none` |
 | stellar-cli | ≥ 27.0 | `cargo install --locked stellar-cli` |
-| Node.js | ≥ 20 | [nodejs.org](https://nodejs.org) |
+| Node.js | ≥ 22 | [nodejs.org](https://nodejs.org) |
 | npm | ≥ 10 | bundled with Node |
 
 ### 1. Clone the repository
