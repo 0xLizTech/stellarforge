@@ -156,6 +156,25 @@ const meta   = await client.metadata();
 console.log(`${meta.symbol} — total supply: ${supply}`);
 ```
 
+Writes come in two forms. `build*Tx` returns a prepared but unsigned transaction
+for a wallet to sign, so no secret ever reaches the SDK:
+
+```typescript
+const tx = await client.buildTransferTx(from, to, toStroops("100", meta.decimals));
+const signedXdr = await freighter.signTransaction(tx.toXDR(), { networkPassphrase });
+```
+
+The bare method signs with `signerSecret` and submits, for server-side use:
+
+```typescript
+const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signerSecret });
+const { hash, ledger } = await client.transfer(from, to, toStroops("100", meta.decimals));
+```
+
+Both assume the authorizing address also sources the transaction, so its
+signature satisfies the contract's `require_auth`. Paying fees from a separate
+account is not supported yet.
+
 ---
 
 ## Contract Reference (Phase 1)

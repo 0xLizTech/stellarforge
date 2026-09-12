@@ -10,7 +10,17 @@ import {
   Account,
 } from "@stellar/stellar-sdk";
 
-import type { AssetMetadata, KycRecord, StellarForgeConfig } from "./types.js";
+import type { Transaction } from "@stellar/stellar-sdk";
+
+import type { AssetMetadata, KycRecord, StellarForgeConfig, TxResult } from "./types.js";
+
+/**
+ * Validity window for a write transaction, in seconds.
+ *
+ * Long enough to survive a slow submission, short enough that an unsubmitted
+ * signed transaction stops being replayable reasonably soon.
+ */
+const WRITE_TX_TIMEOUT_SECONDS = 180;
 
 // ─── RwaAssetClient ───────────────────────────────────────────────────────────
 
@@ -82,7 +92,163 @@ export class RwaAssetClient {
     return scValToNative(result) as bigint;
   }
 
+  // ── Write path ─────────────────────────────────────────────────────────────
+  //
+  // Each write comes in two forms.
+  //
+  // `build*Tx` returns a prepared but unsigned transaction, for a wallet
+  // (Freighter, hardware, multisig) to sign. No secret ever reaches this
+  // library, which is the only form usable in a browser.
+  //
+  // The bare method signs with `config.signerSecret` and submits, for
+  // server-side automation. It is a thin wrapper over the builder.
+  //
+  // Both assume the authorizing address is also the transaction source, so the
+  // source signature satisfies the contract's `require_auth`. Paying fees from
+  // a different account needs signed authorization entries and is not supported
+  // here.
+  //
+  // Note that `build*Tx` simulates as part of preparing, so a call the contract
+  // would reject — a bad amount, a paused asset, a party failing compliance —
+  // fails at build time with the contract's own error, before anything is
+  // signed or submitted.
+
+  /** Mint `amount` to `to`. Authorized and paid for by `issuer`. */
+  async buildMintTx(issuer: string, to: string, amount: bigint): Promise<Transaction> {
+    return this.buildWriteTx(issuer, "mint", [
+      nativeToScVal(issuer, { type: "address" }),
+      nativeToScVal(to, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  async mint(issuer: string, to: string, amount: bigint): Promise<TxResult> {
+    return this.signAndSubmit(await this.buildMintTx(issuer, to, amount), issuer);
+  }
+
+  /** Burn `amount` from `from`'s own balance. */
+  async buildBurnTx(from: string, amount: bigint): Promise<Transaction> {
+    return this.buildWriteTx(from, "burn", [
+      nativeToScVal(from, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  async burn(from: string, amount: bigint): Promise<TxResult> {
+    return this.signAndSubmit(await this.buildBurnTx(from, amount), from);
+  }
+
+  /** Transfer `amount` from `from` to `to`. */
+  async buildTransferTx(from: string, to: string, amount: bigint): Promise<Transaction> {
+    return this.buildWriteTx(from, "transfer", [
+      nativeToScVal(from, { type: "address" }),
+      nativeToScVal(to, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  async transfer(from: string, to: string, amount: bigint): Promise<TxResult> {
+    return this.signAndSubmit(await this.buildTransferTx(from, to, amount), from);
+  }
+
+  /** Set `spender`'s allowance over `owner`'s balance to `amount`. */
+  async buildApproveTx(owner: string, spender: string, amount: bigint): Promise<Transaction> {
+    return this.buildWriteTx(owner, "approve", [
+      nativeToScVal(owner, { type: "address" }),
+      nativeToScVal(spender, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  async approve(owner: string, spender: string, amount: bigint): Promise<TxResult> {
+    return this.signAndSubmit(await this.buildApproveTx(owner, spender, amount), owner);
+  }
+
+  /** Move `amount` from `from` to `to`, drawing on `spender`'s allowance. */
+  async buildTransferFromTx(
+    spender: string,
+    from: string,
+    to: string,
+    amount: bigint,
+  ): Promise<Transaction> {
+    return this.buildWriteTx(spender, "transfer_from", [
+      nativeToScVal(spender, { type: "address" }),
+      nativeToScVal(from, { type: "address" }),
+      nativeToScVal(to, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  async transferFrom(
+    spender: string,
+    from: string,
+    to: string,
+    amount: bigint,
+  ): Promise<TxResult> {
+    return this.signAndSubmit(await this.buildTransferFromTx(spender, from, to, amount), spender);
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Builds and prepares an invocation sourced from `authorizer`, whose
+   * signature is what satisfies the contract's `require_auth`.
+   */
+  private async buildWriteTx(
+    authorizer: string,
+    method: string,
+    args: xdr.ScVal[],
+  ): Promise<Transaction> {
+    const account = await this.server.getAccount(authorizer);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.config.networkPassphrase,
+    })
+      .addOperation(this.contract.call(method, ...args))
+      .setTimeout(WRITE_TX_TIMEOUT_SECONDS)
+      .build();
+
+    // Simulates, then attaches the footprint, authorization entries and
+    // resource fee the transaction needs to be accepted.
+    return this.server.prepareTransaction(tx);
+  }
+
+  /** Signs with the configured secret and waits for the transaction to settle. */
+  private async signAndSubmit(tx: Transaction, authorizer: string): Promise<TxResult> {
+    const secret = this.config.signerSecret;
+    if (!secret) {
+      throw new Error(
+        "config.signerSecret is required to submit a transaction. " +
+          "Use the matching build*Tx method to sign with a wallet instead.",
+      );
+    }
+
+    const keypair = Keypair.fromSecret(secret);
+
+    // Under same-address auth the signer must be the authorizing address.
+    // Catching it here beats a require_auth failure after the fee is spent.
+    if (keypair.publicKey() !== authorizer) {
+      throw new Error(
+        `signerSecret is for ${keypair.publicKey()} but this call must be authorized by ` +
+          `${authorizer}. Paying from a different account is not supported.`,
+      );
+    }
+
+    tx.sign(keypair);
+
+    const sent = await this.server.sendTransaction(tx);
+    if (sent.status === "ERROR") {
+      throw new Error(`Transaction ${sent.hash} was rejected on submission`);
+    }
+
+    const settled = await this.server.pollTransaction(sent.hash);
+    if (settled.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+      throw new Error(`Transaction ${sent.hash} did not succeed: ${settled.status}`);
+    }
+
+    return { hash: sent.hash, ledger: settled.ledger };
+  }
 
   private async simulateReadOnly(method: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
     // Use a throwaway account for simulating read-only calls
