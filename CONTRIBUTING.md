@@ -190,7 +190,7 @@ Branch naming conventions:
 make fmt
 make lint
 
-# TypeScript
+# TypeScript — checks src/ and tests/
 cd sdk && npm run typecheck
 ```
 
