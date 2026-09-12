@@ -151,6 +151,10 @@ export class ComplianceClient {
       throw new Error(`Simulation error: ${simResult.error}`);
     }
 
-    return scValToNative(simResult.result!.retval) as boolean;
+    if (!simResult.result) {
+      throw new Error("No result returned from is_compliant");
+    }
+
+    return scValToNative(simResult.result.retval) as boolean;
   }
 }
