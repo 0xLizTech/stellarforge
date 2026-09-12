@@ -262,8 +262,29 @@ Keep the subject line under 72 characters. Use the body for _why_, not _what_.
 ### SDK (TypeScript)
 
 - All utility functions in `utils.ts` must have full unit test coverage.
-- Client tests may mock the Soroban RPC — use `vitest`'s `vi.mock`.
+- Client tests stub Soroban RPC at `rpc.Server.prototype.simulateTransaction` rather than mocking the whole module, so the real `Contract`, `TransactionBuilder` and ScVal codecs stay in the path. See `tests/client.test.ts`.
 - Run: `cd sdk && npm test`
+
+#### Live smoke test (opt-in)
+
+`tests/smoke.testnet.test.ts` runs the same read methods against a deployed contract over real Soroban RPC. It skips unless you point it at one, which is why CI never runs it.
+
+```bash
+cd sdk
+SMOKE_RWA_ASSET_ID=C... SMOKE_COMPLIANCE_ID=C... npm run test:smoke
+```
+
+| Variable | Purpose |
+|---|---|
+| `SMOKE_RWA_ASSET_ID` | Deployed `rwa-asset` contract id. Unset skips that block. |
+| `SMOKE_COMPLIANCE_ID` | Deployed `compliance` contract id. Unset skips that block. |
+| `SMOKE_HOLDER_ADDRESS` | Optional address to query. Defaults to a deterministic unfunded one. |
+| `SOROBAN_RPC_URL` | Defaults to Soroban testnet. Must be `https`, since the clients set `allowHttp: false`. |
+| `STELLAR_NETWORK_PASSPHRASE` | Defaults to the testnet passphrase. |
+
+`make deploy-testnet` writes the deployed ids to `deployed-contracts.json`.
+
+The two layers are not interchangeable. A stub replaces the SDK's own behaviour with a fixture, so those tests pass identically across SDK versions no matter what changed underneath. Only the smoke test exercises the real wire format, which is what a major `@stellar/stellar-sdk` bump needs evidence for. Run it before merging one.
 
 ### Coverage targets (aspirational, not enforced in CI yet)
 

@@ -17,6 +17,7 @@
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:smoke": "vitest run tests/smoke.testnet.test.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },
