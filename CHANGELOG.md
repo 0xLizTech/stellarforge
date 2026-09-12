@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `npm run typecheck` now covers `tests/` as well as `src/`, via a `tsconfig.test.json` that relaxes the `rootDir` the published build depends on. Test files were previously transpiled by vitest but never typechecked, so type errors in them reached no CI gate.
 - The SDK now requires Node.js 22 or newer, and CI tests against Node 22 and 24 instead of 20 and 22. `@stellar/stellar-sdk` has required Node 22 since 16.0.0, so the previous `>=20.0.0` in `package.json` did not reflect what the package actually needed.
 
 ### Fixed
