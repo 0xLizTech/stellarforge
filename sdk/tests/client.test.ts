@@ -1,109 +1,39 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { MockInstance } from "vitest";
-import {
-  rpc,
-  nativeToScVal,
-  scValToNative,
-  xdr,
-  StrKey,
-  Transaction,
-  Address,
-  Keypair,
-  Account,
-} from "@stellar/stellar-sdk";
+import { Address, Transaction, nativeToScVal, rpc, xdr } from "@stellar/stellar-sdk";
 
 import { RwaAssetClient, ComplianceClient } from "../src/client.js";
 import { TESTNET_CONFIG } from "../src/types.js";
 import type { StellarForgeConfig } from "../src/types.js";
+import {
+  RWA_ID,
+  COMPLIANCE_ID,
+  HOLDER,
+  SPENDER,
+  SIGNER as ISSUER,
+  SIGNER_SECRET as ISSUER_SECRET,
+  OTHER_KP,
+  SUBMITTED_HASH,
+  configWith,
+  stubSimulation,
+  stubWritePath,
+  succeeds,
+  fails,
+  succeedsWithoutResult,
+  invocation,
+  builtInvocation,
+  i128,
+  bool,
+  struct,
+} from "./helpers.js";
 
-// ─── Fixtures ─────────────────────────────────────────────────────────────────
-
-/** Deterministic C-addresses, so failures name the same contract every run. */
-const RWA_ID = StrKey.encodeContract(Buffer.alloc(32, 1));
-const COMPLIANCE_ID = StrKey.encodeContract(Buffer.alloc(32, 2));
-
-const HOLDER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 3));
-const SPENDER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 4));
+// ─── Fixtures local to this suite ─────────────────────────────────────────────
 
 /** 32 bytes of 0xab, so the expected hex is unmistakable. */
 const DOC_HASH_BYTES = Buffer.alloc(32, 0xab);
 const DOC_HASH_HEX = "ab".repeat(32);
 
-const rwaConfig: StellarForgeConfig = {
-  ...TESTNET_CONFIG,
-  contracts: { rwaAsset: RWA_ID },
-};
-
-const complianceConfig: StellarForgeConfig = {
-  ...TESTNET_CONFIG,
-  contracts: { compliance: COMPLIANCE_ID },
-};
-
-// ─── Simulation stubbing ──────────────────────────────────────────────────────
-
-// The clients build a real `rpc.Server`, so the seam is the prototype method
-// rather than the module. That keeps `Contract`, `TransactionBuilder` and the
-// ScVal codecs real: only the network call is replaced.
-type SimulateFn = (tx: Transaction) => Promise<rpc.Api.SimulateTransactionResponse>;
-type Spy = MockInstance<SimulateFn>;
-
-function stubSimulation(response: unknown): Spy {
-  const spy = vi.spyOn(
-    rpc.Server.prototype as unknown as { simulateTransaction: SimulateFn },
-    "simulateTransaction",
-  );
-  spy.mockResolvedValue(response as rpc.Api.SimulateTransactionResponse);
-  return spy;
-}
-
-/** A successful simulation carrying `retval`. */
-function succeeds(retval: xdr.ScVal): unknown {
-  return { latestLedger: 3, result: { retval, auth: [] } };
-}
-
-/**
- * A failed simulation. `rpc.Api.isSimulationError` discriminates purely on the
- * presence of an `error` key, so that is what makes this a failure.
- */
-function fails(message: string): unknown {
-  return { latestLedger: 3, error: message };
-}
-
-/**
- * A simulation that is not an error yet carries no result. The RPC returns this
- * shape for a restore-required preflight, among others.
- */
-function succeedsWithoutResult(): unknown {
-  return { latestLedger: 3 };
-}
-
-/** The contract function and decoded arguments of the simulated transaction. */
-function invocation(spy: Spy): { fn: string; args: unknown[] } {
-  const tx = spy.mock.calls[0]?.[0] as Transaction;
-  const op = tx.operations[0] as { func: xdr.HostFunction };
-  const invoked = op.func.invokeContract();
-  return {
-    fn: invoked.functionName().toString(),
-    args: invoked.args().map((arg) => scValToNative(arg)),
-  };
-}
-
-const i128 = (v: bigint): xdr.ScVal => nativeToScVal(v, { type: "i128" });
-const bool = (v: boolean): xdr.ScVal => nativeToScVal(v);
-
-/** Builds the ScMap a Soroban struct decodes from. Keys must be sorted. */
-function struct(fields: Record<string, xdr.ScVal>): xdr.ScVal {
-  const entries = Object.keys(fields)
-    .sort()
-    .map(
-      (key) =>
-        new xdr.ScMapEntry({
-          key: nativeToScVal(key, { type: "symbol" }),
-          val: fields[key] as xdr.ScVal,
-        }),
-    );
-  return xdr.ScVal.scvMap(entries);
-}
+const rwaConfig: StellarForgeConfig = configWith({ rwaAsset: RWA_ID });
+const complianceConfig: StellarForgeConfig = configWith({ compliance: COMPLIANCE_ID });
 
 function metadataScVal(overrides: Record<string, xdr.ScVal> = {}): xdr.ScVal {
   return struct({
@@ -402,82 +332,6 @@ describe("contract targeting", () => {
 });
 
 // ─── Write path ───────────────────────────────────────────────────────────────
-
-/**
- * A deterministic signer. The write path requires the signing keypair to be the
- * authorizing address, so the public key and the secret have to come from the
- * same seed rather than being independent fixtures.
- */
-const ISSUER_KP = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7));
-const ISSUER = ISSUER_KP.publicKey();
-const ISSUER_SECRET = ISSUER_KP.secret();
-
-const OTHER_KP = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 8));
-
-type GetAccountFn = (address: string) => Promise<Account>;
-type PrepareFn = (tx: Transaction) => Promise<Transaction>;
-type SendFn = (tx: Transaction) => Promise<rpc.Api.SendTransactionResponse>;
-type PollFn = (hash: string) => Promise<rpc.Api.GetTransactionResponse>;
-
-interface WriteStubs {
-  getAccount: MockInstance<GetAccountFn>;
-  prepare: MockInstance<PrepareFn>;
-  send: MockInstance<SendFn>;
-  poll: MockInstance<PollFn>;
-}
-
-const SUBMITTED_HASH = "a".repeat(64);
-
-/**
- * Stubs the four network calls a write makes. `prepareTransaction` hands back
- * the transaction it was given, so the real builder output stays under test and
- * `signAndSubmit` has something genuine to sign.
- */
-function stubWritePath(overrides: Partial<{ send: unknown; poll: unknown }> = {}): WriteStubs {
-  const proto = rpc.Server.prototype as unknown as {
-    getAccount: GetAccountFn;
-    prepareTransaction: PrepareFn;
-    sendTransaction: SendFn;
-    pollTransaction: PollFn;
-  };
-
-  const getAccount = vi.spyOn(proto, "getAccount");
-  getAccount.mockImplementation(async (address: string) => new Account(address, "7"));
-
-  const prepare = vi.spyOn(proto, "prepareTransaction");
-  prepare.mockImplementation(async (tx: Transaction) => tx);
-
-  const send = vi.spyOn(proto, "sendTransaction");
-  send.mockResolvedValue(
-    (overrides.send ?? {
-      status: "PENDING",
-      hash: SUBMITTED_HASH,
-      latestLedger: 10,
-      latestLedgerCloseTime: 0,
-    }) as rpc.Api.SendTransactionResponse,
-  );
-
-  const poll = vi.spyOn(proto, "pollTransaction");
-  poll.mockResolvedValue(
-    (overrides.poll ?? {
-      status: rpc.Api.GetTransactionStatus.SUCCESS,
-      txHash: SUBMITTED_HASH,
-      ledger: 42,
-    }) as rpc.Api.GetTransactionResponse,
-  );
-
-  return { getAccount, prepare, send, poll };
-}
-
-/** The contract function and decoded arguments of a built transaction. */
-function builtInvocation(tx: Transaction): { fn: string; args: unknown[] } {
-  const op = tx.operations[0] as { func: xdr.HostFunction };
-  const invoked = op.func.invokeContract();
-  return {
-    fn: invoked.functionName().toString(),
-    args: invoked.args().map((arg) => scValToNative(arg)),
-  };
-}
 
 describe("RwaAssetClient write builders", () => {
   // Each contract entry point calls require_auth on exactly one address, and

@@ -63,6 +63,46 @@ export interface TxResult {
   ledger: number;
 }
 
+// ─── Registry ─────────────────────────────────────────────────────────────────
+
+/** An asset contract recorded in the registry. */
+export interface AssetEntry {
+  /** Address of the deployed `rwa-asset` contract. */
+  contract: string;
+  /**
+   * Broad category of the underlying asset.
+   *
+   * The registry stores this as a free-form string and validates nothing, so a
+   * value outside this union is possible for an entry written by other tooling.
+   */
+  assetClass: AssetClass;
+  /** Whether the registry still considers this asset current. */
+  active: boolean;
+}
+
+// ─── Governance ───────────────────────────────────────────────────────────────
+
+export type ProposalStatus = "Active" | "Passed" | "Rejected" | "Executed";
+
+export interface Proposal {
+  /** Contract-assigned id, counting from 1. */
+  id: bigint;
+  proposer: string;
+  title: string;
+  /** Hex of the off-chain proposal document's hash. */
+  descriptionHash: string;
+  votesFor: bigint;
+  votesAgainst: bigint;
+  /** Ledger sequence after which voting is closed. */
+  deadlineLedger: number;
+  status: ProposalStatus;
+}
+
+/** Outcome of a submitted `propose`, carrying the id the contract assigned. */
+export interface ProposalCreated extends TxResult {
+  proposalId: bigint;
+}
+
 // ─── Well-known network presets ───────────────────────────────────────────────
 
 export const TESTNET_CONFIG: Omit<NetworkConfig, "network"> & { network: "testnet" } = {

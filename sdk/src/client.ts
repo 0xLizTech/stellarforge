@@ -1,26 +1,9 @@
-import {
-  Contract,
-  rpc,
-  TransactionBuilder,
-  BASE_FEE,
-  xdr,
-  scValToNative,
-  nativeToScVal,
-  Keypair,
-  Account,
-} from "@stellar/stellar-sdk";
+import { scValToNative, nativeToScVal } from "@stellar/stellar-sdk";
 
 import type { Transaction } from "@stellar/stellar-sdk";
 
-import type { AssetMetadata, KycRecord, StellarForgeConfig, TxResult } from "./types.js";
-
-/**
- * Validity window for a write transaction, in seconds.
- *
- * Long enough to survive a slow submission, short enough that an unsubmitted
- * signed transaction stops being replayable reasonably soon.
- */
-const WRITE_TX_TIMEOUT_SECONDS = 180;
+import { ContractClient } from "./base.js";
+import type { AssetMetadata, StellarForgeConfig, TxResult } from "./types.js";
 
 // ─── RwaAssetClient ───────────────────────────────────────────────────────────
 
@@ -31,18 +14,9 @@ const WRITE_TX_TIMEOUT_SECONDS = 180;
  * hardware wallet, etc.) rather than a raw secret. This client accepts an
  * optional `signerSecret` for automated/server contexts only.
  */
-export class RwaAssetClient {
-  private readonly server: rpc.Server;
-  private readonly contract: Contract;
-  private readonly config: StellarForgeConfig;
-
+export class RwaAssetClient extends ContractClient {
   constructor(config: StellarForgeConfig) {
-    if (!config.contracts.rwaAsset) {
-      throw new Error("contracts.rwaAsset address is required");
-    }
-    this.config = config;
-    this.server = new rpc.Server(config.rpcUrl, { allowHttp: false });
-    this.contract = new Contract(config.contracts.rwaAsset);
+    super(config, config.contracts.rwaAsset, "rwaAsset");
   }
 
   // ── Read-only queries ──────────────────────────────────────────────────────
@@ -123,7 +97,7 @@ export class RwaAssetClient {
   }
 
   async mint(issuer: string, to: string, amount: bigint): Promise<TxResult> {
-    return this.signAndSubmit(await this.buildMintTx(issuer, to, amount), issuer);
+    return this.submit(await this.buildMintTx(issuer, to, amount), issuer);
   }
 
   /** Burn `amount` from `from`'s own balance. */
@@ -135,7 +109,7 @@ export class RwaAssetClient {
   }
 
   async burn(from: string, amount: bigint): Promise<TxResult> {
-    return this.signAndSubmit(await this.buildBurnTx(from, amount), from);
+    return this.submit(await this.buildBurnTx(from, amount), from);
   }
 
   /** Transfer `amount` from `from` to `to`. */
@@ -148,7 +122,7 @@ export class RwaAssetClient {
   }
 
   async transfer(from: string, to: string, amount: bigint): Promise<TxResult> {
-    return this.signAndSubmit(await this.buildTransferTx(from, to, amount), from);
+    return this.submit(await this.buildTransferTx(from, to, amount), from);
   }
 
   /** Set `spender`'s allowance over `owner`'s balance to `amount`. */
@@ -161,7 +135,7 @@ export class RwaAssetClient {
   }
 
   async approve(owner: string, spender: string, amount: bigint): Promise<TxResult> {
-    return this.signAndSubmit(await this.buildApproveTx(owner, spender, amount), owner);
+    return this.submit(await this.buildApproveTx(owner, spender, amount), owner);
   }
 
   /** Move `amount` from `from` to `to`, drawing on `spender`'s allowance. */
@@ -185,142 +159,31 @@ export class RwaAssetClient {
     to: string,
     amount: bigint,
   ): Promise<TxResult> {
-    return this.signAndSubmit(await this.buildTransferFromTx(spender, from, to, amount), spender);
+    return this.submit(await this.buildTransferFromTx(spender, from, to, amount), spender);
   }
 
-  // ── Private helpers ────────────────────────────────────────────────────────
-
-  /**
-   * Builds and prepares an invocation sourced from `authorizer`, whose
-   * signature is what satisfies the contract's `require_auth`.
-   */
-  private async buildWriteTx(
-    authorizer: string,
-    method: string,
-    args: xdr.ScVal[],
-  ): Promise<Transaction> {
-    const account = await this.server.getAccount(authorizer);
-
-    const tx = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: this.config.networkPassphrase,
-    })
-      .addOperation(this.contract.call(method, ...args))
-      .setTimeout(WRITE_TX_TIMEOUT_SECONDS)
-      .build();
-
-    // Simulates, then attaches the footprint, authorization entries and
-    // resource fee the transaction needs to be accepted.
-    return this.server.prepareTransaction(tx);
-  }
-
-  /** Signs with the configured secret and waits for the transaction to settle. */
-  private async signAndSubmit(tx: Transaction, authorizer: string): Promise<TxResult> {
-    const secret = this.config.signerSecret;
-    if (!secret) {
-      throw new Error(
-        "config.signerSecret is required to submit a transaction. " +
-          "Use the matching build*Tx method to sign with a wallet instead.",
-      );
-    }
-
-    const keypair = Keypair.fromSecret(secret);
-
-    // Under same-address auth the signer must be the authorizing address.
-    // Catching it here beats a require_auth failure after the fee is spent.
-    if (keypair.publicKey() !== authorizer) {
-      throw new Error(
-        `signerSecret is for ${keypair.publicKey()} but this call must be authorized by ` +
-          `${authorizer}. Paying from a different account is not supported.`,
-      );
-    }
-
-    tx.sign(keypair);
-
-    const sent = await this.server.sendTransaction(tx);
-    if (sent.status === "ERROR") {
-      throw new Error(`Transaction ${sent.hash} was rejected on submission`);
-    }
-
-    const settled = await this.server.pollTransaction(sent.hash);
-    if (settled.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
-      throw new Error(`Transaction ${sent.hash} did not succeed: ${settled.status}`);
-    }
-
-    return { hash: sent.hash, ledger: settled.ledger };
-  }
-
-  private async simulateReadOnly(method: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
-    // Use a throwaway account for simulating read-only calls
-    const dummyKeypair = Keypair.random();
-    const dummyAccount = new Account(dummyKeypair.publicKey(), "0");
-
-    const tx = new TransactionBuilder(dummyAccount, {
-      fee: BASE_FEE,
-      networkPassphrase: this.config.networkPassphrase,
-    })
-      .addOperation(this.contract.call(method, ...args))
-      .setTimeout(30)
-      .build();
-
-    const simResult = await this.server.simulateTransaction(tx);
-
-    if (rpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation error: ${simResult.error}`);
-    }
-
-    if (!simResult.result) {
-      throw new Error(`No result returned from ${method}`);
-    }
-
-    return simResult.result.retval;
-  }
 }
 
 // ─── ComplianceClient ─────────────────────────────────────────────────────────
 
-export class ComplianceClient {
-  private readonly server: rpc.Server;
-  private readonly contract: Contract;
-  private readonly config: StellarForgeConfig;
-
+export class ComplianceClient extends ContractClient {
   constructor(config: StellarForgeConfig) {
-    if (!config.contracts.compliance) {
-      throw new Error("contracts.compliance address is required");
-    }
-    this.config = config;
-    this.server = new rpc.Server(config.rpcUrl, { allowHttp: false });
-    this.contract = new Contract(config.contracts.compliance);
+    super(config, config.contracts.compliance, "compliance");
   }
 
+  /**
+   * Whether `address` holds a valid, unexpired record at or above `minLevel`.
+   *
+   * The pure query, never the TTL-extending `screen`: this costs the caller
+   * nothing and writes nothing. See ADR-001.
+   *
+   * Returns false for an address with no record at all, including at level 0.
+   */
   async isCompliant(address: string, minLevel: 0 | 1 | 2 | 3): Promise<boolean> {
-    const dummyKeypair = Keypair.random();
-    const dummyAccount = new Account(dummyKeypair.publicKey(), "0");
-
-    const tx = new TransactionBuilder(dummyAccount, {
-      fee: BASE_FEE,
-      networkPassphrase: this.config.networkPassphrase,
-    })
-      .addOperation(
-        this.contract.call(
-          "is_compliant",
-          nativeToScVal(address, { type: "address" }),
-          nativeToScVal(minLevel, { type: "u32" }),
-        ),
-      )
-      .setTimeout(30)
-      .build();
-
-    const simResult = await this.server.simulateTransaction(tx);
-
-    if (rpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation error: ${simResult.error}`);
-    }
-
-    if (!simResult.result) {
-      throw new Error("No result returned from is_compliant");
-    }
-
-    return scValToNative(simResult.result.retval) as boolean;
+    const result = await this.simulateReadOnly("is_compliant", [
+      nativeToScVal(address, { type: "address" }),
+      nativeToScVal(minLevel, { type: "u32" }),
+    ]);
+    return scValToNative(result) as boolean;
   }
 }
