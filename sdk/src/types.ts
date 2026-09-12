@@ -51,8 +51,16 @@ export interface ContractAddresses {
 
 export interface StellarForgeConfig extends NetworkConfig {
   contracts: ContractAddresses;
-  /** Optional fee-paying keypair (base58 secret) — only for server-side use */
+  /** Optional signing keypair (StrKey secret, `S...`) — only for server-side use */
   signerSecret?: string;
+}
+
+/** Outcome of a write transaction that was submitted and confirmed. */
+export interface TxResult {
+  /** Hex-encoded transaction hash. */
+  hash: string;
+  /** Ledger sequence the transaction was included in. */
+  ledger: number;
 }
 
 // ─── Well-known network presets ───────────────────────────────────────────────

@@ -8,6 +8,8 @@ import {
   StrKey,
   Transaction,
   Address,
+  Keypair,
+  Account,
 } from "@stellar/stellar-sdk";
 
 import { RwaAssetClient, ComplianceClient } from "../src/client.js";
@@ -396,5 +398,261 @@ describe("contract targeting", () => {
 
     expect(contractOf(0)).toBe(RWA_ID);
     expect(contractOf(1)).toBe(COMPLIANCE_ID);
+  });
+});
+
+// ─── Write path ───────────────────────────────────────────────────────────────
+
+/**
+ * A deterministic signer. The write path requires the signing keypair to be the
+ * authorizing address, so the public key and the secret have to come from the
+ * same seed rather than being independent fixtures.
+ */
+const ISSUER_KP = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7));
+const ISSUER = ISSUER_KP.publicKey();
+const ISSUER_SECRET = ISSUER_KP.secret();
+
+const OTHER_KP = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 8));
+
+type GetAccountFn = (address: string) => Promise<Account>;
+type PrepareFn = (tx: Transaction) => Promise<Transaction>;
+type SendFn = (tx: Transaction) => Promise<rpc.Api.SendTransactionResponse>;
+type PollFn = (hash: string) => Promise<rpc.Api.GetTransactionResponse>;
+
+interface WriteStubs {
+  getAccount: MockInstance<GetAccountFn>;
+  prepare: MockInstance<PrepareFn>;
+  send: MockInstance<SendFn>;
+  poll: MockInstance<PollFn>;
+}
+
+const SUBMITTED_HASH = "a".repeat(64);
+
+/**
+ * Stubs the four network calls a write makes. `prepareTransaction` hands back
+ * the transaction it was given, so the real builder output stays under test and
+ * `signAndSubmit` has something genuine to sign.
+ */
+function stubWritePath(overrides: Partial<{ send: unknown; poll: unknown }> = {}): WriteStubs {
+  const proto = rpc.Server.prototype as unknown as {
+    getAccount: GetAccountFn;
+    prepareTransaction: PrepareFn;
+    sendTransaction: SendFn;
+    pollTransaction: PollFn;
+  };
+
+  const getAccount = vi.spyOn(proto, "getAccount");
+  getAccount.mockImplementation(async (address: string) => new Account(address, "7"));
+
+  const prepare = vi.spyOn(proto, "prepareTransaction");
+  prepare.mockImplementation(async (tx: Transaction) => tx);
+
+  const send = vi.spyOn(proto, "sendTransaction");
+  send.mockResolvedValue(
+    (overrides.send ?? {
+      status: "PENDING",
+      hash: SUBMITTED_HASH,
+      latestLedger: 10,
+      latestLedgerCloseTime: 0,
+    }) as rpc.Api.SendTransactionResponse,
+  );
+
+  const poll = vi.spyOn(proto, "pollTransaction");
+  poll.mockResolvedValue(
+    (overrides.poll ?? {
+      status: rpc.Api.GetTransactionStatus.SUCCESS,
+      txHash: SUBMITTED_HASH,
+      ledger: 42,
+    }) as rpc.Api.GetTransactionResponse,
+  );
+
+  return { getAccount, prepare, send, poll };
+}
+
+/** The contract function and decoded arguments of a built transaction. */
+function builtInvocation(tx: Transaction): { fn: string; args: unknown[] } {
+  const op = tx.operations[0] as { func: xdr.HostFunction };
+  const invoked = op.func.invokeContract();
+  return {
+    fn: invoked.functionName().toString(),
+    args: invoked.args().map((arg) => scValToNative(arg)),
+  };
+}
+
+describe("RwaAssetClient write builders", () => {
+  // Each contract entry point calls require_auth on exactly one address, and
+  // under same-address auth that address must also source the transaction.
+  // Sourcing from the wrong one produces a transaction that fails on-chain
+  // after the fee is spent.
+  it.each([
+    {
+      name: "mint",
+      fn: "mint",
+      authorizer: ISSUER,
+      build: (c: RwaAssetClient) => c.buildMintTx(ISSUER, HOLDER, 500n),
+      args: [ISSUER, HOLDER, 500n],
+    },
+    {
+      name: "burn",
+      fn: "burn",
+      authorizer: HOLDER,
+      build: (c: RwaAssetClient) => c.buildBurnTx(HOLDER, 25n),
+      args: [HOLDER, 25n],
+    },
+    {
+      name: "transfer",
+      fn: "transfer",
+      authorizer: HOLDER,
+      build: (c: RwaAssetClient) => c.buildTransferTx(HOLDER, SPENDER, 10n),
+      args: [HOLDER, SPENDER, 10n],
+    },
+    {
+      name: "approve",
+      fn: "approve",
+      authorizer: HOLDER,
+      build: (c: RwaAssetClient) => c.buildApproveTx(HOLDER, SPENDER, 99n),
+      args: [HOLDER, SPENDER, 99n],
+    },
+    {
+      name: "transferFrom",
+      fn: "transfer_from",
+      authorizer: SPENDER,
+      build: (c: RwaAssetClient) => c.buildTransferFromTx(SPENDER, HOLDER, ISSUER, 7n),
+      args: [SPENDER, HOLDER, ISSUER, 7n],
+    },
+  ])("$name invokes $fn with the documented argument order", async ({ fn, args, build }) => {
+    stubWritePath();
+    const tx = await build(new RwaAssetClient(rwaConfig));
+    expect(builtInvocation(tx)).toEqual({ fn, args });
+  });
+
+  it.each([
+    { name: "mint", authorizer: ISSUER, build: (c: RwaAssetClient) => c.buildMintTx(ISSUER, HOLDER, 1n) },
+    { name: "burn", authorizer: HOLDER, build: (c: RwaAssetClient) => c.buildBurnTx(HOLDER, 1n) },
+    { name: "transfer", authorizer: HOLDER, build: (c: RwaAssetClient) => c.buildTransferTx(HOLDER, SPENDER, 1n) },
+    { name: "approve", authorizer: HOLDER, build: (c: RwaAssetClient) => c.buildApproveTx(HOLDER, SPENDER, 1n) },
+    {
+      name: "transferFrom",
+      authorizer: SPENDER,
+      build: (c: RwaAssetClient) => c.buildTransferFromTx(SPENDER, HOLDER, ISSUER, 1n),
+    },
+  ])("$name sources the transaction from the authorizing address", async ({ authorizer, build }) => {
+    const stubs = stubWritePath();
+    const tx = await build(new RwaAssetClient(rwaConfig));
+    expect(tx.source).toBe(authorizer);
+    expect(stubs.getAccount).toHaveBeenCalledWith(authorizer);
+  });
+
+  // The whole point of splitting build from submit: a browser integration can
+  // reach a signable transaction without the library ever holding a secret.
+  it("builds without a signerSecret and leaves the transaction unsigned", async () => {
+    stubWritePath();
+    const tx = await new RwaAssetClient(rwaConfig).buildTransferTx(HOLDER, SPENDER, 1n);
+    expect(rwaConfig.signerSecret).toBeUndefined();
+    expect(tx.signatures).toHaveLength(0);
+  });
+
+  it("prepares the transaction before returning it", async () => {
+    const stubs = stubWritePath();
+    await new RwaAssetClient(rwaConfig).buildMintTx(ISSUER, HOLDER, 1n);
+    expect(stubs.prepare).toHaveBeenCalledOnce();
+  });
+
+  // prepareTransaction simulates, so a contract-rejected call fails here rather
+  // than costing a fee on-chain.
+  it("surfaces a rejection raised while preparing", async () => {
+    const stubs = stubWritePath();
+    stubs.prepare.mockRejectedValue(new Error("HostError: Error(Contract, #8)"));
+    await expect(
+      new RwaAssetClient(rwaConfig).buildTransferTx(HOLDER, SPENDER, 1n),
+    ).rejects.toThrow("HostError: Error(Contract, #8)");
+  });
+});
+
+describe("RwaAssetClient write submission", () => {
+  const signerConfig: StellarForgeConfig = { ...rwaConfig, signerSecret: ISSUER_SECRET };
+
+  it("signs, submits and reports the settled transaction", async () => {
+    const stubs = stubWritePath();
+    const result = await new RwaAssetClient(signerConfig).mint(ISSUER, HOLDER, 500n);
+
+    expect(result).toEqual({ hash: SUBMITTED_HASH, ledger: 42 });
+    expect(stubs.send).toHaveBeenCalledOnce();
+
+    const submitted = stubs.send.mock.calls[0]?.[0] as Transaction;
+    expect(submitted.signatures.length).toBeGreaterThan(0);
+  });
+
+  it("refuses to submit without a signerSecret", async () => {
+    stubWritePath();
+    await expect(new RwaAssetClient(rwaConfig).mint(ISSUER, HOLDER, 1n)).rejects.toThrow(
+      /signerSecret is required/,
+    );
+  });
+
+  // Same-address auth means a mismatched signer produces a transaction that
+  // burns a fee and then fails require_auth. Refuse before spending it.
+  it("refuses when the signer is not the authorizing address", async () => {
+    stubWritePath();
+    const wrongSigner: StellarForgeConfig = { ...rwaConfig, signerSecret: OTHER_KP.secret() };
+    await expect(new RwaAssetClient(wrongSigner).mint(ISSUER, HOLDER, 1n)).rejects.toThrow(
+      /must be authorized by/,
+    );
+  });
+
+  it("does not submit when the signer is rejected", async () => {
+    const stubs = stubWritePath();
+    const wrongSigner: StellarForgeConfig = { ...rwaConfig, signerSecret: OTHER_KP.secret() };
+    await expect(new RwaAssetClient(wrongSigner).mint(ISSUER, HOLDER, 1n)).rejects.toThrow();
+    expect(stubs.send).not.toHaveBeenCalled();
+  });
+
+  it("throws when submission is rejected outright", async () => {
+    stubWritePath({
+      send: { status: "ERROR", hash: SUBMITTED_HASH, latestLedger: 10, latestLedgerCloseTime: 0 },
+    });
+    await expect(new RwaAssetClient(signerConfig).mint(ISSUER, HOLDER, 1n)).rejects.toThrow(
+      /rejected on submission/,
+    );
+  });
+
+  // A transaction can be accepted for inclusion and still fail when applied.
+  // Returning a hash here would read as success.
+  it("throws when the transaction settles as FAILED", async () => {
+    stubWritePath({
+      poll: {
+        status: rpc.Api.GetTransactionStatus.FAILED,
+        txHash: SUBMITTED_HASH,
+        ledger: 42,
+      },
+    });
+    await expect(new RwaAssetClient(signerConfig).mint(ISSUER, HOLDER, 1n)).rejects.toThrow(
+      /did not succeed: FAILED/,
+    );
+  });
+
+  it("throws when the transaction never appears", async () => {
+    stubWritePath({
+      poll: { status: rpc.Api.GetTransactionStatus.NOT_FOUND, txHash: SUBMITTED_HASH },
+    });
+    await expect(new RwaAssetClient(signerConfig).mint(ISSUER, HOLDER, 1n)).rejects.toThrow(
+      /did not succeed: NOT_FOUND/,
+    );
+  });
+
+  it.each([
+    { name: "burn", call: (c: RwaAssetClient) => c.burn(ISSUER, 1n) },
+    { name: "transfer", call: (c: RwaAssetClient) => c.transfer(ISSUER, HOLDER, 1n) },
+    { name: "approve", call: (c: RwaAssetClient) => c.approve(ISSUER, SPENDER, 1n) },
+    {
+      name: "transferFrom",
+      call: (c: RwaAssetClient) => c.transferFrom(ISSUER, HOLDER, SPENDER, 1n),
+    },
+  ])("$name submits and reports the settled transaction", async ({ call }) => {
+    stubWritePath();
+    await expect(call(new RwaAssetClient(signerConfig))).resolves.toEqual({
+      hash: SUBMITTED_HASH,
+      ledger: 42,
+    });
   });
 });
