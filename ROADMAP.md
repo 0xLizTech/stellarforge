@@ -23,12 +23,12 @@ This document describes the planned evolution of the StellarForge protocol acros
 - [x] `registry` contract: global asset directory with active/inactive flags
 - [x] `compliance` contract: KYC/AML record storage with jurisdiction and expiry
 - [x] `governance` contract: proposal creation, voting, finalization
-- [x] TypeScript SDK: read-only clients for RwaAsset and Compliance
+- [x] TypeScript SDK: clients for all four contracts (RwaAsset, Compliance, Registry, Governance)
 - [x] CI/CD: GitHub Actions for contracts (check, test, build-wasm) and SDK
 - [x] Testnet deployment scripts
 - [ ] Formal security review (internal)
 - [x] Compliance middleware hook (integrate Compliance into RwaAsset transfer flow)
-- [ ] SDK: write-path transaction builder helpers
+- [x] SDK: write-path transaction builder helpers
 - [ ] SDK: npm package publish to `@stellarforge/sdk`
 
 ### Target: Q3 2026

@@ -35,3 +35,6 @@ Thumbs.db
 coverage/
 lcov.info
 *.profraw
+
+# Pulled in from the repo root by the sdk prepack script
+sdk/LICENSE

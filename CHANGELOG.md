@@ -17,11 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TxResult`, the hash and ledger of a submitted write transaction.
 - `RegistryClient` and `GovernanceClient`, covering every entry point on the registry and governance contracts. Reads and writes follow the same patterns as `RwaAssetClient`, including the build-or-submit split.
 - `AssetEntry`, `Proposal`, `ProposalStatus` and `ProposalCreated` types.
+- `.github/workflows/publish-sdk.yml`, publishing `@stellarforge/sdk` on a published release or by manual dispatch. The manual path defaults to a dry run, and a release publish refuses if `package.json` disagrees with the tag.
+- `sdk/README.md`, which is what the npm package page renders.
 - Unit tests for `RwaAssetClient` and `ComplianceClient`, stubbing Soroban RPC at `rpc.Server.prototype.simulateTransaction` so the contract call, the ScVal codecs and both failure paths are exercised for real.
 - `sdk/tests/smoke.testnet.test.ts`, an opt-in live check of both clients against a deployed contract over real Soroban RPC. It asserts contract invariants rather than fixed values, and skips unless `SMOKE_RWA_ASSET_ID` or `SMOKE_COMPLIANCE_ID` names a contract, so CI never runs it.
 
 ### Changed
 
+- `sdk/package.json` declares `publishConfig.access: public`. A scoped package defaults to restricted, so the first publish would otherwise have failed or gone private. A `prepack` script copies the repo LICENSE into the package, since npm ships those only from the package root.
 - The four clients now share one `ContractClient` base rather than each carrying its own copy of the RPC server, contract handle, simulation helper and write path.
 - `npm run typecheck` now covers `tests/` as well as `src/`, via a `tsconfig.test.json` that relaxes the `rootDir` the published build depends on. Test files were previously transpiled by vitest but never typechecked, so type errors in them reached no CI gate.
 - The SDK now requires Node.js 22 or newer, and CI tests against Node 22 and 24 instead of 20 and 22. `@stellar/stellar-sdk` has required Node 22 since 16.0.0, so the previous `>=20.0.0` in `package.json` did not reflect what the package actually needed.
