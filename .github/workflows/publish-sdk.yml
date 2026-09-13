@@ -1,0 +1,84 @@
+name: Publish SDK
+
+# Publishing is deliberately not automatic on merge. It fires when a release is
+# published, or by hand — and the manual path defaults to a dry run, because an
+# npm version number cannot be reused once it is taken.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run every check and pack the tarball, but do not publish"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Install dependencies
+        working-directory: sdk
+        run: npm ci
+
+      # The same gates SDK CI runs. A release tag can be cut from a commit that
+      # never went through a PR, so this is not redundant.
+      - name: Type check
+        working-directory: sdk
+        run: npm run typecheck
+
+      - name: Run tests
+        working-directory: sdk
+        run: npm test
+
+      - name: Build
+        working-directory: sdk
+        run: npm run build
+
+      # Publishing 0.1.0 from a tag reading v0.2.0 is a mistake npm will not let
+      # you take back, so refuse before it happens.
+      - name: Check the version matches the release tag
+        if: github.event_name == 'release'
+        working-directory: sdk
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::package.json is $PKG_VERSION but the release tag is $GITHUB_REF_NAME"
+            exit 1
+          fi
+          echo "Publishing $PKG_VERSION"
+
+      # prepack copies the licence in. Listing the contents makes it obvious in
+      # the log whether dist, README and LICENSE all made it.
+      - name: Pack and show the tarball contents
+        working-directory: sdk
+        run: |
+          npm pack --dry-run
+          test -f LICENSE || { echo "::error::prepack did not produce sdk/LICENSE"; exit 1; }
+
+      - name: Publish
+        if: github.event_name == 'release' || inputs.dry_run == false
+        working-directory: sdk
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Dry run complete
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: echo "Dry run only. Re-run with dry_run unchecked, or publish a release, to publish for real."

@@ -13,13 +13,17 @@
     }
   },
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "vitest run tests/smoke.testnet.test.ts",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "prepack": "cp ../LICENSE ./LICENSE"
   },
   "keywords": ["stellar", "soroban", "rwa", "blockchain", "defi", "tokenization"],
   "license": "Apache-2.0",
