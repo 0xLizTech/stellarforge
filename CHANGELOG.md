@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AssetEntry`, `Proposal`, `ProposalStatus` and `ProposalCreated` types.
 - `.github/workflows/publish-sdk.yml`, publishing `@stellarforge/sdk` on a published release or by manual dispatch. The manual path defaults to a dry run, and a release publish refuses if `package.json` disagrees with the tag.
 - `sdk/README.md`, which is what the npm package page renders.
+- `.github/workflows/testnet-smoke.yml`, a manually dispatched job that deploys all four contracts to testnet with a throwaway friendbot-funded key, initializes them, and runs the live smoke test against them. It is the only thing in CI that exercises the wire format; `sdk-ci` stubs `simulateTransaction` and so passes identically whatever changed underneath.
 - Unit tests for `RwaAssetClient` and `ComplianceClient`, stubbing Soroban RPC at `rpc.Server.prototype.simulateTransaction` so the contract call, the ScVal codecs and both failure paths are exercised for real.
 - `sdk/tests/smoke.testnet.test.ts`, an opt-in live check of both clients against a deployed contract over real Soroban RPC. It asserts contract invariants rather than fixed values, and skips unless `SMOKE_RWA_ASSET_ID` or `SMOKE_COMPLIANCE_ID` names a contract, so CI never runs it.
 
@@ -31,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `scripts/deploy.sh` is now executable. It was committed `100644`, so `./scripts/deploy.sh` — the invocation its own usage comment documents — failed with `Permission denied`.
+- `stellar keys generate --global` in `README.md` and `CONTRIBUTING.md`. stellar-cli 27 removed the flag, so the documented setup step failed outright on a current CLI.
 - SF-2026-001: a self-transfer wrote debit and credit to the same storage key and minted tokens out of nothing (critical).
 - SF-2026-002: storage TTL was never extended, risking archival of live balances and instance state (high).
 - `registry.register` no longer duplicates an asset in `list_assets` when an already-registered asset is re-registered.

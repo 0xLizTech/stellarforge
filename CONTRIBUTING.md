@@ -108,7 +108,7 @@ cargo watch -x "test --all --features testutils"
 
 ```bash
 # Generate and fund a test keypair
-stellar keys generate --global devkey --network testnet
+stellar keys generate devkey --network testnet
 stellar keys fund devkey --network testnet
 
 # Deploy

@@ -49,9 +49,12 @@ jobs:
             | tar xz -C /usr/local/bin stellar
           stellar --version
 
+      # No --global: stellar-cli 27 dropped it, and keys now always land in the
+      # CLI config dir, so the later steps that change working-directory still
+      # resolve the alias.
       - name: Generate and fund a throwaway deployer
         run: |
-          stellar keys generate --global "$DEPLOYER" --network "$NETWORK"
+          stellar keys generate "$DEPLOYER" --network "$NETWORK"
           stellar keys fund "$DEPLOYER" --network "$NETWORK"
           DEPLOYER_ADDRESS=$(stellar keys address "$DEPLOYER")
           echo "DEPLOYER_ADDRESS=$DEPLOYER_ADDRESS" >> "$GITHUB_ENV"
