@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/audits/external-audit-handover-phase1.md`, the handover for the Phase 1 external audit. It covers scope, how to rebuild the audited wasm, the trust model, the invariants to test, the deliberate design choices, and how the PRD relates to Phase 1.
+
+### Changed
+
+- `docs/prd/PRODUCT_REQUIREMENTS.md` scopes three security claims to the phases that implement them. The over-minting mitigation now describes the cap rule (#54). Quorum, timelock and veto defences apply once governance can execute (Phase 3+). The only Phase 1 emergency control is `set_paused` on `rwa-asset`, since Phase 1 contracts cannot be upgraded.
+
 ## [0.3.0] - 2026-09-14
 
 Adds operator methods and sponsored writes to the SDK. Nothing is removed or changed incompatibly from 0.2.0, and the contract interfaces are unchanged.

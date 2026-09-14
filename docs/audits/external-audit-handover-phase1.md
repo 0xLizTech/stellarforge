@@ -87,7 +87,7 @@ Every contract is configured in a `__constructor` at deploy, so there is no unin
 
 | Role | Held by | Can | Cannot |
 |---|---|---|---|
-| Asset admin | One address per `rwa-asset` | Grant or revoke issuers; pause; update metadata within the rules in §5; set or remove the compliance contract; hand the role over with the new admin's signature | Mint, move or burn tokens; change `decimals`; remove a supply cap or set it below supply |
+| Asset admin | One address per `rwa-asset` | Grant or revoke issuers; pause; update metadata within the rules in §5; set or remove the compliance contract; hand the role over with the new admin's signature | Mint, move or burn tokens; change `decimals`; raise or remove a supply cap, or set it below supply |
 | Issuer | Any number of addresses | Mint up to the cap to addresses that pass screening | Anything else |
 | Compliance admin | One address per `compliance` | Set and revoke KYC records; hand the role over | Affect an asset that does not point at this contract |
 | Registry admin | One address | Register assets and set their `active` flag; hand the role over | Affect any asset contract |
@@ -104,7 +104,7 @@ Please treat a way to break any of these as a finding.
 
 **`rwa-asset`**
 1. The sum of all balances equals `total_supply`.
-2. While `max_supply > 0`, `total_supply <= max_supply`. The admin can never set a nonzero cap back to 0 or below the current supply.
+2. While `max_supply > 0`, `total_supply <= max_supply`. The admin can only lower a nonzero cap, and never below the current supply or back to 0.
 3. `decimals` never changes after construction.
 4. Only an address with the issuer role, authorizing the call, can mint.
 5. No balance changes without the authorization of the address losing tokens, or of a spender within its unexpired allowance.
@@ -144,7 +144,6 @@ Each is recorded in an ADR with its reasoning. We are glad to discuss any of the
 | `screen` writes (a TTL extension) without authorization. | ADR-002, ADR-004 |
 | `finalize` requires no authorization. | ADR-002 |
 | Governance weights are declared by the voter and verified against nothing, and there is no quorum. Outcomes are advisory and gate nothing in Phase 1. | `contracts/governance/src/lib.rs` module docs |
-| The admin may *raise* a supply cap, which is dilutive, and the change is visible through `MetadataUpdated`. | Internal review IR-02 |
 | Registry entries are admin assertions: nothing verifies that an address is a deployed `rwa-asset`, and nothing reads `active`. | Internal review IR-16 |
 | `approve` replaces the old amount outright, so the SEP-41 approve-overwrite race applies. | `rwa-asset` `approve` docs |
 | Reads never extend TTL. An entry idle beyond the maximum TTL costs its next user a restore fee. | ADR-001 |
@@ -152,16 +151,19 @@ Each is recorded in an ADR with its reasoning. We are glad to discuss any of the
 
 ---
 
-## 7. Where the PRD describes more than Phase 1 implements
+## 7. The PRD and Phase 1
 
-`docs/prd/PRODUCT_REQUIREMENTS.md` covers all five phases. These statements do not hold for the Phase 1 code, and should not be read as requirements it meets:
+`docs/prd/PRODUCT_REQUIREMENTS.md` covers all five phases. Preparing this handover found three places where its security sections promised more than Phase 1 does. Each was settled before the audit:
 
-| PRD statement | Phase 1 reality |
+| PRD statement | Resolution |
 |---|---|
-| §10.2: the hard supply cap is "not bypassable by admin" | The admin cannot remove a cap or set it below supply, but can raise it (§6) |
-| §10.2: governance takeover is mitigated by "minimum quorum requirements; optimistic timelock; guardian veto" | No quorum, timelock or veto exists; governance is advisory (§6) |
-| §10.4: a Security Council can "initiate emergency contract upgrades" | No contract can be upgraded (ADR-003). The only emergency control is `set_paused` on `rwa-asset` |
-| NFR-R-1: upgrades gated by admin authorization and a governance vote (Phase 3+) | Not applicable: there is no upgrade path to gate |
+| §10.2: the hard supply cap is "not bypassable by admin" | **The contract was changed to match.** The admin could still raise a cap, so `update_metadata` now refuses that too (#54). A cap can only be tightened. |
+| §10.2: governance takeover is mitigated by quorum, a timelock and a guardian veto | **The PRD was corrected.** Phase 1 governance is advisory and executes nothing, so those defences are scoped to the phases that add execution (Phase 3+). |
+| §10.4: a Security Council can "initiate emergency contract upgrades" | **The PRD was corrected.** Phase 1 contracts have no upgrade path (ADR-003), and its only emergency control is `set_paused` on `rwa-asset`. |
+
+NFR-R-1 requires upgrades to be gated by admin authorization and a governance vote (Phase 3+). With no upgrade path in Phase 1, there is nothing for it to gate.
+
+A PRD statement not reconciled here, and found not to hold for the audited commit, is a finding.
 
 ---
 

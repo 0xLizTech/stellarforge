@@ -505,10 +505,10 @@ All state transitions emit Soroban events. Off-chain indexers (hosted by the pro
 
 | Threat | Mitigation |
 |---|---|
-| Over-minting | Hard supply cap enforced in contract; not bypassable by admin |
+| Over-minting | Hard supply cap enforced in contract; not bypassable by admin. The admin can tighten a cap but never raise or remove it, or set it below circulating supply (#54) |
 | Replay attacks | Soroban's built-in nonce management; sequence-bound ZK proofs (Phase 4) |
 | Admin key compromise | Admin transfer requires dual auth; Phase 3+ replaces multisig with governance |
-| Governance takeover | Minimum quorum requirements; optimistic timelock; guardian veto (Phase 5) |
+| Governance takeover | Phases 1–2: governance is advisory and executes nothing, so there is nothing to take over. With execution hooks (Phase 3+): minimum quorum requirements and an optimistic timelock, then a guardian veto (Phase 5) |
 | Oracle manipulation | Staleness check; multi-source oracle aggregation; circuit breaker on NAV deviation |
 | Bridge replay | Unique bridge message IDs; 7-day dispute window; economic bonds for relayers |
 | Reentrancy | Soroban's execution model prevents reentrancy by design (no external contract can interrupt execution) |
@@ -529,9 +529,9 @@ All audit reports will be published in full in the repository.
 ### 10.4 Emergency Response
 
 The protocol maintains a Security Council (initially a 3-of-5 multisig) empowered to:
-- Call `set_paused(true)` on any contract
-- Initiate emergency contract upgrades
-- Freeze bridge relayers
+- Call `set_paused(true)` on an `rwa-asset`. In Phase 1 this is the only emergency control: `rwa-asset` is the only contract with a circuit breaker.
+- Initiate emergency contract upgrades (Phase 3+). Phase 1 contracts have no upgrade path (ADR-003). Upgrades arrive only with governance-gated upgradeability, per NFR-R-1.
+- Freeze bridge relayers (Phase 4)
 
 The Security Council's powers are bounded by governance (Phase 5: council is elected by DAO vote, powers are defined by on-chain parameters).
 
