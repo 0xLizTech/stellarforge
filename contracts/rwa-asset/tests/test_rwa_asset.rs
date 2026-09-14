@@ -460,6 +460,22 @@ fn test_update_metadata_cannot_lift_a_cap() {
     assert_eq!(client.metadata().max_supply, MAX_SUPPLY);
 }
 
+/// PRD §10.2: the cap is "not bypassable by admin". Raising it would dilute
+/// holders as surely as removing it, so both are refused.
+#[test]
+fn test_update_metadata_cannot_raise_a_cap() {
+    let (env, _, client) = setup();
+
+    let mut raised = default_metadata(&env);
+    raised.max_supply = MAX_SUPPLY + 1;
+
+    assert_eq!(
+        client.try_update_metadata(&raised),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+    assert_eq!(client.metadata().max_supply, MAX_SUPPLY);
+}
+
 #[test]
 fn test_update_metadata_cannot_cap_below_circulating_supply() {
     let (env, _, client) = setup();

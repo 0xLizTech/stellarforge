@@ -150,7 +150,7 @@ than six times the actual ceiling.
 
 **Severity:** Medium  **Location:** `contracts/rwa-asset/src/lib.rs:338-344`
 
-**Status:** Fixed in `a1c73c2`. `decimals` is immutable (`DecimalsImmutable`). A cap can move, but never below `total_supply` and never back to 0 (`InvalidSupplyCap`). Raising a cap is still allowed, and since IR-03 it is visible through `MetadataUpdated`.
+**Status:** Fixed in `a1c73c2`. `decimals` is immutable (`DecimalsImmutable`). A cap can move, but never below `total_supply` and never back to 0 (`InvalidSupplyCap`). Raising a cap is still allowed, and since IR-03 it is visible through `MetadataUpdated`. A later change also stopped the admin raising a cap, so PRD §10.2's "not bypassable by admin" holds: a cap can now only be tightened.
 
 `update_metadata` runs only `validate_metadata`, which checks the shape of the
 value and never compares it with the asset's current state. The admin can,

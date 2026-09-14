@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** `rwa-asset.update_metadata` refuses raising a supply cap, with `InvalidSupplyCap`. The admin could already neither remove a cap nor set it below supply. Now a cap can only be tightened, which makes PRD §10.2's "not bypassable by admin" true. An uncapped asset can still be given a cap at or above its supply.
+
 ## [0.3.0] - 2026-09-14
 
 Adds operator methods and sponsored writes to the SDK. Nothing is removed or changed incompatibly from 0.2.0, and the contract interfaces are unchanged.
