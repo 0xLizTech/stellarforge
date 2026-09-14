@@ -83,9 +83,8 @@ fn test_initialize_starts_with_an_empty_directory() {
 
 // The double-initialize and uninitialized-admin tests went with the
 // `initialize` entry point: a constructor configures the contract inside the
-// deploy transaction, so neither state exists to be tested. See the note in
-// `contracts/compliance/tests/test_compliance_contract.rs` on why constructor
-// auth is not covered either.
+// deploy transaction, so neither state exists to be tested. Constructor
+// authorization is asserted in `tests/test_constructor_auth.rs`.
 
 // ─── Registration ──────────────────────────────────────────────────────────
 

@@ -87,11 +87,10 @@ fn test_initialize_sets_admin() {
 
 // The constructor's `admin.require_auth()` is not covered here, and cannot be:
 // `Env::register` invokes a constructor with authorization mocked, so it
-// succeeds whatever the environment is configured to allow. Covering it needs a
-// real deploy via `env.deployer()` against uploaded wasm, which no test in this
-// repo does yet. Auth on the former `initialize` was equally uncovered — every
-// test that called it ran under `mock_all_auths` — so this is a pre-existing
-// gap that moved, not one this change introduced.
+// succeeds whatever the environment is configured to allow. What it does still
+// record is the authorization the constructor demanded, and
+// `tests/test_constructor_auth.rs` asserts that record, so removing the
+// constructor's `require_auth` now fails a test.
 
 // ─── Records ───────────────────────────────────────────────────────────────
 
