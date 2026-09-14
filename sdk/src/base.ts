@@ -66,6 +66,14 @@ export abstract class ContractClient {
     contractId: string | undefined,
     configKey: string,
   ) {
+    // TypeScript already requires rpcUrl; this catches JavaScript callers who
+    // spread MAINNET_CONFIG, which deliberately carries none.
+    if (!config.rpcUrl) {
+      throw new Error(
+        "config.rpcUrl is required. SDF runs no public mainnet RPC, so MAINNET_CONFIG has none; " +
+          "choose a provider from https://developers.stellar.org/docs/data/apis/rpc/providers",
+      );
+    }
     if (!contractId) {
       throw new Error(`contracts.${configKey} address is required`);
     }

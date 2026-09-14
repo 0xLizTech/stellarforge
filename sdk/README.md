@@ -37,6 +37,22 @@ would lose precision silently. Use `toStroops` and `fromStroops` to convert.
 notation, more decimal places than the asset allows, and a `number` that is not
 a safe integer, so pass user-entered amounts as strings.
 
+## Networks
+
+`TESTNET_CONFIG` includes SDF's public testnet RPC. `MAINNET_CONFIG` has no RPC
+URL, because SDF doesn't run a public mainnet RPC. Supply one from an
+[RPC provider](https://developers.stellar.org/docs/data/apis/rpc/providers); TypeScript won't compile a mainnet config without it.
+
+```typescript
+import { MAINNET_CONFIG, RwaAssetClient } from "@stellarforge-protocol/sdk";
+
+const client = new RwaAssetClient({
+  ...MAINNET_CONFIG,
+  rpcUrl: "https://your-mainnet-rpc-provider.example",
+  contracts: { rwaAsset: "C..." },
+});
+```
+
 ## Writing
 
 Every write comes in two forms.
