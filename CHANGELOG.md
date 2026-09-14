@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/audits/external-audit-handover-phase1.md`, the handover for the Phase 1 external audit. It covers scope, how to rebuild the audited wasm, the trust model, the invariants to test, the deliberate design choices, and where the PRD describes more than Phase 1 implements.
 - Operator methods in the SDK. `RwaAssetClient` gains `admin`, `complianceContract` and `minComplianceLevel` reads, and `setIssuer`, `setPaused`, `updateMetadata` and `setCompliance` admin writes (`setCompliance(admin, null, level)` switches screening off). `ComplianceClient` gains `getKyc` and `admin` reads, and `setKyc` and `revokeKyc` admin writes. Each write has a `build*Tx` and a submitting form.
 - Sponsored writes (#31): one account sources and pays for a write that another address authorizes.
   - `RwaAssetClient` gains `buildSponsoredMintTx`, `buildSponsoredBurnTx`, `buildSponsoredBurnFromTx`, `buildSponsoredTransferTx`, `buildSponsoredApproveTx` and `buildSponsoredTransferFromTx`.
