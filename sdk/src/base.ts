@@ -4,6 +4,7 @@ import {
   Contract,
   Keypair,
   nativeToScVal,
+  Operation,
   rpc,
   TransactionBuilder,
   xdr,
@@ -12,6 +13,8 @@ import {
 import type { Transaction } from "@stellar/stellar-sdk";
 
 import { TransactionExpiredError, TransactionOutcomeUnknownError } from "./errors.js";
+import { authEntryAddress, checkSignedAuthEntry } from "./sponsored.js";
+import type { SponsoredTransaction } from "./sponsored.js";
 import type { StellarForgeConfig, TxResult } from "./types.js";
 
 /**
@@ -147,7 +150,11 @@ export abstract class ContractClient {
    *   address being authorized. For a permissionless one it is simply whoever
    *   is paying.
    */
-  protected async signAndSubmit(tx: Transaction, source: string): Promise<SubmitOutcome> {
+  protected async signAndSubmit(
+    tx: Transaction,
+    source: string,
+    sponsored = false,
+  ): Promise<SubmitOutcome> {
     const secret = this.config.signerSecret;
     if (!secret) {
       throw new Error(
@@ -163,8 +170,11 @@ export abstract class ContractClient {
     // is spent.
     if (keypair.publicKey() !== source) {
       throw new Error(
-        `signerSecret is for ${keypair.publicKey()} but this call must be authorized by ` +
-          `${source}. Paying from a different account is not supported.`,
+        sponsored
+          ? `signerSecret is for ${keypair.publicKey()} but this sponsored transaction is sourced ` +
+              `and paid for by ${source}, which must sign it.`
+          : `signerSecret is for ${keypair.publicKey()} but this call must be authorized by ` +
+              `${source}. To pay from a different account, use a buildSponsored*Tx method.`,
       );
     }
 
@@ -239,6 +249,138 @@ export abstract class ContractClient {
   protected async submit(tx: Transaction, source: string): Promise<TxResult> {
     const { hash, ledger } = await this.signAndSubmit(tx, source);
     return { hash, ledger };
+  }
+
+  // ── Sponsored writes (#31) ─────────────────────────────────────────────────
+
+  /**
+   * Builds an invocation that `feeSource` sources and pays for, and returns the
+   * authorization entries other parties must sign. See `sponsored.ts` for the
+   * whole flow.
+   *
+   * Nothing is prepared or signed here. The transaction is rebuilt when it is
+   * finalized, with a fresh sequence number and validity window, so gathering
+   * signatures may take longer than the transaction's own 180 seconds.
+   */
+  protected async buildSponsoredWriteTx(
+    feeSource: string,
+    method: string,
+    args: xdr.ScVal[],
+  ): Promise<SponsoredTransaction> {
+    const transaction = new TransactionBuilder(await this.server.getAccount(feeSource), {
+      fee: BASE_FEE,
+      networkPassphrase: this.config.networkPassphrase,
+    })
+      .addOperation(this.contract.call(method, ...args))
+      .setTimeout(WRITE_TX_TIMEOUT_SECONDS)
+      .build();
+
+    const simulation = await this.server.simulateTransaction(transaction);
+    if (rpc.Api.isSimulationError(simulation)) {
+      throw new Error(`Simulation error: ${simulation.error}`);
+    }
+
+    const authEntries = simulation.result?.auth ?? [];
+    const authorizers = authEntries.map(authEntryAddress);
+
+    // Checked here because the network's own rejection is opaque: simulating
+    // with a signed entry from an account that does not exist fails with
+    // "trying to get non-existing value for account". Confirmed on testnet.
+    for (const authorizer of new Set(authorizers)) {
+      if (authorizer === null || !authorizer.startsWith("G")) continue;
+      try {
+        await this.server.getAccount(authorizer);
+      } catch {
+        throw new Error(
+          `${authorizer} must authorize this call but has no account on the network. An account ` +
+            "can authorize only once it exists, even when another account pays every fee.",
+        );
+      }
+    }
+
+    return { transaction, authEntries, authorizers };
+  }
+
+  /**
+   * Attaches the signed entries to a sponsored invocation and prepares it for
+   * the fee payer to sign.
+   *
+   * Each signed entry is checked against the entry it replaces: the same
+   * invocation, address and nonce, actually signed, and expiring no sooner than
+   * {@link MIN_AUTH_REMAINING_LEDGERS} and no later than
+   * {@link MAX_AUTH_VALIDITY_LEDGERS} ledgers from now. The transaction is then
+   * rebuilt from the fee payer's current sequence and simulated again with the
+   * signatures in place, which is also where the network rejects a signature
+   * made with the wrong key.
+   *
+   * @returns An unsigned transaction, sourced by the fee payer.
+   */
+  async finalizeSponsoredTx(
+    sponsored: SponsoredTransaction,
+    signedEntries: readonly xdr.SorobanAuthorizationEntry[],
+  ): Promise<Transaction> {
+    const { authEntries, transaction } = sponsored;
+    if (signedEntries.length !== authEntries.length) {
+      throw new Error(
+        `Expected ${authEntries.length} authorization entries, got ${signedEntries.length}. ` +
+          "Pass back every entry, including those the fee payer covers.",
+      );
+    }
+
+    const { sequence: latestLedger } = await this.server.getLatestLedger();
+    signedEntries.forEach((signed, i) =>
+      checkSignedAuthEntry(authEntries[i] as xdr.SorobanAuthorizationEntry, signed, latestLedger, i),
+    );
+
+    const { func } = transaction.operations[0] as unknown as { func: xdr.HostFunction };
+    const withAuth = new TransactionBuilder(await this.server.getAccount(transaction.source), {
+      fee: BASE_FEE,
+      networkPassphrase: this.config.networkPassphrase,
+    })
+      .addOperation(Operation.invokeHostFunction({ func, auth: [...signedEntries] }))
+      .setTimeout(WRITE_TX_TIMEOUT_SECONDS)
+      .build();
+
+    const simulation = await this.server.simulateTransaction(withAuth);
+    if (rpc.Api.isSimulationError(simulation)) {
+      throw new Error(`Simulation error: ${simulation.error}`);
+    }
+    return rpc.assembleTransaction(withAuth, simulation).build();
+  }
+
+  /**
+   * Finalizes a sponsored invocation, signs it with `config.signerSecret` as the
+   * fee payer, and waits for it to settle.
+   */
+  async submitSponsoredTx(
+    sponsored: SponsoredTransaction,
+    signedEntries: readonly xdr.SorobanAuthorizationEntry[],
+  ): Promise<TxResult> {
+    const tx = await this.finalizeSponsoredTx(sponsored, signedEntries);
+    const { hash, ledger } = await this.signAndSubmit(tx, tx.source, true);
+    return { hash, ledger };
+  }
+
+  /**
+   * Hands this contract's admin role to `newAdmin`.
+   *
+   * The contract requires the current and the incoming admin to authorize in
+   * one transaction (NFR-S-4), so this is always built sponsored. `feeSource`
+   * (by default the current admin) sources and pays. Every other authorizer
+   * signs its entry, and when the fee payer is the current admin, that leaves
+   * only `newAdmin` to sign.
+   *
+   * @param admin - The current admin. The contract reads it from storage, so it
+   *   is used only as the default fee payer.
+   */
+  async buildTransferAdminTx(
+    admin: string,
+    newAdmin: string,
+    options: { feeSource?: string } = {},
+  ): Promise<SponsoredTransaction> {
+    return this.buildSponsoredWriteTx(options.feeSource ?? admin, "transfer_admin", [
+      nativeToScVal(newAdmin, { type: "address" }),
+    ]);
   }
 }
 

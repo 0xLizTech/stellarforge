@@ -3,6 +3,7 @@ import { nativeToScVal, scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { Transaction } from "@stellar/stellar-sdk";
 
 import { ContractClient, hexToScVal } from "./base.js";
+import type { SponsoredTransaction } from "./sponsored.js";
 import type { AssetMetadata, KycRecord, StellarForgeConfig, TxResult } from "./types.js";
 
 // ─── Struct codecs ────────────────────────────────────────────────────────────
@@ -128,9 +129,8 @@ export class RwaAssetClient extends ContractClient {
   // server-side automation. It is a thin wrapper over the builder.
   //
   // Both assume the authorizing address is also the transaction source, so the
-  // source signature satisfies the contract's `require_auth`. Paying fees from
-  // a different account needs signed authorization entries and is not supported
-  // here.
+  // source signature satisfies the contract's `require_auth`. To have a
+  // different account pay, use the sponsored writes further down.
   //
   // Note that `build*Tx` simulates as part of preparing, so a call the contract
   // would reject — a bad amount, a paused asset, a party failing compliance —
@@ -241,15 +241,106 @@ export class RwaAssetClient extends ContractClient {
     return this.submit(await this.buildTransferFromTx(spender, from, to, amount), spender);
   }
 
+  // ── Sponsored writes ───────────────────────────────────────────────────────
+  //
+  // The holder writes above, sourced and paid for by `feeSource` while the named
+  // party only authorizes (#31). Each returns the unsigned transaction and the
+  // entries to sign; finish with `authorizeEntries`, then `finalizeSponsoredTx`
+  // or `submitSponsoredTx`. The authorizing account must exist on the network,
+  // even though it pays nothing.
+
+  /** `mint`, authorized by `issuer` and paid for by `feeSource`. */
+  async buildSponsoredMintTx(
+    issuer: string,
+    to: string,
+    amount: bigint,
+    { feeSource }: { feeSource: string },
+  ): Promise<SponsoredTransaction> {
+    return this.buildSponsoredWriteTx(feeSource, "mint", [
+      nativeToScVal(issuer, { type: "address" }),
+      nativeToScVal(to, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  /** `burn`, authorized by `from` and paid for by `feeSource`. */
+  async buildSponsoredBurnTx(
+    from: string,
+    amount: bigint,
+    { feeSource }: { feeSource: string },
+  ): Promise<SponsoredTransaction> {
+    return this.buildSponsoredWriteTx(feeSource, "burn", [
+      nativeToScVal(from, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  /** `burn_from`, authorized by `spender` and paid for by `feeSource`. */
+  async buildSponsoredBurnFromTx(
+    spender: string,
+    from: string,
+    amount: bigint,
+    { feeSource }: { feeSource: string },
+  ): Promise<SponsoredTransaction> {
+    return this.buildSponsoredWriteTx(feeSource, "burn_from", [
+      nativeToScVal(spender, { type: "address" }),
+      nativeToScVal(from, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  /** `transfer`, authorized by `from` and paid for by `feeSource`. */
+  async buildSponsoredTransferTx(
+    from: string,
+    to: string,
+    amount: bigint,
+    { feeSource }: { feeSource: string },
+  ): Promise<SponsoredTransaction> {
+    return this.buildSponsoredWriteTx(feeSource, "transfer", [
+      nativeToScVal(from, { type: "address" }),
+      nativeToScVal(to, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  /** `approve`, authorized by `owner` and paid for by `feeSource`. */
+  async buildSponsoredApproveTx(
+    owner: string,
+    spender: string,
+    amount: bigint,
+    liveUntilLedger: number,
+    { feeSource }: { feeSource: string },
+  ): Promise<SponsoredTransaction> {
+    return this.buildSponsoredWriteTx(feeSource, "approve", [
+      nativeToScVal(owner, { type: "address" }),
+      nativeToScVal(spender, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+      nativeToScVal(liveUntilLedger, { type: "u32" }),
+    ]);
+  }
+
+  /** `transfer_from`, authorized by `spender` and paid for by `feeSource`. */
+  async buildSponsoredTransferFromTx(
+    spender: string,
+    from: string,
+    to: string,
+    amount: bigint,
+    { feeSource }: { feeSource: string },
+  ): Promise<SponsoredTransaction> {
+    return this.buildSponsoredWriteTx(feeSource, "transfer_from", [
+      nativeToScVal(spender, { type: "address" }),
+      nativeToScVal(from, { type: "address" }),
+      nativeToScVal(to, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
   // ── Admin operations ───────────────────────────────────────────────────────
   //
   // Authorized by the asset's admin, who also sources and pays for the
   // transaction, exactly as the writes above do. `admin()` returns the address.
-  //
-  // `transfer_admin` is not offered. It needs the current and the incoming admin
-  // to sign one transaction, which this same-address write path cannot build.
-  // Until separately signed authorization entries land (#31), hand the role over
-  // with `stellar-cli`.
+  // Handing the role over is `buildTransferAdminTx`, shared by every client,
+  // because it needs two authorizers.
 
   /** Grant (`approved` true) or revoke the issuer role for `issuer`. */
   async buildSetIssuerTx(admin: string, issuer: string, approved: boolean): Promise<Transaction> {
@@ -326,7 +417,7 @@ export class RwaAssetClient extends ContractClient {
  * `rwa-asset` screens transfers against.
  *
  * Writes are admin-only and follow the same build-or-submit split as
- * {@link RwaAssetClient}. `transfer_admin` is not offered, for the same reason.
+ * {@link RwaAssetClient}. Handing the admin role over is `buildTransferAdminTx`.
  */
 export class ComplianceClient extends ContractClient {
   constructor(config: StellarForgeConfig) {

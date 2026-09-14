@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Operator methods in the SDK. `RwaAssetClient` gains `admin`, `complianceContract` and `minComplianceLevel` reads, and `setIssuer`, `setPaused`, `updateMetadata` and `setCompliance` admin writes (`setCompliance(admin, null, level)` switches screening off). `ComplianceClient` gains `getKyc` and `admin` reads, and `setKyc` and `revokeKyc` admin writes. Each write has a `build*Tx` and a submitting form. `transfer_admin` is still not offered, because it needs two signatures on one transaction (#31).
+- Operator methods in the SDK. `RwaAssetClient` gains `admin`, `complianceContract` and `minComplianceLevel` reads, and `setIssuer`, `setPaused`, `updateMetadata` and `setCompliance` admin writes (`setCompliance(admin, null, level)` switches screening off). `ComplianceClient` gains `getKyc` and `admin` reads, and `setKyc` and `revokeKyc` admin writes. Each write has a `build*Tx` and a submitting form.
+- Sponsored writes (#31): one account sources and pays for a write that another address authorizes.
+  - `RwaAssetClient` gains `buildSponsoredMintTx`, `buildSponsoredBurnTx`, `buildSponsoredBurnFromTx`, `buildSponsoredTransferTx`, `buildSponsoredApproveTx` and `buildSponsoredTransferFromTx`.
+  - Every client gains `finalizeSponsoredTx`, `submitSponsoredTx` and `buildTransferAdminTx`, which makes `transfer_admin` reachable from the SDK.
+  - `authorizeEntries` signs an authorizer's entries and refuses a key they don't name. `authEntriesToXdr` and `authEntriesFromXdr` move entries between machines.
+  - Finalizing checks each signed entry against the one built, and requires its expiry to fall between `MIN_AUTH_REMAINING_LEDGERS` (40) and `MAX_AUTH_VALIDITY_LEDGERS` (17,280) ledgers ahead.
+  - The write smoke test runs a sponsored transfer, and with `SMOKE_WRITE_TRANSFER_ADMIN`, a sponsored admin handover.
 
 ## [0.2.0] - 2026-09-14
 

@@ -21,6 +21,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { Account, Keypair, MuxedAccount, Networks, rpc, scValToNative } from "@stellar/stellar-sdk";
 
 import { RwaAssetClient } from "../src/client.js";
+import { DEFAULT_AUTH_VALIDITY_LEDGERS, authorizeEntries } from "../src/sponsored.js";
 import { TESTNET_CONFIG } from "../src/types.js";
 import { isValidContractId, isValidStellarAddress } from "../src/utils.js";
 import type { StellarForgeConfig } from "../src/types.js";
@@ -33,6 +34,12 @@ const SPENDER_SECRET = process.env["SMOKE_WRITE_SPENDER_SECRET"];
 const RECIPIENT = process.env["SMOKE_WRITE_RECIPIENT_ADDRESS"];
 /** Set when the asset screens transfers, so the rejection path is asserted too. */
 const SCREENED = process.env["SMOKE_WRITE_SCREENED"] === "true";
+/**
+ * Set to also hand the asset's admin role from the issuer to the spender. That
+ * is not something to do to a deployment anyone intends to keep, so it needs
+ * its own opt-in.
+ */
+const TRANSFER_ADMIN = process.env["SMOKE_WRITE_TRANSFER_ADMIN"] === "true";
 
 const RPC_URL = process.env["SOROBAN_RPC_URL"] ?? TESTNET_CONFIG.rpcUrl;
 const NETWORK_PASSPHRASE =
@@ -51,6 +58,7 @@ const ALLOWANCE = 300n;
 const SPEND = 120n;
 const BURN_FROM = 30n;
 const BURN = 50n;
+const SPONSORED_TRANSFER = 40n;
 const MUXED_ID = 42n;
 
 /** How far ahead of the current ledger the smoke allowance stays spendable. */
@@ -271,6 +279,71 @@ describe.runIf(ASSET_ID)("live RwaAssetClient writes", () => {
       const after = await snapshot();
       expect(before.supply - after.supply).toBe(BURN);
       expect(before.issuerBalance - after.issuerBalance).toBe(BURN);
+    },
+    WRITE_TIMEOUT,
+  );
+
+  // #31: one account pays for a write another authorizes. The issuer signs an
+  // authorization entry and the spender sources the transaction, so the
+  // issuer's sequence number must not move. With screening on, the transfer
+  // still goes through the compliance contract.
+  it(
+    "sponsored transfer: the issuer authorizes while the spender pays",
+    async () => {
+      const before = await snapshot();
+      const issuerSequence = (await server.getAccount(issuer)).sequenceNumber();
+
+      const sponsored = await spenderClient.buildSponsoredTransferTx(
+        issuer,
+        recipient,
+        SPONSORED_TRANSFER,
+        { feeSource: spender },
+      );
+      expect(sponsored.transaction.source).toBe(spender);
+      expect(sponsored.authorizers).toEqual([issuer]);
+
+      const { sequence } = await server.getLatestLedger();
+      const signed = await authorizeEntries(
+        sponsored.authEntries,
+        Keypair.fromSecret(ISSUER_SECRET as string),
+        sequence + DEFAULT_AUTH_VALIDITY_LEDGERS,
+        NETWORK_PASSPHRASE,
+      );
+      const { hash } = await spenderClient.submitSponsoredTx(sponsored, signed);
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+
+      const after = await snapshot();
+      expect(before.issuerBalance - after.issuerBalance).toBe(SPONSORED_TRANSFER);
+      expect(after.recipientBalance - before.recipientBalance).toBe(SPONSORED_TRANSFER);
+      expect((await server.getAccount(issuer)).sequenceNumber()).toBe(issuerSequence);
+    },
+    WRITE_TIMEOUT,
+  );
+
+  // Runs last: it hands the admin role away. The contract needs the current and
+  // the incoming admin to authorize, so the current admin pays and the incoming
+  // admin signs its entry.
+  it.runIf(TRANSFER_ADMIN)(
+    "transferAdmin: the current admin pays while the incoming admin signs",
+    async () => {
+      if ((await issuerClient.admin()) !== issuer) {
+        throw new Error("SMOKE_WRITE_TRANSFER_ADMIN needs the issuer to be the asset's admin");
+      }
+
+      const sponsored = await issuerClient.buildTransferAdminTx(issuer, spender);
+      expect(sponsored.transaction.source).toBe(issuer);
+      expect(sponsored.authorizers.filter((a) => a !== null)).toEqual([spender]);
+
+      const { sequence } = await server.getLatestLedger();
+      const signed = await authorizeEntries(
+        sponsored.authEntries,
+        Keypair.fromSecret(SPENDER_SECRET as string),
+        sequence + DEFAULT_AUTH_VALIDITY_LEDGERS,
+        NETWORK_PASSPHRASE,
+      );
+      await issuerClient.submitSponsoredTx(sponsored, signed);
+
+      expect(await issuerClient.admin()).toBe(spender);
     },
     WRITE_TIMEOUT,
   );

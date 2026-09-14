@@ -153,6 +153,8 @@ jobs:
           SMOKE_WRITE_RWA_ASSET_ID: ${{ env.rwaAsset }}
           SMOKE_WRITE_RECIPIENT_ADDRESS: ${{ env.RECIPIENT_ADDRESS }}
           SMOKE_WRITE_SCREENED: "true"
+          # A throwaway deployment, so the admin handover can run too.
+          SMOKE_WRITE_TRANSFER_ADMIN: "true"
         run: |
           SMOKE_WRITE_ISSUER_SECRET=$(stellar keys secret "$DEPLOYER")
           SMOKE_WRITE_SPENDER_SECRET=$(stellar keys secret ci-spender)

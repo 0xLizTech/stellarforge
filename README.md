@@ -181,8 +181,9 @@ says whether retrying is safe:
   before retrying, or the write may execute twice.
 
 Both assume the authorizing address also sources the transaction, so its
-signature satisfies the contract's `require_auth`. Paying fees from a separate
-account is not supported yet.
+signature satisfies the contract's `require_auth`. For a fee payer separate
+from the authorizer, the SDK's sponsored writes build the transaction and the
+authorization entries to sign; the SDK README shows the flow.
 
 ---
 
