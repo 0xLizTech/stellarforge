@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** all four contracts configure themselves in a `__constructor` and no longer expose `initialize`. Deployment and configuration are now one transaction, closing the window in which a deployed contract had no admin and anyone could name themselves. `stellar contract deploy` takes the arguments after `--`; `scripts/deploy.sh` does this for all four and so now initializes what it deploys, which it previously did not.
+- `AlreadyInitialized` and `NotInitialized` are unreachable but retained in every error enum, marked reserved. ADR-003 freezes discriminants, so deleting a variant and letting later ones shift up would silently change what a deployed client believes went wrong.
+- `docs/architecture/002-auth-patterns.md` carries an amendment recording the change, including that constructor `require_auth` is asserted by no test: `Env::register` mocks authorization, and the SDK documents that it cannot be used to test it. The same call was equally unasserted on `initialize`, so nothing regressed.
 - `sdk/package.json` declares `publishConfig.access: public`. A scoped package defaults to restricted, so the first publish would otherwise have failed or gone private. A `prepack` script copies the repo LICENSE into the package, since npm ships those only from the package root.
 - The four clients now share one `ContractClient` base rather than each carrying its own copy of the RPC server, contract handle, simulation helper and write path.
 - `npm run typecheck` now covers `tests/` as well as `src/`, via a `tsconfig.test.json` that relaxes the `rootDir` the published build depends on. Test files were previously transpiled by vitest but never typechecked, so type errors in them reached no CI gate.

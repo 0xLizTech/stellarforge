@@ -183,7 +183,7 @@ account is not supported yet.
 
 | Function | Auth | Description |
 |---|---|---|
-| `initialize(admin, metadata)` | admin | One-time setup |
+| `__constructor(admin, metadata)` | admin | Runs at deploy; not callable afterwards |
 | `mint(issuer, to, amount)` | issuer | Create new tokens |
 | `burn(from, amount)` | from | Destroy tokens |
 | `transfer(from, to, amount)` | from | Move tokens |

@@ -37,10 +37,14 @@ pub struct ComplianceContract;
 
 #[contractimpl]
 impl ComplianceContract {
-    pub fn initialize(env: Env, admin: Address) {
-        if env.storage().instance().has(&ADMIN_KEY) {
-            panic_with_error!(&env, ComplianceError::AlreadyInitialized);
-        }
+    /// Configures the contract as part of the deploy transaction.
+    ///
+    /// A constructor rather than a separate `initialize` entry point: the two
+    /// are equivalent once the contract is running, but a separate call leaves
+    /// a window in which the contract exists with no admin and anyone may name
+    /// themselves. `require_auth` on `admin` still applies, so a deployer
+    /// cannot hand the role to a key whose holder has not signed for it.
+    pub fn __constructor(env: Env, admin: Address) {
         admin.require_auth();
         env.storage().instance().set(&ADMIN_KEY, &admin);
 

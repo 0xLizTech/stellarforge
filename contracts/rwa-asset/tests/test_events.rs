@@ -42,9 +42,8 @@ fn setup() -> Fixture<'static> {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let id = env.register(RwaAssetContract, ());
+    let id = env.register(RwaAssetContract, (&admin, &metadata(&env)));
     let client = RwaAssetContractClient::new(&env, &id);
-    client.initialize(&admin, &metadata(&env));
 
     let issuer = Address::generate(&env);
     client.set_issuer(&issuer, &true);

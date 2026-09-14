@@ -61,8 +61,15 @@ jobs:
           echo "Deployer: $DEPLOYER_ADDRESS"
 
       # Runs the real scripts/deploy.sh rather than reimplementing it, so this
-      # is also the first time that script has ever been exercised in CI.
-      - name: Deploy contracts
+      # is also the only place that script is exercised. Each contract takes
+      # its admin as a constructor argument, so this one step both deploys and
+      # configures: there are no separate initialize steps to get wrong, and no
+      # deployed-but-unconfigured state for the smoke test to run against.
+      - name: Deploy and configure contracts
+        env:
+          ASSET_NAME: CI Smoke REIT
+          ASSET_SYMBOL: CI-SMOKE
+          ASSET_MAX_SUPPLY: "1000000000000"
         run: STELLAR_ACCOUNT="$DEPLOYER" NETWORK="$NETWORK" ./scripts/deploy.sh
 
       - name: Read the deployed contract ids
@@ -73,42 +80,16 @@ jobs:
             echo "$key: $id"
           done
 
-      # deploy.sh deploys but does not initialize, and rwa-asset's `metadata`
-      # panics with NotInitialized until it has been. Printing the generated
-      # CLI schema first means that if the argument encoding below is wrong,
-      # the log already shows what the contract actually expects.
-      - name: Show the initialize signature
-        continue-on-error: true
+      # metadata() panicked with NotInitialized whenever the deploy and the
+      # initialize call got out of step, which is exactly what the constructor
+      # removes. Reading it here proves the constructor ran and stored what it
+      # was given, before the SDK is asked to read the same thing.
+      - name: Check the deployment is configured
         run: |
           stellar contract invoke --id "$rwaAsset" --network "$NETWORK" \
-            --source "$DEPLOYER" -- initialize --help
-
-      - name: Initialize rwa-asset
-        run: |
-          METADATA=$(jq -nc \
-            --arg hash "$(printf 'ab%.0s' {1..32})" \
-            '{
-              name: "CI Smoke REIT",
-              symbol: "CI-SMOKE",
-              decimals: 7,
-              asset_class: "real_estate",
-              legal_doc_hash: $hash,
-              max_supply: "1000000000000"
-            }')
-          echo "metadata: $METADATA"
-
-          stellar contract invoke --id "$rwaAsset" --network "$NETWORK" \
-            --source "$DEPLOYER" -- initialize \
-            --admin "$DEPLOYER_ADDRESS" \
-            --metadata "$METADATA"
-
-      # is_compliant reads storage and returns false for an unknown subject, so
-      # the compliance block would pass uninitialized. Initialize anyway, so the
-      # contract under test is in a realistic state rather than a degenerate one.
-      - name: Initialize compliance
-        run: |
+            --source "$DEPLOYER" --send=no -- metadata
           stellar contract invoke --id "$compliance" --network "$NETWORK" \
-            --source "$DEPLOYER" -- initialize --admin "$DEPLOYER_ADDRESS"
+            --source "$DEPLOYER" --send=no -- admin
 
       - uses: actions/setup-node@v7
         with:

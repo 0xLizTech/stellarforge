@@ -68,9 +68,8 @@ fn setup() -> Harness<'static> {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(GovernanceContract, ());
+    let contract_id = env.register(GovernanceContract, (&admin,));
     let client = GovernanceContractClient::new(&env, &contract_id);
-    client.initialize(&admin);
 
     Harness {
         env,
@@ -89,77 +88,38 @@ fn test_initialize_sets_admin_and_zero_count() {
     assert_eq!(h.client.proposal_count(), 0);
 }
 
-#[test]
-fn test_double_initialize_fails() {
-    let h = setup();
-    assert_eq!(
-        h.client.try_initialize(&h.admin),
-        Err(Ok(GovernanceError::AlreadyInitialized.into()))
-    );
-}
+// Four tests covered states that only a separate `initialize` entry point could
+// produce: initializing twice, and reaching `admin` or `propose` beforehand.
+// A constructor runs inside the deploy transaction, so none of them exist now.
+//
+// The id-reuse hazard the last of them guarded is worth recording, because the
+// constructor is what closes it rather than any check: `initialize` reset the
+// proposal counter to zero, so a proposal made before it ran had its id issued
+// a second time — the later proposal overwrote the earlier, while vote records
+// keyed to that id survived and barred those voters from the new one. Nothing
+// resets the counter now. The test below keeps the observable half of that
+// property.
 
 #[test]
-fn test_admin_before_initialize_is_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, ()));
-
-    assert_eq!(
-        client.try_admin(),
-        Err(Ok(GovernanceError::NotInitialized.into()))
-    );
-}
-
-#[test]
-fn test_propose_before_initialize_is_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, ()));
-
-    // Left unguarded, this proposal would take id 1 and set the counter to 1.
-    // `initialize` resets the counter to 0, so the next proposal would take id
-    // 1 again and overwrite this one — while `DataKey::Vote(1, voter)` records
-    // from the first proposal survive and bar those voters from the second.
-    let res = client.try_propose(
-        &Address::generate(&env),
-        &String::from_str(&env, "premature"),
-        &Bytes::from_array(&env, &[0u8; 32]),
-        &VOTING_PERIOD,
-    );
-    assert_eq!(res, Err(Ok(GovernanceError::NotInitialized.into())));
-    assert_eq!(client.proposal_count(), 0);
-    assert!(client.get_proposal(&1).is_none());
-}
-
-#[test]
-fn test_initialize_after_a_rejected_proposal_leaves_no_vote_history() {
+fn test_first_proposal_on_a_fresh_deploy_owns_id_one() {
     let env = Env::default();
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let voter = Address::generate(&env);
-    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, ()));
+    let client = GovernanceContractClient::new(&env, &env.register(GovernanceContract, (&admin,)));
 
-    // Both of these must be refused. Were the proposal to go through, this
-    // vote would be recorded against id 1.
-    let _ = client.try_propose(
-        &Address::generate(&env),
-        &String::from_str(&env, "premature"),
-        &Bytes::from_array(&env, &[0u8; 32]),
-        &VOTING_PERIOD,
-    );
-    let _ = client.try_vote(&voter, &1, &true, &100);
+    assert_eq!(client.proposal_count(), 0);
 
-    client.initialize(&admin);
     let id = client.propose(
         &Address::generate(&env),
         &String::from_str(&env, "real"),
         &Bytes::from_array(&env, &[1u8; 32]),
         &VOTING_PERIOD,
     );
-    assert_eq!(id, 1);
 
-    // The first real proposal owns id 1 outright: no stale record underneath
-    // it, and nobody silently barred from voting on it.
+    // No stale proposal underneath this id, and nobody silently barred from
+    // voting on it by a vote record left over from an earlier occupant.
+    assert_eq!(id, 1);
     assert_eq!(
         client.get_proposal(&id).unwrap().title,
         String::from_str(&env, "real")

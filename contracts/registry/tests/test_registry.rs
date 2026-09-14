@@ -44,9 +44,8 @@ fn setup() -> Harness<'static> {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(RegistryContract, ());
+    let contract_id = env.register(RegistryContract, (&admin,));
     let client = RegistryContractClient::new(&env, &contract_id);
-    client.initialize(&admin);
 
     Harness {
         env,
@@ -78,24 +77,11 @@ fn test_initialize_starts_with_an_empty_directory() {
     assert_eq!(h.client.list_assets().len(), 0);
 }
 
-#[test]
-fn test_double_initialize_fails() {
-    let h = setup();
-    let res = h.client.try_initialize(&h.admin);
-    assert_eq!(res, Err(Ok(RegistryError::AlreadyInitialized.into())));
-}
-
-#[test]
-fn test_admin_before_initialize_is_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = RegistryContractClient::new(&env, &env.register(RegistryContract, ()));
-
-    assert_eq!(
-        client.try_admin(),
-        Err(Ok(RegistryError::NotInitialized.into()))
-    );
-}
+// The double-initialize and uninitialized-admin tests went with the
+// `initialize` entry point: a constructor configures the contract inside the
+// deploy transaction, so neither state exists to be tested. See the note in
+// `contracts/compliance/tests/test_compliance_contract.rs` on why constructor
+// auth is not covered either.
 
 // ─── Registration ──────────────────────────────────────────────────────────
 

@@ -66,11 +66,14 @@ pub struct RwaAssetContract;
 impl RwaAssetContract {
     // ── Initialisation ────────────────────────────────────────────────────────
 
-    /// Deploy and configure this asset. Can only be called once.
-    pub fn initialize(env: Env, admin: Address, metadata: AssetMetadata) {
-        if env.storage().instance().has(&ADMIN_KEY) {
-            panic_with_error!(&env, RwaError::AlreadyInitialized);
-        }
+    /// Configures the contract as part of the deploy transaction.
+    ///
+    /// A constructor rather than a separate `initialize` entry point: the two
+    /// are equivalent once the contract is running, but a separate call leaves
+    /// a window in which the contract exists with no admin and anyone may name
+    /// themselves. `require_auth` on `admin` still applies, so a deployer
+    /// cannot hand the role to a key whose holder has not signed for it.
+    pub fn __constructor(env: Env, admin: Address, metadata: AssetMetadata) {
         admin.require_auth();
         Self::validate_metadata(&env, &metadata);
 

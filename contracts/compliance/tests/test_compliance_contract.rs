@@ -8,9 +8,7 @@ use soroban_sdk::{
     Address, Env, String,
 };
 
-use compliance::{
-    ComplianceContract, ComplianceContractClient, ComplianceError, DataKey, KycRecord,
-};
+use compliance::{ComplianceContract, ComplianceContractClient, DataKey, KycRecord};
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 const LEVEL_BASIC: u32 = 1;
@@ -59,9 +57,8 @@ fn setup() -> Harness<'static> {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(ComplianceContract, ());
+    let contract_id = env.register(ComplianceContract, (&admin,));
     let client = ComplianceContractClient::new(&env, &contract_id);
-    client.initialize(&admin);
 
     Harness {
         env,
@@ -79,26 +76,19 @@ fn test_initialize_sets_admin() {
     assert_eq!(h.client.admin(), h.admin);
 }
 
-#[test]
-fn test_double_initialize_fails() {
-    let h = setup();
-    assert_eq!(
-        h.client.try_initialize(&h.admin),
-        Err(Ok(ComplianceError::AlreadyInitialized.into()))
-    );
-}
+// `test_double_initialize_fails` and `test_admin_before_initialize_is_rejected`
+// were removed with the `initialize` entry point. Neither state is reachable
+// through a constructor: configuration happens once, inside the deploy
+// transaction, and there is no moment at which a registered contract has no
+// admin. The guarantee is now structural rather than something a test asserts.
 
-#[test]
-fn test_admin_before_initialize_is_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = ComplianceContractClient::new(&env, &env.register(ComplianceContract, ()));
-
-    assert_eq!(
-        client.try_admin(),
-        Err(Ok(ComplianceError::NotInitialized.into()))
-    );
-}
+// The constructor's `admin.require_auth()` is not covered here, and cannot be:
+// `Env::register` invokes a constructor with authorization mocked, so it
+// succeeds whatever the environment is configured to allow. Covering it needs a
+// real deploy via `env.deployer()` against uploaded wasm, which no test in this
+// repo does yet. Auth on the former `initialize` was equally uncovered — every
+// test that called it ran under `mock_all_auths` — so this is a pre-existing
+// gap that moved, not one this change introduced.
 
 // ─── Records ───────────────────────────────────────────────────────────────
 
