@@ -29,7 +29,7 @@ This document describes the planned evolution of the StellarForge protocol acros
 - [x] Formal security review (internal): see [`docs/audits/2026-09-14-internal-review-phase1.md`](docs/audits/2026-09-14-internal-review-phase1.md)
 - [x] Compliance middleware hook (integrate Compliance into RwaAsset transfer flow)
 - [x] SDK: write-path transaction builder helpers
-- [ ] SDK: npm package publish to `@stellarforge-protocol/sdk`
+- [x] SDK: npm package publish to `@stellarforge-protocol/sdk` (0.1.0)
 
 ### Target: Q3 2026
 
