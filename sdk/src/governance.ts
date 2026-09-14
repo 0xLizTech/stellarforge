@@ -2,7 +2,7 @@ import { nativeToScVal, scValToNative } from "@stellar/stellar-sdk";
 
 import type { Transaction } from "@stellar/stellar-sdk";
 
-import { ContractClient, unwrapEnumVariant } from "./base.js";
+import { ContractClient, hexToScVal, unwrapEnumVariant } from "./base.js";
 import type {
   Proposal,
   ProposalCreated,
@@ -10,14 +10,6 @@ import type {
   StellarForgeConfig,
   TxResult,
 } from "./types.js";
-
-/** Converts a hex string to the `Bytes` the contract expects. */
-function hexToScVal(hex: string): ReturnType<typeof nativeToScVal> {
-  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
-    throw new Error(`Expected an even-length hex string, got: ${hex}`);
-  }
-  return nativeToScVal(Buffer.from(hex, "hex"), { type: "bytes" });
-}
 
 /**
  * Client for the deployed governance contract.

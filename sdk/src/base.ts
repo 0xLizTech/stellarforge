@@ -3,6 +3,7 @@ import {
   BASE_FEE,
   Contract,
   Keypair,
+  nativeToScVal,
   rpc,
   TransactionBuilder,
   xdr,
@@ -256,4 +257,18 @@ export function unwrapEnumVariant(decoded: unknown): string {
     return decoded;
   }
   throw new Error(`Expected a unit enum variant, got ${JSON.stringify(decoded)}`);
+}
+
+/**
+ * Converts a hex string to the `Bytes` a contract expects.
+ *
+ * Rejects odd-length or non-hex input before anything touches the network, so a
+ * malformed document hash fails in the caller rather than being encoded as
+ * different bytes.
+ */
+export function hexToScVal(hex: string): xdr.ScVal {
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error(`Expected an even-length hex string, got: ${hex}`);
+  }
+  return nativeToScVal(Buffer.from(hex, "hex"), { type: "bytes" });
 }

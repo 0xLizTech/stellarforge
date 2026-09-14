@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Operator methods in the SDK. `RwaAssetClient` gains `admin`, `complianceContract` and `minComplianceLevel` reads, and `setIssuer`, `setPaused`, `updateMetadata` and `setCompliance` admin writes (`setCompliance(admin, null, level)` switches screening off). `ComplianceClient` gains `getKyc` and `admin` reads, and `setKyc` and `revokeKyc` admin writes. Each write has a `build*Tx` and a submitting form. `transfer_admin` is still not offered, because it needs two signatures on one transaction (#31).
+
 ## [0.2.0] - 2026-09-14
 
 Breaking for SDK users on Node.js older than 22.12, for anyone relying on `MAINNET_CONFIG` to supply an RPC URL, and for code that handles the `@stellar/stellar-sdk` objects the SDK returns. The contract interfaces are unchanged from 0.1.0.

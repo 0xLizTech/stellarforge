@@ -95,10 +95,15 @@ Two things worth knowing before you use either:
 
 | Client | Contract | Notes |
 |---|---|---|
-| `RwaAssetClient` | `rwa-asset` | Balances, metadata, allowances; mint, burn, burnFrom, transfer, approve (with an expiry ledger), transferFrom |
-| `ComplianceClient` | `compliance` | `isCompliant` is the pure query, never the TTL-extending `screen` |
+| `RwaAssetClient` | `rwa-asset` | Balances, metadata, allowances; mint, burn, burnFrom, transfer, approve (with an expiry ledger), transferFrom. Admin: setIssuer, setPaused, updateMetadata, setCompliance |
+| `ComplianceClient` | `compliance` | `isCompliant` is the pure query, never the TTL-extending `screen`; `getKyc` reads a stored record. Admin: setKyc, revokeKyc |
 | `RegistryClient` | `registry` | Asset directory, paged with `listAssets(start, limit)` or walked with `listAllAssets()`; `register` and `setActive` are admin-only |
 | `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
+
+`transfer_admin` is not offered on any client yet. It needs the current and the incoming
+admin to sign one transaction, which the SDK can't build until it supports separately
+signed authorization entries ([#31](https://github.com/0xLizTech/stellarforge/issues/31)).
+Hand the admin role over with `stellar-cli` in the meantime.
 
 ### Governance results are advisory in Phase 1
 
