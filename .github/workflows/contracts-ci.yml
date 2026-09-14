@@ -95,6 +95,7 @@ jobs:
           stellar contract build --manifest-path contracts/registry/Cargo.toml
           stellar contract build --manifest-path contracts/compliance/Cargo.toml
           stellar contract build --manifest-path contracts/governance/Cargo.toml
+          stellar contract build --manifest-path contracts/oracle-adapter/Cargo.toml
 
       # Published with the artifacts, so the hash of a deployed contract's wasm
       # can be checked against the commit that built it.

@@ -126,7 +126,8 @@ stellarforge/
 │   ├── rwa-asset/          # Core RWA token (mint, burn, transfer, metadata)
 │   ├── registry/           # Global registry of deployed asset contracts
 │   ├── compliance/         # KYC/AML record management
-│   └── governance/         # On-chain proposal & voting
+│   ├── governance/         # On-chain proposal & voting
+│   └── oracle-adapter/     # SEP-40 NAV price feed (Phase 2)
 ├── sdk/                    # @stellarforge-protocol/sdk (TypeScript)
 │   ├── src/
 │   │   ├── client.ts       # RwaAssetClient, ComplianceClient
@@ -216,7 +217,7 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 **Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`
 
-**Scopes:** `rwa-asset`, `registry`, `compliance`, `governance`, `sdk`, `ci`, `docs`
+**Scopes:** `rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`, `sdk`, `ci`, `docs`
 
 **Examples:**
 
