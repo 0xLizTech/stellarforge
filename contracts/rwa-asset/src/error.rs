@@ -39,4 +39,13 @@ pub enum RwaError {
     InvalidMetadata = 10,
     /// A party to the transfer lacks the required verification level.
     NotCompliant = 11,
+    /// `update_metadata` tried to change `decimals`, which would re-denominate
+    /// every existing balance.
+    DecimalsImmutable = 12,
+    /// `update_metadata` tried to remove a supply cap, or set one below the
+    /// circulating supply.
+    InvalidSupplyCap = 13,
+    /// `approve` set a non-zero allowance whose `live_until_ledger` has
+    /// already passed.
+    InvalidExpiration = 14,
 }

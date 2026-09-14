@@ -96,7 +96,10 @@ export function succeedsWithoutResult(): unknown {
 type GetAccountFn = (address: string) => Promise<Account>;
 type PrepareFn = (tx: Transaction) => Promise<Transaction>;
 type SendFn = (tx: Transaction) => Promise<rpc.Api.SendTransactionResponse>;
-type PollFn = (hash: string) => Promise<rpc.Api.GetTransactionResponse>;
+type PollFn = (
+  hash: string,
+  opts?: { attempts?: number },
+) => Promise<rpc.Api.GetTransactionResponse>;
 
 export interface WriteStubs {
   getAccount: MockInstance<GetAccountFn>;

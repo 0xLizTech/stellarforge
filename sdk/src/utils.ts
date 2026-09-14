@@ -23,24 +23,70 @@ export function isValidContractId(id: string): boolean {
 
 // ─── Amount Utilities ─────────────────────────────────────────────────────────
 
-/** Convert a human-readable decimal amount to base units at `decimals` places.
- * Defaults to 7 (Stellar's stroop convention). RWA assets may use a different
- * number of decimals — the contract allows up to 18 — so pass the asset's
- * decimals when it differs from 7. */
-export function toStroops(amount: number | string, decimals = 7): bigint {
-  const [integer, fraction = ""] = String(amount).split(".");
-  const paddedFraction = fraction.padEnd(decimals, "0").slice(0, decimals);
-  return BigInt(integer + paddedFraction);
+/** Largest `decimals` the contract accepts, mirroring `MAX_DECIMALS` in `rwa-asset`. */
+const MAX_DECIMALS = 18;
+
+/** Plain decimal notation: an optional sign, digits, and at most one fractional part. */
+const DECIMAL_AMOUNT = /^-?\d+(\.\d+)?$/;
+
+function assertDecimals(decimals: number): void {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > MAX_DECIMALS) {
+    throw new RangeError(`decimals must be an integer from 0 to ${MAX_DECIMALS}, got ${decimals}`);
+  }
 }
 
-/** Convert base units back to a human-readable decimal string.
+/**
+ * Convert a human-readable decimal amount to base units at `decimals` places.
+ * Defaults to 7 (Stellar's stroop convention). RWA assets may use a different
+ * number of decimals — the contract allows up to 18 — so pass the asset's
+ * decimals when it differs from 7.
+ *
+ * The result goes to `mint`, `transfer` or `approve`, where a silently wrong
+ * amount moves real value, so this refuses input rather than guessing at it
+ * (IR-06):
+ *
+ * - `amount` must be plain decimal notation. An exponent, hex, whitespace,
+ *   thousands separators and a second decimal point are all rejected.
+ * - Digits beyond `decimals` are rejected unless they are all zeros.
+ * - A `number` must be a safe integer. Pass fractional or large amounts as a
+ *   string: a `number` has already lost precision before this function sees it.
+ */
+export function toStroops(amount: number | string, decimals = 7): bigint {
+  assertDecimals(decimals);
+  if (typeof amount === "number" && !Number.isSafeInteger(amount)) {
+    throw new RangeError(
+      `${amount} is not a safe integer; pass fractional or large amounts as a string`,
+    );
+  }
+
+  const text = String(amount);
+  if (!DECIMAL_AMOUNT.test(text)) {
+    throw new SyntaxError(
+      `Invalid amount ${JSON.stringify(text)}: expected plain decimal notation such as "12.5"`,
+    );
+  }
+
+  const [integer = "", fraction = ""] = text.split(".");
+  if (/[^0]/.test(fraction.slice(decimals))) {
+    throw new RangeError(
+      `Amount ${text} has ${fraction.length} decimal places, more than the ${decimals} allowed`,
+    );
+  }
+  return BigInt(integer + fraction.slice(0, decimals).padEnd(decimals, "0"));
+}
+
+/**
+ * Convert base units back to a human-readable decimal string.
  * Defaults to 7 (Stellar's stroop convention); pass the asset's decimals when
- * it differs. */
+ * it differs. Trailing fractional zeros are dropped.
+ */
 export function fromStroops(stroops: bigint, decimals = 7): string {
-  const str = stroops.toString().padStart(decimals + 1, "0");
-  const integer = str.slice(0, -decimals) || "0";
-  const fraction = str.slice(-decimals);
-  return `${integer}.${fraction}`.replace(/\.?0+$/, "");
+  assertDecimals(decimals);
+  const sign = stroops < 0n ? "-" : "";
+  const digits = (stroops < 0n ? -stroops : stroops).toString().padStart(decimals + 1, "0");
+  const integer = digits.slice(0, digits.length - decimals);
+  const fraction = digits.slice(digits.length - decimals).replace(/0+$/, "");
+  return `${sign}${integer}${fraction ? `.${fraction}` : ""}`;
 }
 
 // ─── Document Hashing ─────────────────────────────────────────────────────────
@@ -52,14 +98,18 @@ export function sha256Hex(data: Buffer | string): string {
     .digest("hex");
 }
 
-/** Convert a hex string to a 32-byte Uint8Array. */
+/**
+ * Convert a hex string to a 32-byte Uint8Array.
+ *
+ * Accepts exactly 64 hex digits. Parsing digit pairs used to turn anything
+ * non-hex into zero bytes, so a mistyped legal-document hash was stored as a
+ * different, valid-looking one (IR-06).
+ */
 export function hexToBytes32(hex: string): Uint8Array {
-  if (hex.length !== 64) throw new Error("Expected 64-char hex string");
-  const bytes = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error("Expected 64-char hex string");
   }
-  return bytes;
+  return Uint8Array.from(Buffer.from(hex, "hex"));
 }
 
 // ─── Formatting ───────────────────────────────────────────────────────────────

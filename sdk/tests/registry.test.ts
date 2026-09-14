@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { rpc, xdr } from "@stellar/stellar-sdk";
+import { StrKey, rpc, xdr } from "@stellar/stellar-sdk";
 
-import { RegistryClient } from "../src/registry.js";
+import { REGISTRY_MAX_PAGE_SIZE, RegistryClient } from "../src/registry.js";
 import { TESTNET_CONFIG } from "../src/types.js";
 import type { AssetEntry, StellarForgeConfig } from "../src/types.js";
 import {
@@ -25,6 +25,7 @@ import {
   str,
   struct,
   none,
+  u32,
 } from "./helpers.js";
 
 const registryConfig: StellarForgeConfig = configWith({ registry: REGISTRY_ID });
@@ -103,6 +104,57 @@ describe("RegistryClient.listAssets", () => {
   it("decodes an empty registry as an empty array", async () => {
     stubSimulation(succeeds(xdr.ScVal.scvVec([])));
     await expect(new RegistryClient(registryConfig).listAssets()).resolves.toEqual([]);
+  });
+
+  it("requests the first full page by default", async () => {
+    const spy = stubSimulation(succeeds(xdr.ScVal.scvVec([])));
+    await new RegistryClient(registryConfig).listAssets();
+    expect(invocation(spy)).toEqual({
+      fn: "list_assets",
+      args: [0, REGISTRY_MAX_PAGE_SIZE],
+    });
+  });
+
+  it("passes an explicit window through", async () => {
+    const spy = stubSimulation(succeeds(xdr.ScVal.scvVec([])));
+    await new RegistryClient(registryConfig).listAssets(200, 25);
+    expect(invocation(spy)).toEqual({ fn: "list_assets", args: [200, 25] });
+  });
+});
+
+describe("RegistryClient.assetCount", () => {
+  it("decodes the count", async () => {
+    stubSimulation(succeeds(u32(1_742)));
+    await expect(new RegistryClient(registryConfig).assetCount()).resolves.toBe(1_742);
+  });
+});
+
+describe("RegistryClient.listAllAssets", () => {
+  function page(size: number, offset: number): xdr.ScVal {
+    return xdr.ScVal.scvVec(
+      Array.from({ length: size }, (_, i) =>
+        addr(StrKey.encodeContract(Buffer.alloc(32, (offset + i) % 256))),
+      ),
+    );
+  }
+
+  it("walks pages until one comes back short", async () => {
+    const spy = vi
+      .spyOn(rpc.Server.prototype, "simulateTransaction")
+      .mockResolvedValueOnce(succeeds(page(REGISTRY_MAX_PAGE_SIZE, 0)) as never)
+      .mockResolvedValueOnce(succeeds(page(REGISTRY_MAX_PAGE_SIZE, 100)) as never)
+      .mockResolvedValueOnce(succeeds(page(3, 200)) as never);
+
+    const all = await new RegistryClient(registryConfig).listAllAssets();
+
+    expect(all).toHaveLength(2 * REGISTRY_MAX_PAGE_SIZE + 3);
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops after one call for an empty registry", async () => {
+    const spy = stubSimulation(succeeds(xdr.ScVal.scvVec([])));
+    await expect(new RegistryClient(registryConfig).listAllAssets()).resolves.toEqual([]);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
 

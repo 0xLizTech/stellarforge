@@ -3,12 +3,15 @@
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Ledger,
+        Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Env, String,
+    Address, Env, Event, IntoVal, String,
 };
 
-use compliance::{ComplianceContract, ComplianceContractClient, DataKey, KycRecord};
+use compliance::{
+    AdminTransferred, ComplianceContract, ComplianceContractClient, ComplianceError, DataKey,
+    KycRecord, KycRevoked, KycSet, MAX_LEVEL,
+};
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 const LEVEL_BASIC: u32 = 1;
@@ -84,11 +87,10 @@ fn test_initialize_sets_admin() {
 
 // The constructor's `admin.require_auth()` is not covered here, and cannot be:
 // `Env::register` invokes a constructor with authorization mocked, so it
-// succeeds whatever the environment is configured to allow. Covering it needs a
-// real deploy via `env.deployer()` against uploaded wasm, which no test in this
-// repo does yet. Auth on the former `initialize` was equally uncovered — every
-// test that called it ran under `mock_all_auths` — so this is a pre-existing
-// gap that moved, not one this change introduced.
+// succeeds whatever the environment is configured to allow. What it does still
+// record is the authorization the constructor demanded, and
+// `tests/test_constructor_auth.rs` asserts that record, so removing the
+// constructor's `require_auth` now fails a test.
 
 // ─── Records ───────────────────────────────────────────────────────────────
 
@@ -284,4 +286,193 @@ fn test_screening_an_unverified_subject_does_not_create_an_entry() {
     // rather than materialising an empty record.
     assert!(!h.client.screen(&subject, &LEVEL_BASIC));
     assert!(h.client.get_kyc(&subject).is_none());
+}
+
+// ─── Events (IR-03) ────────────────────────────────────────────────────────
+
+#[test]
+fn test_set_kyc_emits_event() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    let record = h.record(LEVEL_FULL, NEVER_EXPIRES);
+
+    h.client.set_kyc(&subject, &record);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![KycSet { subject, record }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_revoke_kyc_emits_the_removed_record() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    let record = h.record(LEVEL_ACCREDITED, NEVER_EXPIRES);
+    h.client.set_kyc(&subject, &record);
+
+    h.client.revoke_kyc(&subject);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![KycRevoked { subject, record }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+/// Revoking a subject with no record changes nothing, so an event would tell
+/// a monitor that someone lost a verification they never had.
+#[test]
+fn test_revoking_an_unknown_subject_emits_nothing() {
+    let h = setup();
+
+    h.client.revoke_kyc(&Address::generate(&h.env));
+
+    assert!(
+        h.env.events().all().events().is_empty(),
+        "no-op revocation published an event",
+    );
+}
+
+// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_admin_moves_the_role() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
+}
+
+/// NFR-S-4 is dual authorization, not "the admin signs". Only the current
+/// admin's signature is supplied here, which must not be enough.
+#[test]
+fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "transfer_admin",
+            args: (new_admin.clone(),).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+/// The point of rotation: once handed over, the outgoing key must be unable
+/// to issue a verification, even with its own valid signature.
+#[test]
+fn test_a_rotated_out_admin_can_no_longer_set_kyc() {
+    let h = setup();
+    h.client.transfer_admin(&Address::generate(&h.env));
+
+    let subject = Address::generate(&h.env);
+    let record = h.record(LEVEL_ACCREDITED, NEVER_EXPIRES);
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_kyc",
+            args: (subject.clone(), record.clone()).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_kyc(&subject, &record).is_err());
+    assert!(h.client.get_kyc(&subject).is_none());
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferred {
+            previous: h.admin.clone(),
+            new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+// ─── Record validation (IR-08) ─────────────────────────────────────────────
+
+fn record_in(env: &Env, jurisdiction: &str, level: u32, expires_at: u64) -> KycRecord {
+    KycRecord {
+        jurisdiction: String::from_str(env, jurisdiction),
+        level,
+        expires_at,
+    }
+}
+
+#[test]
+fn test_set_kyc_rejects_a_level_above_the_scale() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+
+    // u32::MAX would satisfy any min_level an asset could ever configure.
+    for level in [MAX_LEVEL + 1, u32::MAX] {
+        let res = h
+            .client
+            .try_set_kyc(&subject, &h.record(level, NEVER_EXPIRES));
+        assert_eq!(res, Err(Ok(ComplianceError::InvalidLevel.into())));
+    }
+    assert!(h.client.get_kyc(&subject).is_none());
+
+    h.client
+        .set_kyc(&subject, &h.record(MAX_LEVEL, NEVER_EXPIRES));
+    assert_eq!(h.client.get_kyc(&subject).unwrap().level, MAX_LEVEL);
+}
+
+#[test]
+fn test_set_kyc_rejects_an_already_expired_record() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    // Expiry is strict, so a record expiring now is already stale.
+    for expires_at in [1, 999, 1_000] {
+        let res = h
+            .client
+            .try_set_kyc(&subject, &h.record(LEVEL_FULL, expires_at));
+        assert_eq!(res, Err(Ok(ComplianceError::AlreadyExpired.into())));
+    }
+
+    h.client.set_kyc(&subject, &h.record(LEVEL_FULL, 1_001));
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_FULL, NEVER_EXPIRES));
+}
+
+#[test]
+fn test_set_kyc_rejects_a_malformed_jurisdiction() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+
+    for jurisdiction in ["", "U", "us", "Us", "USA", "U1", "U ", "ÜS"] {
+        let res = h.client.try_set_kyc(
+            &subject,
+            &record_in(&h.env, jurisdiction, LEVEL_BASIC, NEVER_EXPIRES),
+        );
+        assert_eq!(
+            res,
+            Err(Ok(ComplianceError::InvalidJurisdiction.into())),
+            "accepted {jurisdiction:?}"
+        );
+    }
+
+    h.client.set_kyc(
+        &subject,
+        &record_in(&h.env, "GB", LEVEL_BASIC, NEVER_EXPIRES),
+    );
 }

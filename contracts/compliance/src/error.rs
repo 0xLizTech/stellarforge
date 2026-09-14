@@ -21,4 +21,10 @@ pub enum ComplianceError {
     /// kept as a defined failure rather than an `unwrap` so the cause is
     /// legible if it ever does happen.
     NotInitialized = 2,
+    /// `set_kyc` was given a level above `MAX_LEVEL`.
+    InvalidLevel = 3,
+    /// `set_kyc` was given a record whose expiry has already passed.
+    AlreadyExpired = 4,
+    /// `set_kyc` was given a jurisdiction that is not an ISO 3166-1 alpha-2 code.
+    InvalidJurisdiction = 5,
 }

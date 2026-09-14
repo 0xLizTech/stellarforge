@@ -112,6 +112,19 @@ export class RwaAssetClient extends ContractClient {
     return this.submit(await this.buildBurnTx(from, amount), from);
   }
 
+  /** Burn `amount` from `from`, drawing on `spender`'s allowance. Authorized by `spender`. */
+  async buildBurnFromTx(spender: string, from: string, amount: bigint): Promise<Transaction> {
+    return this.buildWriteTx(spender, "burn_from", [
+      nativeToScVal(spender, { type: "address" }),
+      nativeToScVal(from, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+  }
+
+  async burnFrom(spender: string, from: string, amount: bigint): Promise<TxResult> {
+    return this.submit(await this.buildBurnFromTx(spender, from, amount), spender);
+  }
+
   /** Transfer `amount` from `from` to `to`. */
   async buildTransferTx(from: string, to: string, amount: bigint): Promise<Transaction> {
     return this.buildWriteTx(from, "transfer", [
@@ -125,17 +138,33 @@ export class RwaAssetClient extends ContractClient {
     return this.submit(await this.buildTransferTx(from, to, amount), from);
   }
 
-  /** Set `spender`'s allowance over `owner`'s balance to `amount`. */
-  async buildApproveTx(owner: string, spender: string, amount: bigint): Promise<Transaction> {
+  /**
+   * Set `spender`'s allowance over `owner`'s balance to `amount`, spendable
+   * through ledger `liveUntilLedger` inclusive (SEP-41). After that ledger the
+   * allowance reads as zero. A ledger already past is accepted only with
+   * `amount` 0, to revoke.
+   */
+  async buildApproveTx(
+    owner: string,
+    spender: string,
+    amount: bigint,
+    liveUntilLedger: number,
+  ): Promise<Transaction> {
     return this.buildWriteTx(owner, "approve", [
       nativeToScVal(owner, { type: "address" }),
       nativeToScVal(spender, { type: "address" }),
       nativeToScVal(amount, { type: "i128" }),
+      nativeToScVal(liveUntilLedger, { type: "u32" }),
     ]);
   }
 
-  async approve(owner: string, spender: string, amount: bigint): Promise<TxResult> {
-    return this.submit(await this.buildApproveTx(owner, spender, amount), owner);
+  async approve(
+    owner: string,
+    spender: string,
+    amount: bigint,
+    liveUntilLedger: number,
+  ): Promise<TxResult> {
+    return this.submit(await this.buildApproveTx(owner, spender, amount, liveUntilLedger), owner);
   }
 
   /** Move `amount` from `from` to `to`, drawing on `spender`'s allowance. */

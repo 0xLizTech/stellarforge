@@ -17,12 +17,34 @@
 #   ASSET_NAME, ASSET_SYMBOL, ASSET_DECIMALS, ASSET_CLASS,
 #   ASSET_LEGAL_DOC_HASH, ASSET_MAX_SUPPLY (0 = uncapped)
 #
+# NETWORK=mainnet refuses to run unless ADMIN and every ASSET_* var is set
+# explicitly and ASSET_LEGAL_DOC_HASH is a real, non-zero SHA-256.
+#
 # Requires: stellar-cli >= 27.0.0, jq
 
 set -euo pipefail
 
 NETWORK="${NETWORK:-testnet}"
 ACCOUNT="${STELLAR_ACCOUNT:?Set STELLAR_ACCOUNT to a funded keypair alias}"
+
+# A mainnet deploy must never fall back to the placeholder asset below, or
+# quietly make the deploying key admin of every contract. This is checked
+# before any default is applied, so an unset variable cannot be papered over.
+if [[ "$NETWORK" == "mainnet" ]]; then
+  missing=()
+  for var in ADMIN ASSET_NAME ASSET_SYMBOL ASSET_DECIMALS ASSET_CLASS \
+    ASSET_LEGAL_DOC_HASH ASSET_MAX_SUPPLY; do
+    [[ -n "${!var:-}" ]] || missing+=("$var")
+  done
+  if ((${#missing[@]} > 0)); then
+    echo "error: a mainnet deploy requires these to be set explicitly: ${missing[*]}" >&2
+    exit 1
+  fi
+  if [[ ! "$ASSET_LEGAL_DOC_HASH" =~ ^[0-9a-fA-F]{64}$ || "$ASSET_LEGAL_DOC_HASH" =~ ^0+$ ]]; then
+    echo "error: ASSET_LEGAL_DOC_HASH must be the 64-hex-digit SHA-256 of the legal document, not zeros" >&2
+    exit 1
+  fi
+fi
 OUTPUT_FILE="deployed-contracts.json"
 
 ASSET_NAME="${ASSET_NAME:-StellarForge Demo Asset}"

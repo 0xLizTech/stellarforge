@@ -4,8 +4,10 @@
 //! Phase 1 skeleton: address allowlisting + jurisdiction tagging.
 
 mod error;
+mod events;
 
 pub use error::ComplianceError;
+pub use events::{AdminTransferred, KycRevoked, KycSet};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
@@ -14,6 +16,10 @@ use soroban_sdk::{
 use stellarforge_common::{extend_instance, extend_persistent};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
+
+/// Highest verification level on the scale: 0 none, 1 basic, 2 full,
+/// 3 accredited.
+pub const MAX_LEVEL: u32 = 3;
 
 #[contracttype]
 #[derive(Clone)]
@@ -54,21 +60,28 @@ impl ComplianceContract {
     /// Set or update KYC record for an address.
     pub fn set_kyc(env: Env, subject: Address, record: KycRecord) {
         Self::require_admin(&env);
-        let key = DataKey::KycStatus(subject);
+        Self::validate_record(&env, &record);
+        let key = DataKey::KycStatus(subject.clone());
         env.storage().persistent().set(&key, &record);
 
         extend_instance(&env);
         extend_persistent(&env, &key);
+
+        events::KycSet { subject, record }.publish(&env);
     }
 
     /// Revoke KYC for an address.
     pub fn revoke_kyc(env: Env, subject: Address) {
         Self::require_admin(&env);
-        env.storage()
-            .persistent()
-            .remove(&DataKey::KycStatus(subject));
+        let key = DataKey::KycStatus(subject.clone());
+        let removed: Option<KycRecord> = env.storage().persistent().get(&key);
 
         extend_instance(&env);
+
+        if let Some(record) = removed {
+            env.storage().persistent().remove(&key);
+            events::KycRevoked { subject, record }.publish(&env);
+        }
     }
 
     /// Returns true if the address has at minimum the required verification level
@@ -97,6 +110,31 @@ impl ComplianceContract {
         env.storage().persistent().get(&DataKey::KycStatus(subject))
     }
 
+    /// Hands the admin role to `new_admin`.
+    ///
+    /// Both the current and the incoming admin must authorize, in the same
+    /// transaction (NFR-S-4), for the reason ADR-002 gives for `rwa-asset`: a
+    /// handover to a key nobody controls cannot be undone.
+    ///
+    /// Without this the constructor's admin held the role for the contract's
+    /// whole life (IR-04). For this contract that is the widest blast radius in
+    /// the protocol: a compromised key can mark any address permanently
+    /// compliant on every asset screening against it, and a lost one leaves
+    /// records unrenewable until every dependent asset's transfers fail.
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        Self::require_admin(&env);
+        let previous = Self::admin(env.clone());
+        new_admin.require_auth();
+        env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        extend_instance(&env);
+
+        events::AdminTransferred {
+            previous,
+            new_admin,
+        }
+        .publish(&env);
+    }
+
     pub fn admin(env: Env) -> Address {
         match env.storage().instance().get(&ADMIN_KEY) {
             Some(a) => a,
@@ -106,6 +144,36 @@ impl ComplianceContract {
 
     fn require_admin(env: &Env) {
         Self::admin(env.clone()).require_auth();
+    }
+
+    /// Rejects a record that could only be an input error (IR-08).
+    ///
+    /// Each of these used to be stored as given and then screen wrongly, with
+    /// nothing to tell the admin that the record was not what they meant.
+    fn validate_record(env: &Env, record: &KycRecord) {
+        // A level above the scale satisfies every `min_level` an asset could
+        // configure, including tiers that do not exist yet.
+        if record.level > MAX_LEVEL {
+            panic_with_error!(env, ComplianceError::InvalidLevel);
+        }
+
+        // An already-expired record screens as non-compliant from the moment
+        // it is written. Zero is the explicit "never expires".
+        if record.expires_at != 0 && record.expires_at <= env.ledger().timestamp() {
+            panic_with_error!(env, ComplianceError::AlreadyExpired);
+        }
+
+        // ISO 3166-1 alpha-2: exactly two ASCII uppercase letters. This checks
+        // shape, not membership, so a well-formed but unassigned code passes.
+        let jurisdiction = &record.jurisdiction;
+        let mut code = [0u8; 2];
+        if jurisdiction.len() != 2 {
+            panic_with_error!(env, ComplianceError::InvalidJurisdiction);
+        }
+        jurisdiction.copy_into_slice(&mut code);
+        if !code.iter().all(u8::is_ascii_uppercase) {
+            panic_with_error!(env, ComplianceError::InvalidJurisdiction);
+        }
     }
 
     fn evaluate(env: &Env, subject: Address, min_level: u32) -> bool {

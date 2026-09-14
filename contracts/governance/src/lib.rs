@@ -17,17 +17,33 @@
 //! at proposal creation, which is Phase 2/3 work alongside `SFORGE`.
 
 mod error;
+mod events;
 
 pub use error::GovernanceError;
+pub use events::{AdminTransferred, ProposalCreated, ProposalFinalized, VoteCast};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
     Symbol,
 };
-use stellarforge_common::{extend_instance, extend_persistent};
+use stellarforge_common::{extend_instance, extend_persistent, storage::DAY_IN_LEDGERS};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const PROP_COUNT: Symbol = symbol_short!("PCOUNT");
+
+/// Shortest voting period `propose` accepts, about a day.
+///
+/// A proposer could previously pass 0 and have voting open only in the ledger
+/// the proposal was created in, so nobody else could realistically see it,
+/// let alone vote, before the proposer finalized it (IR-14).
+pub const MIN_VOTING_PERIOD_LEDGERS: u32 = DAY_IN_LEDGERS;
+
+/// Longest voting period `propose` accepts, about 90 days.
+pub const MAX_VOTING_PERIOD_LEDGERS: u32 = 90 * DAY_IN_LEDGERS;
+
+/// Longest title `propose` accepts, in bytes. The full text belongs in the
+/// document `description_hash` points to.
+pub const MAX_TITLE_BYTES: u32 = 256;
 
 #[contracttype]
 #[derive(Clone)]
@@ -95,6 +111,16 @@ impl GovernanceContract {
         // counter now.
         Self::require_initialized(&env);
 
+        // Bounded now rather than in Phase 3, so proposals created under looser
+        // rules are not inherited once outcomes can execute.
+        if !(MIN_VOTING_PERIOD_LEDGERS..=MAX_VOTING_PERIOD_LEDGERS).contains(&voting_period_ledgers)
+        {
+            panic_with_error!(&env, GovernanceError::InvalidVotingPeriod);
+        }
+        if title.len() > MAX_TITLE_BYTES {
+            panic_with_error!(&env, GovernanceError::TitleTooLong);
+        }
+
         let count: u64 = env.storage().instance().get(&PROP_COUNT).unwrap_or(0);
         let id = match count.checked_add(1) {
             Some(v) => v,
@@ -127,6 +153,15 @@ impl GovernanceContract {
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Proposal(id));
 
+        events::ProposalCreated {
+            proposal_id: id,
+            proposer: proposal.proposer,
+            title: proposal.title,
+            description_hash: proposal.description_hash,
+            deadline_ledger,
+        }
+        .publish(&env);
+
         id
     }
 
@@ -145,7 +180,7 @@ impl GovernanceContract {
             panic_with_error!(&env, GovernanceError::VotingClosed);
         }
 
-        let vote_key = DataKey::Vote(proposal_id, voter);
+        let vote_key = DataKey::Vote(proposal_id, voter.clone());
         let already_voted: bool = env.storage().persistent().get(&vote_key).unwrap_or(false);
         if already_voted {
             panic_with_error!(&env, GovernanceError::AlreadyVoted);
@@ -169,6 +204,14 @@ impl GovernanceContract {
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Proposal(proposal_id));
         extend_persistent(&env, &vote_key);
+
+        events::VoteCast {
+            proposal_id,
+            voter,
+            support,
+            weight,
+        }
+        .publish(&env);
     }
 
     pub fn finalize(env: Env, proposal_id: u64) {
@@ -193,6 +236,14 @@ impl GovernanceContract {
             .set(&DataKey::Proposal(proposal_id), &proposal);
 
         extend_persistent(&env, &DataKey::Proposal(proposal_id));
+
+        events::ProposalFinalized {
+            proposal_id,
+            status: proposal.status,
+            votes_for: proposal.votes_for,
+            votes_against: proposal.votes_against,
+        }
+        .publish(&env);
     }
 
     /// A pure query. Proposals must stay readable long after their deadline,
@@ -213,6 +264,29 @@ impl GovernanceContract {
 
     pub fn proposal_count(env: Env) -> u64 {
         env.storage().instance().get(&PROP_COUNT).unwrap_or(0)
+    }
+
+    /// Hands the admin role to `new_admin`.
+    ///
+    /// Both the current and the incoming admin must authorize, in the same
+    /// transaction (NFR-S-4), for the reason ADR-002 gives for `rwa-asset`: a
+    /// handover to a key nobody controls cannot be undone.
+    ///
+    /// The admin has no powers in Phase 1, but Phase 3 execution hooks will
+    /// hang off it, and a role that cannot be rotated would reach them
+    /// already unrecoverable if its key were lost or exposed (IR-04).
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        let previous = Self::admin(env.clone());
+        previous.require_auth();
+        new_admin.require_auth();
+        env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        extend_instance(&env);
+
+        events::AdminTransferred {
+            previous,
+            new_admin,
+        }
+        .publish(&env);
     }
 
     pub fn admin(env: Env) -> Address {

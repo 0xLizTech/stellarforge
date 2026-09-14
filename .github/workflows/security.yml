@@ -2,13 +2,26 @@ name: Security Audit
 
 on:
   schedule:
-    # Run weekly on Mondays at 09:00 UTC
+    # Run weekly on Mondays at 09:00 UTC, so advisories published against
+    # dependencies that have not changed still surface.
     - cron: "0 9 * * 1"
   push:
     branches: [main]
-    paths:
+    paths: &dependency-paths
       - "contracts/**/*.rs"
       - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "sdk/package.json"
+      - "sdk/package-lock.json"
+      - ".github/workflows/security.yml"
+  # Audit before merge, not only after. Without this trigger the
+  # dependency-review job could never run, since it is gated on pull_request.
+  pull_request:
+    branches: [main, develop]
+    paths: *dependency-paths
+
+permissions:
+  contents: read
 
 jobs:
   cargo-audit:
@@ -17,11 +30,28 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Pinned and --locked, so the auditor is the same build on every run.
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install cargo-audit --locked --version 0.22.2
 
       - name: Run audit
         run: cargo audit
+
+  npm-audit:
+    name: npm Audit (SDK runtime dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # Reads package-lock.json, so no install is needed. --omit=dev limits it
+      # to what ships in the published package.
+      - name: Run audit
+        working-directory: sdk
+        run: npm audit --omit=dev
 
   dependency-review:
     name: Dependency Review

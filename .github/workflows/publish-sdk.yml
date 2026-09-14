@@ -21,6 +21,10 @@ jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
+    # Holds NPM_TOKEN behind the environment's protection rules. Configure
+    # required reviewers on `npm-publish` in the repository settings; until
+    # that is done the environment exists but gates nothing.
+    environment: npm-publish
 
     steps:
       - uses: actions/checkout@v7

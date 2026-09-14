@@ -3,17 +3,21 @@
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Ledger,
+        Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Bytes, Env, String,
+    Address, Bytes, Env, Event, IntoVal, String,
 };
 
 use governance::{
-    DataKey, GovernanceContract, GovernanceContractClient, GovernanceError, ProposalStatus,
+    AdminTransferred, DataKey, GovernanceContract, GovernanceContractClient, GovernanceError,
+    ProposalCreated, ProposalFinalized, ProposalStatus, VoteCast, MAX_TITLE_BYTES,
+    MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
-const VOTING_PERIOD: u32 = 1_000;
+/// The shortest period `propose` accepts, so tests advance the ledger as little
+/// as the contract allows.
+const VOTING_PERIOD: u32 = MIN_VOTING_PERIOD_LEDGERS;
 
 struct Harness<'a> {
     env: Env,
@@ -159,24 +163,12 @@ fn test_get_unknown_proposal_returns_none() {
     assert!(h.client.get_proposal(&42).is_none());
 }
 
-#[test]
-fn test_voting_period_that_would_overflow_the_sequence_is_rejected() {
-    let h = setup();
-    let proposer = Address::generate(&h.env);
-
-    // The test ledger starts at sequence 0, where nothing can overflow.
-    h.env.ledger().with_mut(|li| li.sequence_number = 100);
-
-    // Wrapping would put the deadline in the past and close voting on a
-    // proposal the moment it was created.
-    let res = h.client.try_propose(
-        &proposer,
-        &String::from_str(&h.env, "overflow"),
-        &Bytes::from_array(&h.env, &[0u8; 32]),
-        &u32::MAX,
-    );
-    assert_eq!(res, Err(Ok(GovernanceError::Overflow.into())));
-}
+// `test_voting_period_that_would_overflow_the_sequence_is_rejected` went with
+// the voting-period cap (IR-14). With the period at most
+// MAX_VOTING_PERIOD_LEDGERS, the deadline can only overflow at a sequence within
+// about 90 days of u32::MAX, and the test host cannot run a contract there: its
+// own TTL arithmetic overflows first. `propose` keeps the checked addition, so
+// the case still ends in a defined `Overflow` rather than a wrapped deadline.
 
 // ─── Voting ────────────────────────────────────────────────────────────────
 
@@ -445,4 +437,189 @@ fn test_reading_a_finalized_proposal_does_not_extend_it() {
     h.client.has_voted(&id, &Address::generate(&h.env));
 
     assert_eq!(h.ttl_of(&DataKey::Proposal(id)), before - IDLE);
+}
+
+// ─── Events (IR-03) ────────────────────────────────────────────────────────
+
+// NFR-A-3: the full governance history must be reconstructable from events.
+
+#[test]
+fn test_propose_emits_event() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let title = String::from_str(&h.env, "Raise the protocol fee");
+    let description_hash = Bytes::from_array(&h.env, &[7u8; 32]);
+    let deadline_ledger = h.env.ledger().sequence() + VOTING_PERIOD;
+
+    let id = h
+        .client
+        .propose(&proposer, &title, &description_hash, &VOTING_PERIOD);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![ProposalCreated {
+            proposal_id: id,
+            proposer,
+            title,
+            description_hash,
+            deadline_ledger,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_vote_emits_event() {
+    let h = setup();
+    let id = h.propose();
+    let voter = Address::generate(&h.env);
+
+    h.client.vote(&voter, &id, &false, &40_i128);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![VoteCast {
+            proposal_id: id,
+            voter,
+            support: false,
+            weight: 40,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_finalize_emits_the_outcome_and_tally() {
+    let h = setup();
+    let id = h.propose();
+    h.client
+        .vote(&Address::generate(&h.env), &id, &true, &40_i128);
+    h.client
+        .vote(&Address::generate(&h.env), &id, &false, &10_i128);
+    h.advance_past_deadline();
+
+    h.client.finalize(&id);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![ProposalFinalized {
+            proposal_id: id,
+            status: ProposalStatus::Passed,
+            votes_for: 40,
+            votes_against: 10,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_admin_moves_the_role() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
+}
+
+/// NFR-S-4 is dual authorization, not "the admin signs". Only the current
+/// admin's signature is supplied here, which must not be enough.
+#[test]
+fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "transfer_admin",
+            args: (new_admin.clone(),).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferred {
+            previous: h.admin.clone(),
+            new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+// ─── Proposal bounds (IR-14) ───────────────────────────────────────────────
+
+fn try_propose_with(h: &Harness, title: &str, voting_period: u32) -> bool {
+    h.client
+        .try_propose(
+            &Address::generate(&h.env),
+            &String::from_str(&h.env, title),
+            &Bytes::from_array(&h.env, &[7u8; 32]),
+            &voting_period,
+        )
+        .is_ok()
+}
+
+#[test]
+fn test_voting_period_outside_the_bounds_is_rejected() {
+    let h = setup();
+
+    for period in [
+        0,
+        MIN_VOTING_PERIOD_LEDGERS - 1,
+        MAX_VOTING_PERIOD_LEDGERS + 1,
+    ] {
+        let res = h.client.try_propose(
+            &Address::generate(&h.env),
+            &String::from_str(&h.env, "title"),
+            &Bytes::from_array(&h.env, &[7u8; 32]),
+            &period,
+        );
+        assert_eq!(
+            res,
+            Err(Ok(GovernanceError::InvalidVotingPeriod.into())),
+            "accepted a period of {period}"
+        );
+    }
+    assert_eq!(h.client.proposal_count(), 0);
+}
+
+/// Guards the rejections above: both bounds are inclusive.
+#[test]
+fn test_voting_period_bounds_are_inclusive() {
+    let h = setup();
+    assert!(try_propose_with(&h, "shortest", MIN_VOTING_PERIOD_LEDGERS));
+    assert!(try_propose_with(&h, "longest", MAX_VOTING_PERIOD_LEDGERS));
+}
+
+#[test]
+fn test_title_longer_than_the_cap_is_rejected() {
+    let h = setup();
+    let at_cap = "a".repeat(MAX_TITLE_BYTES as usize);
+    let over_cap = "a".repeat(MAX_TITLE_BYTES as usize + 1);
+
+    assert!(try_propose_with(&h, &at_cap, VOTING_PERIOD));
+
+    let res = h.client.try_propose(
+        &Address::generate(&h.env),
+        &String::from_str(&h.env, &over_cap),
+        &Bytes::from_array(&h.env, &[7u8; 32]),
+        &VOTING_PERIOD,
+    );
+    assert_eq!(res, Err(Ok(GovernanceError::TitleTooLong.into())));
 }

@@ -51,9 +51,11 @@ All completed audit reports are published in [`docs/audits/`](audits/) as they b
 
 ## Resolved Issues
 
-Findings are recorded here once fixed. Both entries below were found during
+Findings are recorded here once fixed. Every entry below was found during
 internal review while the protocol was pre-deployment, so no funds were ever
-at risk, and both are covered by regression tests.
+at risk, and each is covered by regression tests. SF-2026-003 onward come from
+the [Phase 1 internal security review](audits/2026-09-14-internal-review-phase1.md),
+whose IDs are given in brackets.
 
 ### SF-2026-001 — Self-transfer minted tokens (critical)
 
@@ -88,3 +90,105 @@ automatically by the transaction that touches it, so the residual exposure is a
 restore fee for a holder idle longer than the maximum TTL, not a failed
 transfer. State rent means that exposure cannot be removed, only reassigned;
 [ADR-001](architecture/001-storage-key-design.md) records who pays and why.*
+
+### SF-2026-003 — Registry directory stopped accepting assets (medium) [IR-01]
+
+The directory index was a single `Vec<Address>` held in one persistent entry,
+and every `register` rewrote the whole vector. Each address adds 40 bytes, so
+at about 1,600 assets the entry crossed the 64 KiB contract-data limit. From
+then on every `register` failed, and without an upgrade path (ADR-003) nothing
+could recover the contract in place. NFR-P-3 requires 10,000 assets.
+
+*Fixed in `70b761a`. Each asset now has its own `AssetAt(index)` entry, and
+`list_assets(start, limit)` pages at most 100 addresses per call. Regression
+tests: `test_directory_scales_past_the_former_entry_size_ceiling` (2,000
+assets, under mainnet limits), and `test_directory_scales_to_the_nfr_p_3_size`
+(10,000 assets, run with `--ignored`).*
+
+### SF-2026-004 — `update_metadata` could re-denominate or uncap an asset (medium) [IR-02]
+
+`update_metadata` checked the new metadata only in isolation. The admin could
+change `decimals` after issuance, which resizes every holder's position by a
+power of ten, lift a cap back to uncapped, or set a cap below circulating
+supply. None of these changes emitted an event.
+
+*Fixed in `a1c73c2`. `decimals` is now immutable. A cap can move, but never
+below `total_supply` and never back to 0. Regression tests:
+`test_update_metadata_cannot_change_decimals`,
+`test_update_metadata_cannot_lift_a_cap`,
+`test_update_metadata_cannot_cap_below_circulating_supply`.*
+
+### SF-2026-005 — Privileged state changes emitted no events (medium) [IR-03]
+
+Only holder operations and `set_paused` published events. Admin handover,
+issuer grants, metadata changes, disabling compliance, KYC decisions, registry
+changes and every governance action left no trace for monitors, which
+violated NFR-A-1 and NFR-A-3.
+
+*Fixed in `8147f6d`. Every state-changing entry point now publishes an
+event, and each wire format is pinned by a test in its contract's suite.*
+
+### SF-2026-006 — Three contracts could not rotate their admin (medium) [IR-04]
+
+Only `rwa-asset` exposed `transfer_admin`. The admin of `compliance`,
+`registry` and `governance` was fixed at deployment for good. A compromised
+compliance key could mark any address permanently compliant on every
+dependent asset, and could never be rotated out.
+
+*Fixed in `2021ed5`. All four contracts now have dual-authorization
+`transfer_admin`. Regression tests in each:
+`test_transfer_admin_without_the_incoming_signature_is_rejected`, plus a
+test showing that a rotated-out admin loses its powers.*
+
+### SF-2026-007 — Two write paths skipped the TTL policy (low) [IR-07]
+
+`update_metadata` and `transfer_admin` wrote storage without extending its
+TTL. That is the SF-2026-002 policy, missed in two places. Since protocol 23
+the consequence is a restore fee rather than a failure.
+
+*Fixed in `a1c73c2`. Regression test:
+`test_admin_write_paths_extend_what_they_write`.*
+
+### SF-2026-008 — SDK could report a write as failed while it could still land (medium) [IR-05]
+
+Writes are built with a 180-second validity window, but the SDK stopped polling
+after about 30 seconds and reported a still-pending transaction as failed. A
+caller that retried built a new transaction while the original could still be
+included, so a mint or transfer could execute twice. `TRY_AGAIN_LATER` and
+`DUPLICATE` submissions were also treated as pending.
+
+*Fixed in `db1677e`. Polling now covers the validity window plus 30 seconds. An
+unsettled transaction ends in `TransactionExpiredError`, which is safe to
+retry, or `TransactionOutcomeUnknownError`, which carries the hash to check
+first. Regression tests are in `sdk/tests/client.test.ts`, under "RwaAssetClient
+write submission".*
+
+### SF-2026-009 — SDK helpers silently misread amounts and hashes (medium) [IR-06]
+
+`toStroops` read `"1.2.3"` as 1.2 and `"0x10"` as hexadecimal, truncated
+precision beyond the asset's decimals, and accepted numbers that had already
+lost precision. `fromStroops` rendered 100 whole tokens at zero decimals as
+`"0.1"`. `hexToBytes32` turned non-hex digits into zero bytes. Any of these
+could put a wrong amount into a transfer, or a wrong document hash on chain.
+
+*Fixed in `c0c0543`. The helpers now reject malformed input instead of guessing at
+it. Regression tests are in `sdk/tests/utils.test.ts`.*
+
+### SF-2026-010 to SF-2026-019 — Low and Info findings [IR-08 to IR-17]
+
+None of these gave a path to funds. Each is fixed, and the
+[internal review](audits/2026-09-14-internal-review-phase1.md) records the
+detail and the regression tests.
+
+| ID | Review | Finding | Fixed in |
+|---|---|---|---|
+| SF-2026-010 | IR-08 | `set_kyc` accepted out-of-range levels, past expiries and malformed jurisdictions (low) | `e01ff66` |
+| SF-2026-011 | IR-09 | The token surface diverged from SEP-41, and allowances never expired (low) | `0e7b905` |
+| SF-2026-012 | IR-10 | The Rust toolchain was unpinned, so builds were not reproducible (low) | `d1f0ad7` |
+| SF-2026-013 | IR-11 | Dependency review never ran, and the SDK's npm dependencies were never audited (low) | `d1f0ad7` |
+| SF-2026-014 | IR-12 | CI trusted a mutable action tag and an unverified CLI download (low) | `d1f0ad7` |
+| SF-2026-015 | IR-13 | `deploy.sh` would deploy placeholder metadata to mainnet (low) | `0c91166` |
+| SF-2026-016 | IR-14 | `propose` accepted a zero voting period and unbounded titles (low) | `2f736c0` |
+| SF-2026-017 | IR-15 | A self-`transfer_from` emitted a phantom `Transfer` event (info) | `0e7b905` |
+| SF-2026-018 | IR-16 | Registry entries were not documented as unverified (info) | `4f04c60` |
+| SF-2026-019 | IR-17 | Constructor `require_auth` was asserted by no test (info) | `d9fc624` |

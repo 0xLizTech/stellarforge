@@ -10,6 +10,7 @@ import {
 
 import type { Transaction } from "@stellar/stellar-sdk";
 
+import { TransactionExpiredError, TransactionOutcomeUnknownError } from "./errors.js";
 import type { StellarForgeConfig, TxResult } from "./types.js";
 
 /**
@@ -22,6 +23,18 @@ const WRITE_TX_TIMEOUT_SECONDS = 180;
 
 /** Validity window for a simulation, which is never submitted. */
 const SIMULATION_TIMEOUT_SECONDS = 30;
+
+/** Delay between status checks while waiting for a submitted transaction. */
+const POLL_INTERVAL_MS = 1_000;
+
+/**
+ * How long to keep polling after a transaction's `maxTime`.
+ *
+ * A transaction can be included in a ledger that closes right at `maxTime`,
+ * and the RPC reports that ledger a few seconds later. Stopping exactly at
+ * `maxTime` would leave the outcome undecided.
+ */
+const SETTLEMENT_GRACE_MS = 30_000;
 
 /** What a submitted transaction yielded, before a caller shapes it. */
 export interface SubmitOutcome {
@@ -149,16 +162,63 @@ export abstract class ContractClient {
     tx.sign(keypair);
 
     const sent = await this.server.sendTransaction(tx);
-    if (sent.status === "ERROR") {
-      throw new Error(`Transaction ${sent.hash} was rejected on submission`);
+    switch (sent.status) {
+      case "ERROR":
+        throw new Error(`Transaction ${sent.hash} was rejected on submission`);
+      case "TRY_AGAIN_LATER":
+        // The node declined to queue it. Unlike a timeout, nothing is pending,
+        // so the caller can retry straight away.
+        throw new Error(
+          `Transaction ${sent.hash} was not accepted (TRY_AGAIN_LATER). ` +
+            "Nothing was submitted, so it is safe to retry.",
+        );
+      default:
+        // PENDING, or DUPLICATE when this exact transaction is already queued.
+        // Either way the network has it, so wait for it to settle.
+        break;
     }
 
-    const settled = await this.server.pollTransaction(sent.hash);
+    const settled = await this.awaitSettlement(tx, sent.hash);
     if (settled.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
       throw new Error(`Transaction ${sent.hash} did not succeed: ${settled.status}`);
     }
 
     return { hash: sent.hash, ledger: settled.ledger, returnValue: settled.returnValue };
+  }
+
+  /**
+   * Polls until the transaction settles, or until it provably cannot.
+   *
+   * A fixed number of attempts was IR-05. The stellar-sdk default gave up after
+   * about 30 seconds on a transaction valid for 180, so a caller could be told
+   * a write failed, retry, and have the original land anyway, executing a mint
+   * or transfer twice. Polling now runs until the transaction's `maxTime` plus
+   * {@link SETTLEMENT_GRACE_MS}, and the last response decides between
+   * {@link TransactionExpiredError} and {@link TransactionOutcomeUnknownError}.
+   */
+  private async awaitSettlement(
+    tx: Transaction,
+    hash: string,
+  ): Promise<rpc.Api.GetSuccessfulTransactionResponse | rpc.Api.GetFailedTransactionResponse> {
+    const maxTime = Number(tx.timeBounds?.maxTime ?? 0);
+    const deadlineMs = maxTime * 1000 + SETTLEMENT_GRACE_MS;
+    const attempts = Math.max(1, Math.ceil((deadlineMs - Date.now()) / POLL_INTERVAL_MS));
+
+    const settled = await this.server.pollTransaction(hash, {
+      attempts,
+      sleepStrategy: () => POLL_INTERVAL_MS,
+    });
+    if (settled.status !== rpc.Api.GetTransactionStatus.NOT_FOUND) {
+      return settled;
+    }
+
+    // No ledger that closes after maxTime can include the transaction. Once
+    // the RPC has seen such a ledger and still does not know the hash, it
+    // never will.
+    if (maxTime > 0 && Number(settled.latestLedgerCloseTime) > maxTime) {
+      throw new TransactionExpiredError(hash);
+    }
+    throw new TransactionOutcomeUnknownError(hash);
   }
 
   /**

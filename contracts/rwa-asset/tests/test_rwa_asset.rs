@@ -1,8 +1,15 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String};
+use soroban_sdk::{
+    testutils::{
+        storage::{Instance as _, Persistent as _},
+        Address as _, Ledger, MockAuth, MockAuthInvoke,
+    },
+    Address, Bytes, Env, IntoVal, String,
+};
 
-use rwa_asset::{AssetMetadata, RwaAssetContract, RwaAssetContractClient, RwaError};
+use rwa_asset::{AssetMetadata, DataKey, RwaAssetContract, RwaAssetContractClient, RwaError};
+use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 /// One whole token in base units. The asset uses 7 decimals, matching the
 /// Stellar convention where 1 XLM = 10_000_000 stroops.
@@ -10,6 +17,10 @@ const UNIT: i128 = 10_000_000;
 
 /// Supply ceiling configured by [`default_metadata`], in base units.
 const MAX_SUPPLY: i128 = 1_000_000 * UNIT;
+
+/// Allowance expiry used where a test does not care about it. The test ledger
+/// starts at sequence 0.
+const LIVE_UNTIL: u32 = 1_000;
 
 fn create_env() -> Env {
     Env::default()
@@ -152,7 +163,7 @@ fn test_approve_and_transfer_from() {
 
     client.set_issuer(&issuer, &true);
     client.mint(&issuer, &alice, &1000);
-    client.approve(&alice, &bob, &400);
+    client.approve(&alice, &bob, &400, &LIVE_UNTIL);
 
     assert_eq!(client.allowance(&alice, &bob), 400);
 
@@ -242,7 +253,7 @@ fn test_self_transfer_from_does_not_create_tokens() {
 
     client.set_issuer(&issuer, &true);
     client.mint(&issuer, &alice, &1_000);
-    client.approve(&alice, &spender, &500);
+    client.approve(&alice, &spender, &500, &LIVE_UNTIL);
 
     client.transfer_from(&spender, &alice, &alice, &400);
 
@@ -288,7 +299,7 @@ fn test_supply_invariant_holds_across_operations() {
     client.transfer(&alice, &alice, &(100 * UNIT));
     assert_supply_invariant(&client, &holders);
 
-    client.approve(&alice, &bob, &(300 * UNIT));
+    client.approve(&alice, &bob, &(300 * UNIT), &LIVE_UNTIL);
     client.transfer_from(&bob, &alice, &carol, &(200 * UNIT));
     assert_supply_invariant(&client, &holders);
 
@@ -348,7 +359,7 @@ fn test_zero_and_negative_amounts_are_rejected() {
     assert_eq!(client.try_transfer(&alice, &bob, &-1), expected);
     assert_eq!(client.try_mint(&issuer, &bob, &0), expected);
     assert_eq!(client.try_burn(&alice, &0), expected);
-    assert_eq!(client.try_approve(&alice, &bob, &-1), expected);
+    assert_eq!(client.try_approve(&alice, &bob, &-1, &LIVE_UNTIL), expected);
 }
 
 #[test]
@@ -408,6 +419,126 @@ fn test_update_metadata_accepts_valid_input() {
     );
 }
 
+/// Grants a fresh issuer, mints `amount` to a fresh holder, and returns the
+/// issuer so a test can attempt further mints.
+fn mint_to_new_holder(env: &Env, client: &RwaAssetContractClient, amount: i128) -> Address {
+    let issuer = Address::generate(env);
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &Address::generate(env), &amount);
+    issuer
+}
+
+/// IR-02. Balances are base units, so accepting a new `decimals` would resize
+/// every holder's position without a transfer.
+#[test]
+fn test_update_metadata_cannot_change_decimals() {
+    let (env, _, client) = setup();
+
+    let mut redenominated = default_metadata(&env);
+    redenominated.decimals = 0;
+
+    assert_eq!(
+        client.try_update_metadata(&redenominated),
+        Err(Ok(RwaError::DecimalsImmutable.into()))
+    );
+    assert_eq!(client.metadata().decimals, 7);
+}
+
+/// IR-02. `max_supply = 0` means uncapped, so it is the one value a capped
+/// asset may never move to.
+#[test]
+fn test_update_metadata_cannot_lift_a_cap() {
+    let (env, _, client) = setup();
+
+    let mut uncapped = default_metadata(&env);
+    uncapped.max_supply = 0;
+
+    assert_eq!(
+        client.try_update_metadata(&uncapped),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+    assert_eq!(client.metadata().max_supply, MAX_SUPPLY);
+}
+
+#[test]
+fn test_update_metadata_cannot_cap_below_circulating_supply() {
+    let (env, _, client) = setup();
+    mint_to_new_holder(&env, &client, 1_000 * UNIT);
+
+    let mut below = default_metadata(&env);
+    below.max_supply = 1_000 * UNIT - 1;
+
+    assert_eq!(
+        client.try_update_metadata(&below),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+}
+
+/// Guards the three rejections above: tightening a cap exactly to circulating
+/// supply is the boundary that must still be accepted, and it must then bind.
+#[test]
+fn test_update_metadata_can_tighten_a_cap_to_circulating_supply() {
+    let (env, _, client) = setup();
+    let issuer = mint_to_new_holder(&env, &client, 1_000 * UNIT);
+
+    let mut exact = default_metadata(&env);
+    exact.max_supply = 1_000 * UNIT;
+    client.update_metadata(&exact);
+
+    assert_eq!(client.metadata().max_supply, 1_000 * UNIT);
+    assert_eq!(
+        client.try_mint(&issuer, &Address::generate(&env), &1),
+        Err(Ok(RwaError::ExceedsMaxSupply.into()))
+    );
+}
+
+#[test]
+fn test_update_metadata_can_cap_an_uncapped_asset_at_or_above_supply() {
+    let env = create_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+
+    let mut uncapped = default_metadata(&env);
+    uncapped.max_supply = 0;
+    let id = env.register(RwaAssetContract, (&admin, &uncapped));
+    let client = RwaAssetContractClient::new(&env, &id);
+    mint_to_new_holder(&env, &client, 500 * UNIT);
+
+    let mut below = uncapped.clone();
+    below.max_supply = 500 * UNIT - 1;
+    assert_eq!(
+        client.try_update_metadata(&below),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+
+    let mut capped = uncapped;
+    capped.max_supply = 500 * UNIT;
+    client.update_metadata(&capped);
+    assert_eq!(client.metadata().max_supply, 500 * UNIT);
+}
+
+/// IR-07. Both are write paths, so under the shared TTL policy both extend
+/// what they write. The ledger is advanced first so the extension is actually
+/// due rather than already satisfied by the constructor's.
+#[test]
+fn test_admin_write_paths_extend_what_they_write() {
+    let (env, _, client) = setup();
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.transfer_admin(&Address::generate(&env));
+    let instance_ttl = env.as_contract(&client.address, || env.storage().instance().get_ttl());
+    assert_eq!(instance_ttl, INSTANCE_BUMP_AMOUNT);
+
+    client.update_metadata(&default_metadata(&env));
+    let (metadata_ttl, max_ttl) = env.as_contract(&client.address, || {
+        (
+            env.storage().persistent().get_ttl(&DataKey::Metadata),
+            env.storage().max_ttl(),
+        )
+    });
+    assert_eq!(metadata_ttl, max_ttl);
+}
+
 /// The constructor must validate too, or a contract could be deployed holding
 /// metadata that `update_metadata` would refuse. Asserted as a panic because
 /// `Env::register` has no fallible form.
@@ -432,4 +563,142 @@ fn test_self_transfer_still_validates_balance() {
     // The no-op path must not become a way to bypass the balance check.
     let res = client.try_transfer(&alice, &alice, &100);
     assert_eq!(res, Err(Ok(RwaError::InsufficientBalance.into())));
+}
+
+// ─── Admin handover (NFR-S-4) ──────────────────────────────────────────────
+
+// `transfer_admin` has required both signatures since it was written, but no
+// test asserted it: every call ran under `mock_all_auths`. IR-04 added the
+// same entry point to the other three contracts with this coverage, so the
+// original gets it too.
+
+#[test]
+fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+    let (env, admin, client) = setup();
+    let new_admin = Address::generate(&env);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "transfer_admin",
+            args: (new_admin.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(client.try_transfer_admin(&new_admin).is_err());
+    assert_eq!(client.admin(), admin);
+}
+
+#[test]
+fn test_a_rotated_out_admin_can_no_longer_pause() {
+    let (env, admin, client) = setup();
+    client.transfer_admin(&Address::generate(&env));
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "set_paused",
+            args: (true,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(client.try_set_paused(&true).is_err());
+    assert!(!client.paused());
+}
+
+// ─── SEP-41 surface (IR-09) ────────────────────────────────────────────────
+
+/// A fresh issuer mints `amount` to `holder`.
+fn fund(env: &Env, client: &RwaAssetContractClient, holder: &Address, amount: i128) {
+    let issuer = Address::generate(env);
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, holder, &amount);
+}
+
+#[test]
+fn test_allowance_lapses_after_its_live_until_ledger() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    client.approve(&alice, &bob, &400, &10);
+
+    // The expiry ledger itself is still inside the window.
+    env.ledger().with_mut(|li| li.sequence_number = 10);
+    assert_eq!(client.allowance(&alice, &bob), 400);
+
+    env.ledger().with_mut(|li| li.sequence_number = 11);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+    assert_eq!(
+        client.try_transfer_from(&bob, &alice, &bob, &1),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+}
+
+#[test]
+fn test_approve_rejects_an_expiry_already_past_unless_revoking() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number = 50);
+
+    assert_eq!(
+        client.try_approve(&alice, &bob, &100, &49),
+        Err(Ok(RwaError::InvalidExpiration.into()))
+    );
+
+    // The current ledger is a valid expiry, and a revocation may name any.
+    client.approve(&alice, &bob, &100, &50);
+    client.approve(&alice, &bob, &0, &0);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+}
+
+#[test]
+fn test_spending_an_allowance_keeps_its_expiry() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    client.approve(&alice, &bob, &400, &10);
+    client.transfer_from(&bob, &alice, &carol, &100);
+    assert_eq!(client.allowance(&alice, &bob), 300);
+
+    env.ledger().with_mut(|li| li.sequence_number = 11);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+}
+
+#[test]
+fn test_burn_from_spends_the_allowance_and_reduces_supply() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+    client.approve(&alice, &bob, &300, &LIVE_UNTIL);
+
+    client.burn_from(&bob, &alice, &200);
+
+    assert_eq!(client.balance(&alice), 800);
+    assert_eq!(client.total_supply(), 800);
+    assert_eq!(client.allowance(&alice, &bob), 100);
+    assert_eq!(
+        client.try_burn_from(&bob, &alice, &101),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+}
+
+#[test]
+fn test_sep41_metadata_getters_match_the_metadata() {
+    let (env, _, client) = setup();
+    let meta = default_metadata(&env);
+
+    assert_eq!(client.decimals(), meta.decimals);
+    assert_eq!(client.name(), meta.name);
+    assert_eq!(client.symbol(), meta.symbol);
 }

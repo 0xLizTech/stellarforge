@@ -6,13 +6,16 @@ mod events;
 
 pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::RwaError;
-pub use events::{Approve, Burn, Mint, Paused, Transfer};
+pub use events::{
+    AdminTransferred, Approve, Burn, ComplianceSet, IssuerSet, MetadataUpdated, Mint, Paused,
+    Transfer, TransferFrom,
+};
 
 use stellarforge_common::{extend_instance, extend_persistent};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Bytes, Env,
-    String, Symbol,
+    MuxedAddress, String, Symbol,
 };
 
 // ─── Storage Keys ────────────────────────────────────────────────────────────
@@ -36,6 +39,15 @@ pub enum DataKey {
     TotalSupply,
     Allowance(Address, Address),
     Issuer(Address),
+}
+
+/// A spender's allowance and the last ledger it may be spent in (SEP-41).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AllowanceValue {
+    pub amount: i128,
+    /// After this ledger the allowance reads as zero.
+    pub live_until_ledger: u32,
 }
 
 // ─── Data Types ───────────────────────────────────────────────────────────────
@@ -100,7 +112,9 @@ impl RwaAssetContract {
         env.storage()
             .persistent()
             .set(&DataKey::Issuer(issuer.clone()), &approved);
-        extend_persistent(&env, &DataKey::Issuer(issuer));
+        extend_persistent(&env, &DataKey::Issuer(issuer.clone()));
+
+        events::IssuerSet { issuer, approved }.publish(&env);
     }
 
     pub fn is_issuer(env: Env, issuer: Address) -> bool {
@@ -175,10 +189,48 @@ impl RwaAssetContract {
         events::Burn { from, amount }.publish(&env);
     }
 
+    /// Burn `amount` from `from`, drawing on `spender`'s allowance (SEP-41).
+    ///
+    /// Screens nobody, for the reason `burn` does not (ADR-004): value is
+    /// destroyed rather than moved, so there is no counterparty to screen.
+    pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) {
+        spender.require_auth();
+        Self::require_not_paused(&env);
+        Self::require_positive(&env, amount);
+        Self::spend_allowance(&env, &from, &spender, amount);
+
+        let bal = Self::balance(env.clone(), from.clone());
+        if bal < amount {
+            panic_with_error!(&env, RwaError::InsufficientBalance);
+        }
+
+        let total = Self::total_supply(env.clone());
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(from.clone()), &(bal - amount));
+        env.storage().persistent().set(
+            &DataKey::TotalSupply,
+            &Self::checked_sub(&env, total, amount),
+        );
+
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::Balance(from.clone()));
+        extend_persistent(&env, &DataKey::TotalSupply);
+
+        events::Burn { from, amount }.publish(&env);
+    }
+
     // ── Transfers ─────────────────────────────────────────────────────────────
 
     /// Transfer tokens from caller to recipient.
-    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+    ///
+    /// `to` may be a muxed address, as SEP-41 requires. The balance belongs to
+    /// the underlying address; the muxed id is carried in the event for the
+    /// recipient's off-chain bookkeeping.
+    pub fn transfer(env: Env, from: Address, to: MuxedAddress, amount: i128) {
+        let to_muxed_id = to.id();
+        let to = to.address();
         from.require_auth();
         Self::require_not_paused(&env);
         Self::require_positive(&env, amount);
@@ -211,28 +263,59 @@ impl RwaAssetContract {
         extend_persistent(&env, &DataKey::Balance(from.clone()));
         extend_persistent(&env, &DataKey::Balance(to.clone()));
 
-        events::Transfer { from, to, amount }.publish(&env);
+        events::Transfer {
+            from,
+            to,
+            amount,
+            to_muxed_id,
+        }
+        .publish(&env);
     }
 
     // ── Allowances ────────────────────────────────────────────────────────────
 
-    pub fn approve(env: Env, owner: Address, spender: Address, amount: i128) {
+    /// Set `spender`'s allowance over `owner`'s balance, spendable through
+    /// ledger `live_until_ledger` (SEP-41).
+    ///
+    /// The expiry bounds how long a forgotten approval stays spendable (IR-09).
+    /// It may already be past only when revoking with `amount` 0.
+    ///
+    /// A new amount replaces the old one outright, so a spender who sees the
+    /// change coming can spend the old allowance first. To lower an allowance
+    /// safely, set it to 0, confirm, then set the new amount.
+    pub fn approve(
+        env: Env,
+        owner: Address,
+        spender: Address,
+        amount: i128,
+        live_until_ledger: u32,
+    ) {
         owner.require_auth();
         Self::require_not_paused(&env);
         if amount < 0 {
             panic_with_error!(&env, RwaError::InvalidAmount);
         }
-        env.storage()
-            .persistent()
-            .set(&DataKey::Allowance(owner.clone(), spender.clone()), &amount);
+        if amount > 0 && live_until_ledger < env.ledger().sequence() {
+            panic_with_error!(&env, RwaError::InvalidExpiration);
+        }
+
+        let key = DataKey::Allowance(owner.clone(), spender.clone());
+        env.storage().persistent().set(
+            &key,
+            &AllowanceValue {
+                amount,
+                live_until_ledger,
+            },
+        );
 
         extend_instance(&env);
-        extend_persistent(&env, &DataKey::Allowance(owner.clone(), spender.clone()));
+        extend_persistent(&env, &key);
 
         events::Approve {
             owner,
             spender,
             amount,
+            live_until_ledger,
         }
         .publish(&env);
     }
@@ -244,45 +327,40 @@ impl RwaAssetContract {
         Self::require_compliant(&env, &from);
         Self::require_compliant(&env, &to);
 
-        let allowance = Self::allowance(env.clone(), from.clone(), spender.clone());
-        if allowance < amount {
-            panic_with_error!(&env, RwaError::InsufficientAllowance);
-        }
+        // The spender exercised their authorisation, so the allowance is
+        // consumed even when the transfer turns out to be a no-op.
+        Self::spend_allowance(&env, &from, &spender, amount);
 
         let from_bal = Self::balance(env.clone(), from.clone());
         if from_bal < amount {
             panic_with_error!(&env, RwaError::InsufficientBalance);
         }
 
-        // The spender exercised their authorisation, so the allowance is
-        // consumed either way.
-        env.storage().persistent().set(
-            &DataKey::Allowance(from.clone(), spender.clone()),
-            &(allowance - amount),
-        );
-
-        // Skip the balance legs when from == to: both writes target the same
-        // storage key, and the credit would overwrite the debit and mint
-        // `amount` out of nothing.
-        if from != to {
-            let to_bal = Self::balance(env.clone(), to.clone());
-            let to_new = Self::checked_add(&env, to_bal, amount);
-
-            env.storage()
-                .persistent()
-                .set(&DataKey::Balance(from.clone()), &(from_bal - amount));
-            env.storage()
-                .persistent()
-                .set(&DataKey::Balance(to.clone()), &to_new);
-
-            extend_persistent(&env, &DataKey::Balance(to.clone()));
+        // A self-transfer moves nothing. Writing both legs would target the
+        // same storage key, and the credit would overwrite the debit and mint
+        // `amount` out of nothing. Like `transfer`'s no-op it publishes
+        // nothing either, so indexers do not record a settlement that did not
+        // happen (IR-15).
+        if from == to {
+            extend_instance(&env);
+            return;
         }
+
+        let to_bal = Self::balance(env.clone(), to.clone());
+        let to_new = Self::checked_add(&env, to_bal, amount);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(from.clone()), &(from_bal - amount));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(to.clone()), &to_new);
 
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Balance(from.clone()));
-        extend_persistent(&env, &DataKey::Allowance(from.clone(), spender));
+        extend_persistent(&env, &DataKey::Balance(to.clone()));
 
-        events::Transfer { from, to, amount }.publish(&env);
+        events::TransferFrom { from, to, amount }.publish(&env);
     }
 
     // ── Read-only Views ───────────────────────────────────────────────────────
@@ -294,11 +372,10 @@ impl RwaAssetContract {
             .unwrap_or(0)
     }
 
+    /// What `spender` may still spend from `owner`: zero once the allowance's
+    /// `live_until_ledger` has passed.
     pub fn allowance(env: Env, owner: Address, spender: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Allowance(owner, spender))
-            .unwrap_or(0)
+        Self::read_allowance(&env, &DataKey::Allowance(owner, spender)).amount
     }
 
     pub fn total_supply(env: Env) -> i128 {
@@ -313,6 +390,19 @@ impl RwaAssetContract {
             Some(m) => m,
             None => panic_with_error!(&env, RwaError::NotInitialized),
         }
+    }
+
+    /// SEP-41 metadata getters, each a field of [`AssetMetadata`].
+    pub fn decimals(env: Env) -> u32 {
+        Self::metadata(env).decimals
+    }
+
+    pub fn name(env: Env) -> String {
+        Self::metadata(env).name
+    }
+
+    pub fn symbol(env: Env) -> String {
+        Self::metadata(env).symbol
     }
 
     pub fn admin(env: Env) -> Address {
@@ -338,15 +428,30 @@ impl RwaAssetContract {
     pub fn update_metadata(env: Env, metadata: AssetMetadata) {
         Self::require_admin(&env);
         Self::validate_metadata(&env, &metadata);
+        let previous = Self::metadata(env.clone());
+        Self::validate_metadata_change(&env, &previous, &metadata);
         env.storage()
             .persistent()
             .set(&DataKey::Metadata, &metadata);
+
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::Metadata);
+
+        events::MetadataUpdated { previous, metadata }.publish(&env);
     }
 
     pub fn transfer_admin(env: Env, new_admin: Address) {
         Self::require_admin(&env);
         new_admin.require_auth();
+        let previous = Self::admin(env.clone());
         env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        extend_instance(&env);
+
+        events::AdminTransferred {
+            previous,
+            new_admin,
+        }
+        .publish(&env);
     }
 
     // ── Compliance Configuration ──────────────────────────────────────────────
@@ -359,12 +464,18 @@ impl RwaAssetContract {
     /// 3 accredited.
     pub fn set_compliance(env: Env, compliance: Option<Address>, min_level: u32) {
         Self::require_admin(&env);
-        match compliance {
-            Some(addr) => env.storage().instance().set(&COMPLIANCE_KEY, &addr),
+        match &compliance {
+            Some(addr) => env.storage().instance().set(&COMPLIANCE_KEY, addr),
             None => env.storage().instance().remove(&COMPLIANCE_KEY),
         }
         env.storage().instance().set(&MIN_LEVEL_KEY, &min_level);
         extend_instance(&env);
+
+        events::ComplianceSet {
+            compliance,
+            min_level,
+        }
+        .publish(&env);
     }
 
     pub fn compliance_contract(env: Env) -> Option<Address> {
@@ -379,6 +490,35 @@ impl RwaAssetContract {
 
     fn require_admin(env: &Env) {
         Self::admin(env.clone()).require_auth();
+    }
+
+    /// The allowance stored at `key`, reading as zero once it has lapsed.
+    fn read_allowance(env: &Env, key: &DataKey) -> AllowanceValue {
+        match env.storage().persistent().get::<_, AllowanceValue>(key) {
+            Some(allowance) if allowance.live_until_ledger >= env.ledger().sequence() => allowance,
+            _ => AllowanceValue {
+                amount: 0,
+                live_until_ledger: 0,
+            },
+        }
+    }
+
+    /// Deducts `amount` from `spender`'s allowance over `from`, keeping its
+    /// expiry. Shared by `transfer_from` and `burn_from`.
+    fn spend_allowance(env: &Env, from: &Address, spender: &Address, amount: i128) {
+        let key = DataKey::Allowance(from.clone(), spender.clone());
+        let current = Self::read_allowance(env, &key);
+        if current.amount < amount {
+            panic_with_error!(env, RwaError::InsufficientAllowance);
+        }
+        env.storage().persistent().set(
+            &key,
+            &AllowanceValue {
+                amount: current.amount - amount,
+                live_until_ledger: current.live_until_ledger,
+            },
+        );
+        extend_persistent(env, &key);
     }
 
     fn require_not_paused(env: &Env) {
@@ -418,6 +558,29 @@ impl RwaAssetContract {
             || metadata.name.is_empty()
         {
             panic_with_error!(env, RwaError::InvalidMetadata);
+        }
+    }
+
+    /// Rejects a metadata change that would alter what holders already own.
+    ///
+    /// `validate_metadata` judges a value in isolation; this judges it against
+    /// the asset as it stands. Without it the admin could re-denominate every
+    /// balance or lift the supply cap in one silent call (IR-02), a narrower
+    /// form of the "rewrite the rules at any time" power ADR-003 declined to
+    /// ship as an upgrade entry point.
+    fn validate_metadata_change(env: &Env, current: &AssetMetadata, next: &AssetMetadata) {
+        // Balances are stored in base units, so a different `decimals` changes
+        // the size of every position without moving a single token.
+        if next.decimals != current.decimals {
+            panic_with_error!(env, RwaError::DecimalsImmutable);
+        }
+
+        // A cap may move, but never below what is already in circulation, and
+        // once set it may never be lifted to uncapped.
+        let lifts_cap = current.max_supply > 0 && next.max_supply == 0;
+        let below_supply = next.max_supply > 0 && next.max_supply < Self::total_supply(env.clone());
+        if lifts_cap || below_supply {
+            panic_with_error!(env, RwaError::InvalidSupplyCap);
         }
     }
 

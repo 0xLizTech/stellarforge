@@ -171,6 +171,15 @@ const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signerSecret }
 const { hash, ledger } = await client.transfer(from, to, toStroops("100", meta.decimals));
 ```
 
+A bare write waits for the transaction to settle, for up to its 180-second
+validity window plus 30 seconds. If it has not settled by then, the error type
+says whether retrying is safe:
+
+- `TransactionExpiredError`: the window closed without the transaction being
+  included. It can never land, so rebuild and resubmit.
+- `TransactionOutcomeUnknownError`: it may still land. Look up `err.hash`
+  before retrying, or the write may execute twice.
+
 Both assume the authorizing address also sources the transaction, so its
 signature satisfies the contract's `require_auth`. Paying fees from a separate
 account is not supported yet.
@@ -186,18 +195,20 @@ account is not supported yet.
 | `__constructor(admin, metadata)` | admin | Runs at deploy; not callable afterwards |
 | `mint(issuer, to, amount)` | issuer | Create new tokens |
 | `burn(from, amount)` | from | Destroy tokens |
-| `transfer(from, to, amount)` | from | Move tokens |
-| `approve(owner, spender, amount)` | owner | Set allowance |
+| `burn_from(spender, from, amount)` | spender | Destroy tokens, spending an allowance |
+| `transfer(from, to, amount)` | from | Move tokens; `to` may be a muxed address |
+| `approve(owner, spender, amount, live_until_ledger)` | owner | Set an allowance that reads as zero after `live_until_ledger` |
 | `transfer_from(spender, from, to, amount)` | spender | Spend allowance |
 | `set_issuer(issuer, approved)` | admin | Grant/revoke issuer role |
 | `set_paused(paused)` | admin | Emergency circuit breaker |
-| `update_metadata(metadata)` | admin | Update asset metadata |
+| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can never be lifted or set below supply |
 | `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
 | `set_compliance(compliance, min_level)` | admin | Point at a compliance contract, or `None` to disable screening |
 | `balance(owner)` | — | Query balance |
 | `allowance(owner, spender)` | — | Query allowance |
 | `total_supply()` | — | Query supply |
 | `metadata()` | — | Query metadata |
+| `decimals()`, `name()`, `symbol()` | — | SEP-41 metadata getters |
 | `admin()` | — | Query admin address |
 | `is_issuer(address)` | — | Query issuer status |
 | `paused()` | — | Query pause state |
@@ -207,7 +218,7 @@ account is not supported yet.
 **Transfer screening.** When `set_compliance` names a contract, `mint`,
 `transfer` and `transfer_from` require every counterparty to hold a valid
 verification record at or above `min_level` (0 none, 1 basic, 2 full,
-3 accredited). `burn` is deliberately exempt, so a holder whose verification
+3 accredited). `burn` and `burn_from` are deliberately exempt, so a holder whose verification
 has lapsed can still exit their position. Screening is skipped entirely while
 no compliance contract is configured.
 
@@ -215,8 +226,9 @@ no compliance contract is configured.
 
 | Function | Auth | Description |
 |---|---|---|
-| `set_kyc(subject, record)` | admin | Set KYC record |
+| `set_kyc(subject, record)` | admin | Set KYC record; requires level 0–3, an expiry not yet past, and a two-letter ISO 3166-1 jurisdiction |
 | `revoke_kyc(subject)` | admin | Remove KYC record |
+| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
 | `is_compliant(subject, min_level)` | — | Check compliance; pure query, no ledger write |
 | `screen(subject, min_level)` | — | As above, but refreshes the record's TTL; bound by `RwaAsset` |
 | `get_kyc(subject)` | — | Read KYC record |
@@ -235,16 +247,24 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 | `register(entry)` | admin | Register a new asset contract, or update a registered one |
 | `set_active(contract, active)` | admin | Activate/deactivate asset |
 | `get_asset(contract)` | — | Look up asset entry |
-| `list_assets()` | — | List all registered contracts, each exactly once |
+| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `list_assets(start, limit)` | — | Page through registered contracts in registration order, at most 100 per call, each exactly once |
+| `asset_count()` | — | Count registered contracts |
 | `admin()` | — | Query admin address |
+
+**An entry is an assertion, not a verification.** `register` does not check
+that the address is a deployed `rwa-asset` or that `asset_class` matches its
+metadata, and nothing in the protocol reads `active`. Treat the registry as
+the admin's directory, not as proof that an asset is genuine or current.
 
 ### Governance
 
 | Function | Auth | Description |
 |---|---|---|
-| `propose(proposer, title, hash, period)` | proposer | Create proposal |
+| `propose(proposer, title, hash, period)` | proposer | Create proposal; the period must be 1–90 days in ledgers and the title at most 256 bytes |
 | `vote(voter, id, support, weight)` | voter | Cast vote |
 | `finalize(id)` | — | Tally and finalize; a tie is rejected |
+| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role; no other admin powers in Phase 1 |
 | `get_proposal(id)` | — | Read proposal |
 | `has_voted(id, voter)` | — | Whether an address has voted on a proposal |
 | `proposal_count()` | — | Count proposals |
@@ -255,6 +275,11 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 > applies no quorum. Governance is a skeleton until the `SFORGE` token and
 > execution hooks land in Phase 3 — do not treat a passed proposal as a
 > trustworthy signal before then.
+
+**Events.** Every state-changing entry point publishes a Soroban event whose
+first topic is the entry point's name, so admin handovers, issuer grants,
+KYC decisions, compliance being switched off, and every governance action
+can be followed without re-reading contract state.
 
 **Error codes.** Every contract returns a typed `contracterror` enum, so
 clients match on a stable numeric code. Discriminants are part of the public

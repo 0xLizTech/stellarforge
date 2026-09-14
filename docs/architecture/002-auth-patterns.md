@@ -162,3 +162,53 @@ This is worth stating plainly rather than leaving to be discovered: the
 unasserted on `initialize`, where every test that called it ran under
 `mock_all_auths`, so nothing regressed — but "nothing regressed" is not the same
 as "covered", and an audit should treat this as an untested control.
+
+## Amendment (2026-09) — every contract can rotate its admin
+
+The authorization map above gave `transfer_admin` to `rwa-asset` alone. In the
+other three contracts, the admin named at deployment held the role for the
+contract's whole life. The internal security review recorded this as IR-04.
+Nothing could rotate out a compromised compliance key, which is the key that
+decides who may transfer, and nothing could replace a lost one.
+
+`compliance`, `registry` and `governance` now expose `transfer_admin(new_admin)`.
+Like the original, each authenticates **the admin and `new_admin`** in the same
+transaction, and each publishes `AdminTransferred`. Add these rows to the map:
+
+| Contract | Entry point | Must authenticate | Notes |
+|---|---|---|---|
+| `compliance` | `transfer_admin` | admin **and** `new_admin` | NFR-S-4 |
+| `registry` | `transfer_admin` | admin **and** `new_admin` | NFR-S-4 |
+| | `list_assets(start, limit)`, `asset_count` | nobody | Pure reads. `list_assets` became paginated under IR-01 |
+| `governance` | `transfer_admin` | admin **and** `new_admin` | NFR-S-4. The admin has no other powers in Phase 1 |
+
+The *Consequences* note on the SDK applies to all four. `transfer_admin` needs
+two signatures on one transaction, so it remains a `stellar-cli` operation until
+[#31](https://github.com/0xLizTech/stellarforge/issues/31) lands.
+
+The dual-authorization requirement is now asserted by tests in all four
+contracts, where before it was asserted in none. One test supplies only the
+current admin's signature and expects the call to be rejected. Another shows
+that a rotated-out admin cannot use its old powers, even with a valid signature.
+
+## Amendment (2026-09) — SEP-41 surface and constructor coverage
+
+IR-09 aligned `rwa-asset` with SEP-41. `approve` now takes
+`live_until_ledger`, and `transfer` takes `to` as a `MuxedAddress`; neither
+changes who authenticates. Two new entry points extend the map:
+
+| Contract | Entry point | Must authenticate | Notes |
+|---|---|---|---|
+| `rwa-asset` | `burn_from` | `spender` | Not `from`: as with `transfer_from`, the allowance is the authority |
+| | `decimals`, `name`, `symbol` | nobody | Pure reads of `AssetMetadata` |
+
+That makes `burn_from` a fourth deliberate exception, alongside
+`transfer_from`, `screen` and `finalize`.
+
+The *Constructor authorization is not covered by tests* section above is
+resolved (IR-17). `Env::register` still authorizes the constructor itself, but
+under `mock_all_auths` it records the authorization the constructor demanded,
+and each contract's `tests/test_constructor_auth.rs` asserts that record
+exactly. Removing a constructor's `require_auth` now fails a test. What no unit
+test can show is that the network rejects a deploy lacking the signature; that
+is host behaviour.

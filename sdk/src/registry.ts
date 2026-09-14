@@ -5,6 +5,9 @@ import type { Transaction } from "@stellar/stellar-sdk";
 import { ContractClient } from "./base.js";
 import type { AssetClass, AssetEntry, StellarForgeConfig, TxResult } from "./types.js";
 
+/** Largest page `list_assets` accepts. Mirrors `MAX_PAGE_SIZE` in the contract. */
+export const REGISTRY_MAX_PAGE_SIZE = 100;
+
 /** Encodes an `AssetEntry` as the ScMap the contract decodes a struct from. */
 function assetEntryToScVal(entry: AssetEntry): xdr.ScVal {
   const field = (key: string, val: xdr.ScVal): xdr.ScMapEntry =>
@@ -58,14 +61,46 @@ export class RegistryClient extends ContractClient {
   }
 
   /**
-   * Every registered asset address, in registration order.
+   * One page of registered asset addresses, in registration order.
    *
    * Registering an already-known asset updates it in place rather than
-   * appending, so an address appears at most once.
+   * appending, so an address appears at most once across all pages.
+   *
+   * @param start - Directory index of the first address to return.
+   * @param limit - Page size, at most {@link REGISTRY_MAX_PAGE_SIZE}. The
+   *   contract rejects a larger page with `PageTooLarge` rather than clipping.
+   * @returns Fewer than `limit` addresses once the end is reached.
    */
-  async listAssets(): Promise<string[]> {
-    const result = await this.simulateReadOnly("list_assets", []);
+  async listAssets(start = 0, limit = REGISTRY_MAX_PAGE_SIZE): Promise<string[]> {
+    const result = await this.simulateReadOnly("list_assets", [
+      nativeToScVal(start, { type: "u32" }),
+      nativeToScVal(limit, { type: "u32" }),
+    ]);
     return scValToNative(result) as string[];
+  }
+
+  /** How many distinct assets are registered. */
+  async assetCount(): Promise<number> {
+    const result = await this.simulateReadOnly("asset_count", []);
+    return scValToNative(result) as number;
+  }
+
+  /**
+   * Every registered asset address, fetched page by page.
+   *
+   * One simulation per {@link REGISTRY_MAX_PAGE_SIZE} assets. Pages are read
+   * at different moments, so an asset registered mid-walk may or may not
+   * appear; none is ever listed twice, since indices only ever grow.
+   */
+  async listAllAssets(): Promise<string[]> {
+    const all: string[] = [];
+    for (;;) {
+      const page = await this.listAssets(all.length, REGISTRY_MAX_PAGE_SIZE);
+      all.push(...page);
+      if (page.length < REGISTRY_MAX_PAGE_SIZE) {
+        return all;
+      }
+    }
   }
 
   /** The address permitted to register assets and change their active flag. */
