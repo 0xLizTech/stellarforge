@@ -4,8 +4,10 @@
 //! Phase 1 skeleton: address allowlisting + jurisdiction tagging.
 
 mod error;
+mod events;
 
 pub use error::ComplianceError;
+pub use events::{KycRevoked, KycSet};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
@@ -54,21 +56,27 @@ impl ComplianceContract {
     /// Set or update KYC record for an address.
     pub fn set_kyc(env: Env, subject: Address, record: KycRecord) {
         Self::require_admin(&env);
-        let key = DataKey::KycStatus(subject);
+        let key = DataKey::KycStatus(subject.clone());
         env.storage().persistent().set(&key, &record);
 
         extend_instance(&env);
         extend_persistent(&env, &key);
+
+        events::KycSet { subject, record }.publish(&env);
     }
 
     /// Revoke KYC for an address.
     pub fn revoke_kyc(env: Env, subject: Address) {
         Self::require_admin(&env);
-        env.storage()
-            .persistent()
-            .remove(&DataKey::KycStatus(subject));
+        let key = DataKey::KycStatus(subject.clone());
+        let removed: Option<KycRecord> = env.storage().persistent().get(&key);
 
         extend_instance(&env);
+
+        if let Some(record) = removed {
+            env.storage().persistent().remove(&key);
+            events::KycRevoked { subject, record }.publish(&env);
+        }
     }
 
     /// Returns true if the address has at minimum the required verification level

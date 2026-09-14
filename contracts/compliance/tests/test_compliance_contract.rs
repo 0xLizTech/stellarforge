@@ -3,12 +3,14 @@
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Ledger,
+        Address as _, Events, Ledger,
     },
-    Address, Env, String,
+    Address, Env, Event, String,
 };
 
-use compliance::{ComplianceContract, ComplianceContractClient, DataKey, KycRecord};
+use compliance::{
+    ComplianceContract, ComplianceContractClient, DataKey, KycRecord, KycRevoked, KycSet,
+};
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 const LEVEL_BASIC: u32 = 1;
@@ -284,4 +286,49 @@ fn test_screening_an_unverified_subject_does_not_create_an_entry() {
     // rather than materialising an empty record.
     assert!(!h.client.screen(&subject, &LEVEL_BASIC));
     assert!(h.client.get_kyc(&subject).is_none());
+}
+
+// ─── Events (IR-03) ────────────────────────────────────────────────────────
+
+#[test]
+fn test_set_kyc_emits_event() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    let record = h.record(LEVEL_FULL, NEVER_EXPIRES);
+
+    h.client.set_kyc(&subject, &record);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![KycSet { subject, record }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_revoke_kyc_emits_the_removed_record() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    let record = h.record(LEVEL_ACCREDITED, NEVER_EXPIRES);
+    h.client.set_kyc(&subject, &record);
+
+    h.client.revoke_kyc(&subject);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![KycRevoked { subject, record }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+/// Revoking a subject with no record changes nothing, so an event would tell
+/// a monitor that someone lost a verification they never had.
+#[test]
+fn test_revoking_an_unknown_subject_emits_nothing() {
+    let h = setup();
+
+    h.client.revoke_kyc(&Address::generate(&h.env));
+
+    assert!(
+        h.env.events().all().events().is_empty(),
+        "no-op revocation published an event",
+    );
 }

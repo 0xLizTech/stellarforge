@@ -17,8 +17,10 @@
 //! at proposal creation, which is Phase 2/3 work alongside `SFORGE`.
 
 mod error;
+mod events;
 
 pub use error::GovernanceError;
+pub use events::{ProposalCreated, ProposalFinalized, VoteCast};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
@@ -127,6 +129,15 @@ impl GovernanceContract {
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Proposal(id));
 
+        events::ProposalCreated {
+            proposal_id: id,
+            proposer: proposal.proposer,
+            title: proposal.title,
+            description_hash: proposal.description_hash,
+            deadline_ledger,
+        }
+        .publish(&env);
+
         id
     }
 
@@ -145,7 +156,7 @@ impl GovernanceContract {
             panic_with_error!(&env, GovernanceError::VotingClosed);
         }
 
-        let vote_key = DataKey::Vote(proposal_id, voter);
+        let vote_key = DataKey::Vote(proposal_id, voter.clone());
         let already_voted: bool = env.storage().persistent().get(&vote_key).unwrap_or(false);
         if already_voted {
             panic_with_error!(&env, GovernanceError::AlreadyVoted);
@@ -169,6 +180,14 @@ impl GovernanceContract {
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Proposal(proposal_id));
         extend_persistent(&env, &vote_key);
+
+        events::VoteCast {
+            proposal_id,
+            voter,
+            support,
+            weight,
+        }
+        .publish(&env);
     }
 
     pub fn finalize(env: Env, proposal_id: u64) {
@@ -193,6 +212,14 @@ impl GovernanceContract {
             .set(&DataKey::Proposal(proposal_id), &proposal);
 
         extend_persistent(&env, &DataKey::Proposal(proposal_id));
+
+        events::ProposalFinalized {
+            proposal_id,
+            status: proposal.status,
+            votes_for: proposal.votes_for,
+            votes_against: proposal.votes_against,
+        }
+        .publish(&env);
     }
 
     /// A pure query. Proposals must stay readable long after their deadline,

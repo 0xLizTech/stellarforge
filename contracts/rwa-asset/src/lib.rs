@@ -6,7 +6,10 @@ mod events;
 
 pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::RwaError;
-pub use events::{Approve, Burn, Mint, Paused, Transfer};
+pub use events::{
+    AdminTransferred, Approve, Burn, ComplianceSet, IssuerSet, MetadataUpdated, Mint, Paused,
+    Transfer,
+};
 
 use stellarforge_common::{extend_instance, extend_persistent};
 
@@ -100,7 +103,9 @@ impl RwaAssetContract {
         env.storage()
             .persistent()
             .set(&DataKey::Issuer(issuer.clone()), &approved);
-        extend_persistent(&env, &DataKey::Issuer(issuer));
+        extend_persistent(&env, &DataKey::Issuer(issuer.clone()));
+
+        events::IssuerSet { issuer, approved }.publish(&env);
     }
 
     pub fn is_issuer(env: Env, issuer: Address) -> bool {
@@ -338,20 +343,30 @@ impl RwaAssetContract {
     pub fn update_metadata(env: Env, metadata: AssetMetadata) {
         Self::require_admin(&env);
         Self::validate_metadata(&env, &metadata);
-        Self::validate_metadata_change(&env, &Self::metadata(env.clone()), &metadata);
+        let previous = Self::metadata(env.clone());
+        Self::validate_metadata_change(&env, &previous, &metadata);
         env.storage()
             .persistent()
             .set(&DataKey::Metadata, &metadata);
 
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Metadata);
+
+        events::MetadataUpdated { previous, metadata }.publish(&env);
     }
 
     pub fn transfer_admin(env: Env, new_admin: Address) {
         Self::require_admin(&env);
         new_admin.require_auth();
+        let previous = Self::admin(env.clone());
         env.storage().instance().set(&ADMIN_KEY, &new_admin);
         extend_instance(&env);
+
+        events::AdminTransferred {
+            previous,
+            new_admin,
+        }
+        .publish(&env);
     }
 
     // ── Compliance Configuration ──────────────────────────────────────────────
@@ -364,12 +379,18 @@ impl RwaAssetContract {
     /// 3 accredited.
     pub fn set_compliance(env: Env, compliance: Option<Address>, min_level: u32) {
         Self::require_admin(&env);
-        match compliance {
-            Some(addr) => env.storage().instance().set(&COMPLIANCE_KEY, &addr),
+        match &compliance {
+            Some(addr) => env.storage().instance().set(&COMPLIANCE_KEY, addr),
             None => env.storage().instance().remove(&COMPLIANCE_KEY),
         }
         env.storage().instance().set(&MIN_LEVEL_KEY, &min_level);
         extend_instance(&env);
+
+        events::ComplianceSet {
+            compliance,
+            min_level,
+        }
+        .publish(&env);
     }
 
     pub fn compliance_contract(env: Env) -> Option<Address> {

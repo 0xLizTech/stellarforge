@@ -16,7 +16,8 @@ use soroban_sdk::{
 };
 
 use rwa_asset::{
-    Approve, AssetMetadata, Burn, Mint, Paused, RwaAssetContract, RwaAssetContractClient, Transfer,
+    AdminTransferred, Approve, AssetMetadata, Burn, ComplianceSet, IssuerSet, MetadataUpdated,
+    Mint, Paused, RwaAssetContract, RwaAssetContractClient, Transfer,
 };
 
 fn metadata(env: &Env) -> AssetMetadata {
@@ -180,5 +181,90 @@ fn test_self_transfer_no_op_emits_nothing() {
     assert!(
         f.env.events().all().events().is_empty(),
         "self-transfer no-op published an event",
+    );
+}
+
+// ─── Administrative events (IR-03) ─────────────────────────────────────────
+
+#[test]
+fn test_set_issuer_emits_event() {
+    let f = setup();
+    let issuer = Address::generate(&f.env);
+
+    f.client.set_issuer(&issuer, &false);
+
+    assert_eq!(
+        f.env.events().all(),
+        std::vec![IssuerSet {
+            issuer,
+            approved: false,
+        }
+        .to_xdr(&f.env, &f.id)],
+    );
+}
+
+#[test]
+fn test_update_metadata_emits_both_versions() {
+    let f = setup();
+    let mut updated = metadata(&f.env);
+    updated.legal_doc_hash = Bytes::from_array(&f.env, &[9u8; 32]);
+
+    f.client.update_metadata(&updated);
+
+    // The previous version rides along so the document hash the asset used to
+    // name is recoverable without replaying state.
+    assert_eq!(
+        f.env.events().all(),
+        std::vec![MetadataUpdated {
+            previous: metadata(&f.env),
+            metadata: updated,
+        }
+        .to_xdr(&f.env, &f.id)],
+    );
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let f = setup();
+    let previous = f.client.admin();
+    let new_admin = Address::generate(&f.env);
+
+    f.client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        f.env.events().all(),
+        std::vec![AdminTransferred {
+            previous,
+            new_admin,
+        }
+        .to_xdr(&f.env, &f.id)],
+    );
+}
+
+/// Disabling screening is the change ADR-004 tells monitors to watch for, so
+/// the `None` case is asserted as well as the configured one.
+#[test]
+fn test_set_compliance_emits_event_including_when_disabled() {
+    let f = setup();
+    let engine = Address::generate(&f.env);
+
+    f.client.set_compliance(&Some(engine.clone()), &2);
+    assert_eq!(
+        f.env.events().all(),
+        std::vec![ComplianceSet {
+            compliance: Some(engine),
+            min_level: 2,
+        }
+        .to_xdr(&f.env, &f.id)],
+    );
+
+    f.client.set_compliance(&None, &0);
+    assert_eq!(
+        f.env.events().all(),
+        std::vec![ComplianceSet {
+            compliance: None,
+            min_level: 0,
+        }
+        .to_xdr(&f.env, &f.id)],
     );
 }

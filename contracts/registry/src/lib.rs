@@ -4,8 +4,10 @@
 //! Phase 1 skeleton: registration + lookup only.
 
 mod error;
+mod events;
 
 pub use error::RegistryError;
+pub use events::{ActiveSet, AssetRegistered};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol, Vec,
@@ -95,6 +97,14 @@ impl RegistryContract {
 
         extend_instance(&env);
         extend_persistent(&env, &key);
+
+        events::AssetRegistered {
+            contract: entry.contract,
+            asset_class: entry.asset_class,
+            active: entry.active,
+            is_new,
+        }
+        .publish(&env);
     }
 
     /// A pure query: registry lookups do not extend the entries they read, so
@@ -142,7 +152,7 @@ impl RegistryContract {
 
     pub fn set_active(env: Env, contract: Address, active: bool) {
         Self::require_admin(&env);
-        let key = DataKey::Asset(contract);
+        let key = DataKey::Asset(contract.clone());
         let mut entry: AssetEntry = match env.storage().persistent().get(&key) {
             Some(e) => e,
             None => panic_with_error!(&env, RegistryError::AssetNotFound),
@@ -152,6 +162,8 @@ impl RegistryContract {
 
         extend_instance(&env);
         extend_persistent(&env, &key);
+
+        events::ActiveSet { contract, active }.publish(&env);
     }
 
     pub fn admin(env: Env) -> Address {

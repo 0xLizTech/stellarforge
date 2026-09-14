@@ -4,13 +4,14 @@ use soroban_sdk::{
     testutils::{
         cost_estimate::NetworkInvocationResourceLimits,
         storage::{Instance as _, Persistent as _},
-        Address as _, Ledger,
+        Address as _, Events, Ledger,
     },
-    Address, Env, String,
+    Address, Env, Event, String,
 };
 
 use registry::{
-    AssetEntry, DataKey, RegistryContract, RegistryContractClient, RegistryError, MAX_PAGE_SIZE,
+    ActiveSet, AssetEntry, AssetRegistered, DataKey, RegistryContract, RegistryContractClient,
+    RegistryError, MAX_PAGE_SIZE,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -372,4 +373,57 @@ fn test_set_active_extends_the_entry() {
 
     assert_eq!(h.ttl_of(&DataKey::Asset(asset)), h.max_ttl());
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
+}
+
+// ─── Events (IR-03) ────────────────────────────────────────────────────────
+
+#[test]
+fn test_register_emits_event_distinguishing_new_from_updated() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AssetRegistered {
+            contract: asset.clone(),
+            asset_class: String::from_str(&h.env, "real_estate"),
+            active: true,
+            is_new: true,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+
+    h.client
+        .register(&entry(&h.env, &asset, "infrastructure", false));
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AssetRegistered {
+            contract: asset,
+            asset_class: String::from_str(&h.env, "infrastructure"),
+            active: false,
+            is_new: false,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_set_active_emits_event() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+
+    h.client.set_active(&asset, &false);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![ActiveSet {
+            contract: asset,
+            active: false,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
 }

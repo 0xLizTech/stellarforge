@@ -3,13 +3,14 @@
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Ledger,
+        Address as _, Events, Ledger,
     },
-    Address, Bytes, Env, String,
+    Address, Bytes, Env, Event, String,
 };
 
 use governance::{
-    DataKey, GovernanceContract, GovernanceContractClient, GovernanceError, ProposalStatus,
+    DataKey, GovernanceContract, GovernanceContractClient, GovernanceError, ProposalCreated,
+    ProposalFinalized, ProposalStatus, VoteCast,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -445,4 +446,77 @@ fn test_reading_a_finalized_proposal_does_not_extend_it() {
     h.client.has_voted(&id, &Address::generate(&h.env));
 
     assert_eq!(h.ttl_of(&DataKey::Proposal(id)), before - IDLE);
+}
+
+// ─── Events (IR-03) ────────────────────────────────────────────────────────
+
+// NFR-A-3: the full governance history must be reconstructable from events.
+
+#[test]
+fn test_propose_emits_event() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let title = String::from_str(&h.env, "Raise the protocol fee");
+    let description_hash = Bytes::from_array(&h.env, &[7u8; 32]);
+    let deadline_ledger = h.env.ledger().sequence() + VOTING_PERIOD;
+
+    let id = h
+        .client
+        .propose(&proposer, &title, &description_hash, &VOTING_PERIOD);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![ProposalCreated {
+            proposal_id: id,
+            proposer,
+            title,
+            description_hash,
+            deadline_ledger,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_vote_emits_event() {
+    let h = setup();
+    let id = h.propose();
+    let voter = Address::generate(&h.env);
+
+    h.client.vote(&voter, &id, &false, &40_i128);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![VoteCast {
+            proposal_id: id,
+            voter,
+            support: false,
+            weight: 40,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_finalize_emits_the_outcome_and_tally() {
+    let h = setup();
+    let id = h.propose();
+    h.client
+        .vote(&Address::generate(&h.env), &id, &true, &40_i128);
+    h.client
+        .vote(&Address::generate(&h.env), &id, &false, &10_i128);
+    h.advance_past_deadline();
+
+    h.client.finalize(&id);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![ProposalFinalized {
+            proposal_id: id,
+            status: ProposalStatus::Passed,
+            votes_for: 40,
+            votes_against: 10,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
 }
