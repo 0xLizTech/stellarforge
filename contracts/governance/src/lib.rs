@@ -20,7 +20,7 @@ mod error;
 mod events;
 
 pub use error::GovernanceError;
-pub use events::{ProposalCreated, ProposalFinalized, VoteCast};
+pub use events::{AdminTransferred, ProposalCreated, ProposalFinalized, VoteCast};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
@@ -240,6 +240,29 @@ impl GovernanceContract {
 
     pub fn proposal_count(env: Env) -> u64 {
         env.storage().instance().get(&PROP_COUNT).unwrap_or(0)
+    }
+
+    /// Hands the admin role to `new_admin`.
+    ///
+    /// Both the current and the incoming admin must authorize, in the same
+    /// transaction (NFR-S-4), for the reason ADR-002 gives for `rwa-asset`: a
+    /// handover to a key nobody controls cannot be undone.
+    ///
+    /// The admin has no powers in Phase 1, but Phase 3 execution hooks will
+    /// hang off it, and a role that cannot be rotated would reach them
+    /// already unrecoverable if its key were lost or exposed (IR-04).
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        let previous = Self::admin(env.clone());
+        previous.require_auth();
+        new_admin.require_auth();
+        env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        extend_instance(&env);
+
+        events::AdminTransferred {
+            previous,
+            new_admin,
+        }
+        .publish(&env);
     }
 
     pub fn admin(env: Env) -> Address {

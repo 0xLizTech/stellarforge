@@ -3,9 +3,9 @@
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Ledger,
+        Address as _, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Bytes, Env, String,
+    Address, Bytes, Env, IntoVal, String,
 };
 
 use rwa_asset::{AssetMetadata, DataKey, RwaAssetContract, RwaAssetContractClient, RwaError};
@@ -559,4 +559,49 @@ fn test_self_transfer_still_validates_balance() {
     // The no-op path must not become a way to bypass the balance check.
     let res = client.try_transfer(&alice, &alice, &100);
     assert_eq!(res, Err(Ok(RwaError::InsufficientBalance.into())));
+}
+
+// ─── Admin handover (NFR-S-4) ──────────────────────────────────────────────
+
+// `transfer_admin` has required both signatures since it was written, but no
+// test asserted it: every call ran under `mock_all_auths`. IR-04 added the
+// same entry point to the other three contracts with this coverage, so the
+// original gets it too.
+
+#[test]
+fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+    let (env, admin, client) = setup();
+    let new_admin = Address::generate(&env);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "transfer_admin",
+            args: (new_admin.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(client.try_transfer_admin(&new_admin).is_err());
+    assert_eq!(client.admin(), admin);
+}
+
+#[test]
+fn test_a_rotated_out_admin_can_no_longer_pause() {
+    let (env, admin, client) = setup();
+    client.transfer_admin(&Address::generate(&env));
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "set_paused",
+            args: (true,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(client.try_set_paused(&true).is_err());
+    assert!(!client.paused());
 }

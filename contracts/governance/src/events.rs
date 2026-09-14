@@ -47,3 +47,14 @@ pub struct ProposalFinalized {
     pub votes_for: i128,
     pub votes_against: i128,
 }
+
+/// Published by `transfer_admin`. The incoming admin is data rather than a
+/// topic, matching `rwa-asset`, so one topic filter on the outgoing address
+/// finds every handover away from a key being watched.
+#[contractevent(topics = ["transfer_admin"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferred {
+    #[topic]
+    pub previous: Address,
+    pub new_admin: Address,
+}

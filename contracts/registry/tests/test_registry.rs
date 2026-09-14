@@ -4,14 +4,14 @@ use soroban_sdk::{
     testutils::{
         cost_estimate::NetworkInvocationResourceLimits,
         storage::{Instance as _, Persistent as _},
-        Address as _, Events, Ledger,
+        Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Env, Event, String,
+    Address, Env, Event, IntoVal, String,
 };
 
 use registry::{
-    ActiveSet, AssetEntry, AssetRegistered, DataKey, RegistryContract, RegistryContractClient,
-    RegistryError, MAX_PAGE_SIZE,
+    ActiveSet, AdminTransferred, AssetEntry, AssetRegistered, DataKey, RegistryContract,
+    RegistryContractClient, RegistryError, MAX_PAGE_SIZE,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -423,6 +423,79 @@ fn test_set_active_emits_event() {
         std::vec![ActiveSet {
             contract: asset,
             active: false,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_admin_moves_the_role() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
+}
+
+/// NFR-S-4 is dual authorization, not "the admin signs". Only the current
+/// admin's signature is supplied here, which must not be enough.
+#[test]
+fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "transfer_admin",
+            args: (new_admin.clone(),).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+/// The point of rotation: once handed over, the outgoing key must be unable
+/// to change the directory, even with its own valid signature.
+#[test]
+fn test_a_rotated_out_admin_can_no_longer_register() {
+    let h = setup();
+    h.client.transfer_admin(&Address::generate(&h.env));
+
+    let asset = Address::generate(&h.env);
+    let listed = entry(&h.env, &asset, "real_estate", true);
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "register",
+            args: (listed.clone(),).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_register(&listed).is_err());
+    assert!(h.client.get_asset(&asset).is_none());
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferred {
+            previous: h.admin.clone(),
+            new_admin,
         }
         .to_xdr(&h.env, &h.contract_id)],
     );

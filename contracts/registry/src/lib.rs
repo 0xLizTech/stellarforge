@@ -7,7 +7,7 @@ mod error;
 mod events;
 
 pub use error::RegistryError;
-pub use events::{ActiveSet, AssetRegistered};
+pub use events::{ActiveSet, AdminTransferred, AssetRegistered};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol, Vec,
@@ -164,6 +164,29 @@ impl RegistryContract {
         extend_persistent(&env, &key);
 
         events::ActiveSet { contract, active }.publish(&env);
+    }
+
+    /// Hands the admin role to `new_admin`.
+    ///
+    /// Both the current and the incoming admin must authorize, in the same
+    /// transaction (NFR-S-4), for the reason ADR-002 gives for `rwa-asset`: a
+    /// handover to a key nobody controls cannot be undone.
+    ///
+    /// Without this the constructor's admin held the role for the contract's
+    /// whole life, so a compromised key could never be rotated out of control
+    /// of what the directory advertises (IR-04).
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        Self::require_admin(&env);
+        let previous = Self::admin(env.clone());
+        new_admin.require_auth();
+        env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        extend_instance(&env);
+
+        events::AdminTransferred {
+            previous,
+            new_admin,
+        }
+        .publish(&env);
     }
 
     pub fn admin(env: Env) -> Address {

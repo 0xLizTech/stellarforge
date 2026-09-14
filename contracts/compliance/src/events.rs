@@ -27,3 +27,14 @@ pub struct KycRevoked {
     pub subject: Address,
     pub record: KycRecord,
 }
+
+/// Published by `transfer_admin`. The incoming admin is data rather than a
+/// topic, matching `rwa-asset`, so one topic filter on the outgoing address
+/// finds every handover away from a key being watched.
+#[contractevent(topics = ["transfer_admin"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferred {
+    #[topic]
+    pub previous: Address,
+    pub new_admin: Address,
+}

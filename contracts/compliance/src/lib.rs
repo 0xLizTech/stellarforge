@@ -7,7 +7,7 @@ mod error;
 mod events;
 
 pub use error::ComplianceError;
-pub use events::{KycRevoked, KycSet};
+pub use events::{AdminTransferred, KycRevoked, KycSet};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
@@ -103,6 +103,31 @@ impl ComplianceContract {
 
     pub fn get_kyc(env: Env, subject: Address) -> Option<KycRecord> {
         env.storage().persistent().get(&DataKey::KycStatus(subject))
+    }
+
+    /// Hands the admin role to `new_admin`.
+    ///
+    /// Both the current and the incoming admin must authorize, in the same
+    /// transaction (NFR-S-4), for the reason ADR-002 gives for `rwa-asset`: a
+    /// handover to a key nobody controls cannot be undone.
+    ///
+    /// Without this the constructor's admin held the role for the contract's
+    /// whole life (IR-04). For this contract that is the widest blast radius in
+    /// the protocol: a compromised key can mark any address permanently
+    /// compliant on every asset screening against it, and a lost one leaves
+    /// records unrenewable until every dependent asset's transfers fail.
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        Self::require_admin(&env);
+        let previous = Self::admin(env.clone());
+        new_admin.require_auth();
+        env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        extend_instance(&env);
+
+        events::AdminTransferred {
+            previous,
+            new_admin,
+        }
+        .publish(&env);
     }
 
     pub fn admin(env: Env) -> Address {

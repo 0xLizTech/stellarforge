@@ -3,14 +3,14 @@
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Events, Ledger,
+        Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Bytes, Env, Event, String,
+    Address, Bytes, Env, Event, IntoVal, String,
 };
 
 use governance::{
-    DataKey, GovernanceContract, GovernanceContractClient, GovernanceError, ProposalCreated,
-    ProposalFinalized, ProposalStatus, VoteCast,
+    AdminTransferred, DataKey, GovernanceContract, GovernanceContractClient, GovernanceError,
+    ProposalCreated, ProposalFinalized, ProposalStatus, VoteCast,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -516,6 +516,56 @@ fn test_finalize_emits_the_outcome_and_tally() {
             status: ProposalStatus::Passed,
             votes_for: 40,
             votes_against: 10,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_admin_moves_the_role() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
+}
+
+/// NFR-S-4 is dual authorization, not "the admin signs". Only the current
+/// admin's signature is supplied here, which must not be enough.
+#[test]
+fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "transfer_admin",
+            args: (new_admin.clone(),).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferred {
+            previous: h.admin.clone(),
+            new_admin,
         }
         .to_xdr(&h.env, &h.contract_id)],
     );

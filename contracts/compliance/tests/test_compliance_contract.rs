@@ -3,13 +3,14 @@
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Events, Ledger,
+        Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Env, Event, String,
+    Address, Env, Event, IntoVal, String,
 };
 
 use compliance::{
-    ComplianceContract, ComplianceContractClient, DataKey, KycRecord, KycRevoked, KycSet,
+    AdminTransferred, ComplianceContract, ComplianceContractClient, DataKey, KycRecord, KycRevoked,
+    KycSet,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -330,5 +331,78 @@ fn test_revoking_an_unknown_subject_emits_nothing() {
     assert!(
         h.env.events().all().events().is_empty(),
         "no-op revocation published an event",
+    );
+}
+
+// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_admin_moves_the_role() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
+}
+
+/// NFR-S-4 is dual authorization, not "the admin signs". Only the current
+/// admin's signature is supplied here, which must not be enough.
+#[test]
+fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "transfer_admin",
+            args: (new_admin.clone(),).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+/// The point of rotation: once handed over, the outgoing key must be unable
+/// to issue a verification, even with its own valid signature.
+#[test]
+fn test_a_rotated_out_admin_can_no_longer_set_kyc() {
+    let h = setup();
+    h.client.transfer_admin(&Address::generate(&h.env));
+
+    let subject = Address::generate(&h.env);
+    let record = h.record(LEVEL_ACCREDITED, NEVER_EXPIRES);
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_kyc",
+            args: (subject.clone(), record.clone()).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_kyc(&subject, &record).is_err());
+    assert!(h.client.get_kyc(&subject).is_none());
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferred {
+            previous: h.admin.clone(),
+            new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
     );
 }
