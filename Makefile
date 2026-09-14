@@ -44,13 +44,13 @@ sdk-test: sdk-install
 	cd sdk && npm test
 
 # ─── Deployment ───────────────────────────────────────────────────────────────
-deploy-testnet: build
-	@echo "Deploying to Stellar testnet..."
+# scripts/deploy.sh builds, deploys all four contracts with their constructor
+# arguments, and writes deployed-contracts.json. Deploying one wasm here with no
+# constructor arguments could only ever fail.
+deploy-testnet:
+	@echo "Deploying all four contracts to Stellar testnet..."
 	@echo "Ensure STELLAR_ACCOUNT env var is set to a funded testnet keypair."
-	$(STELLAR_CLI) contract deploy \
-		--wasm target/wasm32v1-none/release/rwa_asset.wasm \
-		--network $(NETWORK) \
-		--source $(STELLAR_ACCOUNT)
+	NETWORK=testnet ./scripts/deploy.sh
 
 # ─── Help ─────────────────────────────────────────────────────────────────────
 help:
@@ -64,5 +64,5 @@ help:
 	@echo "  make clean          Remove build artifacts"
 	@echo "  make sdk-build      Build the TypeScript SDK"
 	@echo "  make sdk-test       Run SDK unit tests"
-	@echo "  make deploy-testnet Deploy rwa-asset to Stellar testnet"
+	@echo "  make deploy-testnet Deploy all four contracts to Stellar testnet"
 	@echo ""
