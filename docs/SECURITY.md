@@ -148,3 +148,28 @@ the consequence is a restore fee rather than a failure.
 
 *Fixed in `a1c73c2`. Regression test:
 `test_admin_write_paths_extend_what_they_write`.*
+
+### SF-2026-008 — SDK could report a write as failed while it could still land (medium) [IR-05]
+
+Writes are built with a 180-second validity window, but the SDK stopped polling
+after about 30 seconds and reported a still-pending transaction as failed. A
+caller that retried built a new transaction while the original could still be
+included, so a mint or transfer could execute twice. `TRY_AGAIN_LATER` and
+`DUPLICATE` submissions were also treated as pending.
+
+*Fixed in `db1677e`. Polling now covers the validity window plus 30 seconds. An
+unsettled transaction ends in `TransactionExpiredError`, which is safe to
+retry, or `TransactionOutcomeUnknownError`, which carries the hash to check
+first. Regression tests are in `sdk/tests/client.test.ts`, under "RwaAssetClient
+write submission".*
+
+### SF-2026-009 — SDK helpers silently misread amounts and hashes (medium) [IR-06]
+
+`toStroops` read `"1.2.3"` as 1.2 and `"0x10"` as hexadecimal, truncated
+precision beyond the asset's decimals, and accepted numbers that had already
+lost precision. `fromStroops` rendered 100 whole tokens at zero decimals as
+`"0.1"`. `hexToBytes32` turned non-hex digits into zero bytes. Any of these
+could put a wrong amount into a transfer, or a wrong document hash on chain.
+
+*Fixed in `c0c0543`. The helpers now reject malformed input instead of guessing at
+it. Regression tests are in `sdk/tests/utils.test.ts`.*

@@ -171,6 +171,15 @@ const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signerSecret }
 const { hash, ledger } = await client.transfer(from, to, toStroops("100", meta.decimals));
 ```
 
+A bare write waits for the transaction to settle, for up to its 180-second
+validity window plus 30 seconds. If it has not settled by then, the error type
+says whether retrying is safe:
+
+- `TransactionExpiredError`: the window closed without the transaction being
+  included. It can never land, so rebuild and resubmit.
+- `TransactionOutcomeUnknownError`: it may still land. Look up `err.hash`
+  before retrying, or the write may execute twice.
+
 Both assume the authorizing address also sources the transaction, so its
 signature satisfies the contract's `require_auth`. Paying fees from a separate
 account is not supported yet.

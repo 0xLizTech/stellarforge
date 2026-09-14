@@ -33,6 +33,9 @@ console.log(`${meta.symbol}: ${fromStroops(supply, meta.decimals)}`);
 
 Amounts are `bigint`, because the contracts store them as `i128` and a `number`
 would lose precision silently. Use `toStroops` and `fromStroops` to convert.
+`toStroops` throws rather than guess. It rejects anything but plain decimal
+notation, more decimal places than the asset allows, and a `number` that is not
+a safe integer, so pass user-entered amounts as strings.
 
 ## Writing
 
@@ -53,6 +56,15 @@ const signedXdr = await freighter.signTransaction(tx.toXDR(), { networkPassphras
 const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signerSecret });
 const { hash, ledger } = await client.transfer(from, to, amount);
 ```
+
+A bare write waits for the transaction to settle, for up to its 180-second
+validity window plus 30 seconds. If it has not settled by then, the error type
+says whether retrying is safe:
+
+- `TransactionExpiredError`: the window closed without the transaction being
+  included. It can never land, so rebuild and resubmit.
+- `TransactionOutcomeUnknownError`: it may still land. Look up `err.hash`
+  before retrying, or the write may execute twice.
 
 Two things worth knowing before you use either:
 

@@ -1,16 +1,16 @@
 # Internal Security Review — Phase 1
 
-**Status:** In remediation. IR-01, IR-02, IR-03, IR-04 and IR-07 are fixed; the rest are open.
+**Status:** In remediation. Every Medium finding (IR-01 to IR-06) and IR-07 is fixed. The Low and Info findings IR-08 to IR-17 are open.
 **Date:** 2026-09-14
 **Commit reviewed:** `1f43935` (`main`)
 **Roadmap item:** Phase 1, *Formal security review (internal)*
 
 > **Handling.** [SECURITY.md](../SECURITY.md) records findings publicly
-> *once fixed*. IR-01, IR-02, IR-03, IR-04 and IR-07 are fixed and recorded
-> there as SF-2026-003 to SF-2026-007. IR-05 and IR-06 are both Medium, both in
-> the SDK, and still open. The SDK is not yet published to npm, which limits
-> exposure, but keep this report off the public `main` branch until those two
-> are fixed as well. None of the contracts are deployed on mainnet.
+> *once fixed*. Every Medium finding, plus IR-07, is fixed and recorded there as
+> SF-2026-003 to SF-2026-009. IR-08 to IR-17 are still open. They are Low or
+> Info, and none gives a path to funds, but they are unfixed findings under
+> that policy. Decide whether that disclosure is acceptable before this report
+> reaches the public `main` branch. None of the contracts are deployed on mainnet.
 
 ---
 
@@ -72,8 +72,8 @@ any deployment that will hold real positions.
 | IR-02 | `update_metadata` can break the supply cap and re-denominate balances | rwa-asset | Medium | Fixed `a1c73c2` |
 | IR-03 | Privileged and governance state changes emit no events | all contracts | Medium | Fixed `8147f6d` |
 | IR-04 | `compliance`, `registry` and `governance` admins cannot be rotated | compliance, registry, governance | Medium | Fixed `2021ed5` |
-| IR-05 | SDK can report a failed transaction that later succeeds | sdk | Medium | Open |
-| IR-06 | SDK amount helpers silently accept malformed input | sdk | Medium | Open |
+| IR-05 | SDK can report a failed transaction that later succeeds | sdk | Medium | Fixed `db1677e` |
+| IR-06 | SDK amount helpers silently accept malformed input | sdk | Medium | Fixed `c0c0543` |
 | IR-07 | `update_metadata` and `transfer_admin` skip the TTL policy | rwa-asset | Low | Fixed `a1c73c2` |
 | IR-08 | `set_kyc` accepts out-of-range levels and past expiries | compliance | Low | Open |
 | IR-09 | Token surface diverges from SEP-41; allowances never expire | rwa-asset | Low | Open |
@@ -257,6 +257,8 @@ this) and that production deployments should not.
 
 **Severity:** Medium  **Location:** `sdk/src/base.ts:128-162`
 
+**Status:** Fixed in `db1677e`. Polling covers `maxTime` plus 30 seconds. If the hash is still unknown at the end, the result is `TransactionExpiredError` when the RPC has seen a ledger close after `maxTime`, and `TransactionOutcomeUnknownError` otherwise. `TRY_AGAIN_LATER` fails immediately, and `DUPLICATE` waits. A bare write can now take up to about 210 seconds.
+
 Write transactions are built with a 180-second validity window
 (`WRITE_TX_TIMEOUT_SECONDS`). `signAndSubmit` then calls
 `server.pollTransaction(hash)` with its defaults. In `@stellar/stellar-sdk`
@@ -287,6 +289,8 @@ lands, a `mint` or `transfer` executes twice.
 ### IR-06 — SDK amount helpers silently accept malformed input
 
 **Severity:** Medium  **Location:** `sdk/src/utils.ts:30-63`
+
+**Status:** Fixed in `c0c0543`. Every `toStroops` and `hexToBytes32` row in the table above now throws, and the `fromStroops` rows render correctly. The change is breaking: `toStroops` no longer truncates excess precision or accepts a fractional `number`.
 
 These helpers convert user-entered amounts into the integers passed to
 `mint`, `transfer` and `approve`. Confirmed behaviour:
@@ -506,7 +510,7 @@ mocked authorization.
 
 1. **Before any contract is deployed with holders.** Fix IR-01, IR-02, IR-03,
    IR-04 and IR-07. These are permanent once deployed (ADR-003). **Done.**
-2. **Before `@stellarforge/sdk` is published to npm.** Fix IR-05 and IR-06.
+2. **Before `@stellarforge/sdk` is published to npm.** Fix IR-05 and IR-06. **Done.**
 3. **Before the external audit.** Fix IR-10, IR-11 and IR-12, so auditors can
    tie a wasm hash to a commit. Then fix IR-08, IR-09, IR-13 and IR-14.
 4. **Track.** IR-15, IR-16 and IR-17.
