@@ -26,7 +26,7 @@ This document describes the planned evolution of the StellarForge protocol acros
 - [x] TypeScript SDK: clients for all four contracts (RwaAsset, Compliance, Registry, Governance)
 - [x] CI/CD: GitHub Actions for contracts (check, test, build-wasm) and SDK
 - [x] Testnet deployment scripts
-- [ ] Formal security review (internal)
+- [x] Formal security review (internal): see [`docs/audits/2026-09-14-internal-review-phase1.md`](docs/audits/2026-09-14-internal-review-phase1.md)
 - [x] Compliance middleware hook (integrate Compliance into RwaAsset transfer flow)
 - [x] SDK: write-path transaction builder helpers
 - [ ] SDK: npm package publish to `@stellarforge/sdk`

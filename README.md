@@ -195,18 +195,20 @@ account is not supported yet.
 | `__constructor(admin, metadata)` | admin | Runs at deploy; not callable afterwards |
 | `mint(issuer, to, amount)` | issuer | Create new tokens |
 | `burn(from, amount)` | from | Destroy tokens |
-| `transfer(from, to, amount)` | from | Move tokens |
-| `approve(owner, spender, amount)` | owner | Set allowance |
+| `burn_from(spender, from, amount)` | spender | Destroy tokens, spending an allowance |
+| `transfer(from, to, amount)` | from | Move tokens; `to` may be a muxed address |
+| `approve(owner, spender, amount, live_until_ledger)` | owner | Set an allowance that reads as zero after `live_until_ledger` |
 | `transfer_from(spender, from, to, amount)` | spender | Spend allowance |
 | `set_issuer(issuer, approved)` | admin | Grant/revoke issuer role |
 | `set_paused(paused)` | admin | Emergency circuit breaker |
-| `update_metadata(metadata)` | admin | Update asset metadata |
+| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can never be lifted or set below supply |
 | `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
 | `set_compliance(compliance, min_level)` | admin | Point at a compliance contract, or `None` to disable screening |
 | `balance(owner)` | — | Query balance |
 | `allowance(owner, spender)` | — | Query allowance |
 | `total_supply()` | — | Query supply |
 | `metadata()` | — | Query metadata |
+| `decimals()`, `name()`, `symbol()` | — | SEP-41 metadata getters |
 | `admin()` | — | Query admin address |
 | `is_issuer(address)` | — | Query issuer status |
 | `paused()` | — | Query pause state |
@@ -216,7 +218,7 @@ account is not supported yet.
 **Transfer screening.** When `set_compliance` names a contract, `mint`,
 `transfer` and `transfer_from` require every counterparty to hold a valid
 verification record at or above `min_level` (0 none, 1 basic, 2 full,
-3 accredited). `burn` is deliberately exempt, so a holder whose verification
+3 accredited). `burn` and `burn_from` are deliberately exempt, so a holder whose verification
 has lapsed can still exit their position. Screening is skipped entirely while
 no compliance contract is configured.
 
@@ -224,7 +226,7 @@ no compliance contract is configured.
 
 | Function | Auth | Description |
 |---|---|---|
-| `set_kyc(subject, record)` | admin | Set KYC record |
+| `set_kyc(subject, record)` | admin | Set KYC record; requires level 0–3, an expiry not yet past, and a two-letter ISO 3166-1 jurisdiction |
 | `revoke_kyc(subject)` | admin | Remove KYC record |
 | `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
 | `is_compliant(subject, min_level)` | — | Check compliance; pure query, no ledger write |
@@ -250,11 +252,16 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 | `asset_count()` | — | Count registered contracts |
 | `admin()` | — | Query admin address |
 
+**An entry is an assertion, not a verification.** `register` does not check
+that the address is a deployed `rwa-asset` or that `asset_class` matches its
+metadata, and nothing in the protocol reads `active`. Treat the registry as
+the admin's directory, not as proof that an asset is genuine or current.
+
 ### Governance
 
 | Function | Auth | Description |
 |---|---|---|
-| `propose(proposer, title, hash, period)` | proposer | Create proposal |
+| `propose(proposer, title, hash, period)` | proposer | Create proposal; the period must be 1–90 days in ledgers and the title at most 256 bytes |
 | `vote(voter, id, support, weight)` | voter | Cast vote |
 | `finalize(id)` | — | Tally and finalize; a tie is rejected |
 | `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role; no other admin powers in Phase 1 |

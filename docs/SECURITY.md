@@ -173,3 +173,22 @@ could put a wrong amount into a transfer, or a wrong document hash on chain.
 
 *Fixed in `c0c0543`. The helpers now reject malformed input instead of guessing at
 it. Regression tests are in `sdk/tests/utils.test.ts`.*
+
+### SF-2026-010 to SF-2026-019 — Low and Info findings [IR-08 to IR-17]
+
+None of these gave a path to funds. Each is fixed, and the
+[internal review](audits/2026-09-14-internal-review-phase1.md) records the
+detail and the regression tests.
+
+| ID | Review | Finding | Fixed in |
+|---|---|---|---|
+| SF-2026-010 | IR-08 | `set_kyc` accepted out-of-range levels, past expiries and malformed jurisdictions (low) | `e01ff66` |
+| SF-2026-011 | IR-09 | The token surface diverged from SEP-41, and allowances never expired (low) | `0e7b905` |
+| SF-2026-012 | IR-10 | The Rust toolchain was unpinned, so builds were not reproducible (low) | `d1f0ad7` |
+| SF-2026-013 | IR-11 | Dependency review never ran, and the SDK's npm dependencies were never audited (low) | `d1f0ad7` |
+| SF-2026-014 | IR-12 | CI trusted a mutable action tag and an unverified CLI download (low) | `d1f0ad7` |
+| SF-2026-015 | IR-13 | `deploy.sh` would deploy placeholder metadata to mainnet (low) | `0c91166` |
+| SF-2026-016 | IR-14 | `propose` accepted a zero voting period and unbounded titles (low) | `2f736c0` |
+| SF-2026-017 | IR-15 | A self-`transfer_from` emitted a phantom `Transfer` event (info) | `0e7b905` |
+| SF-2026-018 | IR-16 | Registry entries were not documented as unverified (info) | `4f04c60` |
+| SF-2026-019 | IR-17 | Constructor `require_auth` was asserted by no test (info) | `d9fc624` |

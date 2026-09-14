@@ -1,16 +1,14 @@
 # Internal Security Review — Phase 1
 
-**Status:** In remediation. Every Medium finding (IR-01 to IR-06) and IR-07 is fixed. The Low and Info findings IR-08 to IR-17 are open.
+**Status:** Resolved. All 17 findings are fixed. One follow-up lies outside the repository: required reviewers on the `npm-publish` environment (IR-12).
 **Date:** 2026-09-14
 **Commit reviewed:** `1f43935` (`main`)
 **Roadmap item:** Phase 1, *Formal security review (internal)*
 
-> **Handling.** [SECURITY.md](../SECURITY.md) records findings publicly
-> *once fixed*. Every Medium finding, plus IR-07, is fixed and recorded there as
-> SF-2026-003 to SF-2026-009. IR-08 to IR-17 are still open. They are Low or
-> Info, and none gives a path to funds, but they are unfixed findings under
-> that policy. Decide whether that disclosure is acceptable before this report
-> reaches the public `main` branch. None of the contracts are deployed on mainnet.
+> **Handling.** Every finding is fixed and recorded in
+> [SECURITY.md](../SECURITY.md) as SF-2026-003 to SF-2026-019, so under that
+> policy this report can now be published. None of the contracts are deployed
+> on mainnet.
 
 ---
 
@@ -75,16 +73,16 @@ any deployment that will hold real positions.
 | IR-05 | SDK can report a failed transaction that later succeeds | sdk | Medium | Fixed `db1677e` |
 | IR-06 | SDK amount helpers silently accept malformed input | sdk | Medium | Fixed `c0c0543` |
 | IR-07 | `update_metadata` and `transfer_admin` skip the TTL policy | rwa-asset | Low | Fixed `a1c73c2` |
-| IR-08 | `set_kyc` accepts out-of-range levels and past expiries | compliance | Low | Open |
-| IR-09 | Token surface diverges from SEP-41; allowances never expire | rwa-asset | Low | Open |
-| IR-10 | Build is not reproducible (NFR-S-5) | toolchain, CI | Low | Open |
-| IR-11 | Dependency review never runs, and no SDK dependency audit exists | CI | Low | Open |
-| IR-12 | CI trusts mutable action tags and an unverified CLI download | CI | Low | Open |
-| IR-13 | Deployment tooling lacks mainnet guards and has stale paths | scripts, Makefile | Low | Open |
-| IR-14 | `propose` accepts a zero voting period and unbounded input | governance | Low | Open |
-| IR-15 | Self-`transfer_from` emits a phantom `Transfer` event | rwa-asset | Info | Open |
-| IR-16 | Registry entries are unverified, and `active` is unenforced | registry | Info | Open |
-| IR-17 | Constructor `require_auth` is untested (carried from ADR-002) | all contracts | Info | Open |
+| IR-08 | `set_kyc` accepts out-of-range levels and past expiries | compliance | Low | Fixed `e01ff66` |
+| IR-09 | Token surface diverges from SEP-41; allowances never expire | rwa-asset | Low | Fixed `0e7b905` |
+| IR-10 | Build is not reproducible (NFR-S-5) | toolchain, CI | Low | Fixed `d1f0ad7` |
+| IR-11 | Dependency review never runs, and no SDK dependency audit exists | CI | Low | Fixed `d1f0ad7` |
+| IR-12 | CI trusts mutable action tags and an unverified CLI download | CI | Low | Fixed `d1f0ad7` |
+| IR-13 | Deployment tooling lacks mainnet guards and has stale paths | scripts, Makefile | Low | Fixed `0c91166` |
+| IR-14 | `propose` accepts a zero voting period and unbounded input | governance | Low | Fixed `2f736c0` |
+| IR-15 | Self-`transfer_from` emits a phantom `Transfer` event | rwa-asset | Info | Fixed `0e7b905` |
+| IR-16 | Registry entries are unverified, and `active` is unenforced | registry | Info | Fixed `4f04c60` |
+| IR-17 | Constructor `require_auth` is untested (carried from ADR-002) | all contracts | Info | Fixed `d9fc624` |
 
 **Counts:** 0 Critical, 0 High, 6 Medium, 8 Low, 3 Info.
 
@@ -337,6 +335,8 @@ and asserts the TTL of each key it wrote would catch any future omission.
 
 **Severity:** Low  **Location:** `contracts/compliance/src/lib.rs:55-62`
 
+**Status:** Fixed in `e01ff66`. `set_kyc` rejects a level above `MAX_LEVEL` (`InvalidLevel`), a non-zero expiry at or before the ledger timestamp (`AlreadyExpired`), and a jurisdiction that is not two ASCII uppercase letters (`InvalidJurisdiction`). The jurisdiction check is shape only.
+
 `KycRecord.level` is documented as 0–3, but `set_kyc` accepts any `u32`. A
 record with `level = u32::MAX` satisfies every `min_level` an asset could ever
 configure, including tiers added later. `expires_at` values already in the
@@ -353,6 +353,8 @@ ASCII uppercase letters.
 ### IR-09 — Token surface diverges from SEP-41; allowances never expire
 
 **Severity:** Low  **Location:** `contracts/rwa-asset/src/lib.rs:219-286`
+
+**Status:** Fixed in `0e7b905`. `approve` takes `live_until_ledger`, and a lapsed allowance reads as zero (`InvalidExpiration`). `burn_from`, `decimals`, `name` and `symbol` were added. `transfer` takes a `MuxedAddress` and reports `to_muxed_id`, and the `Approve` event data follows SEP-41. The approve-overwrite race is inherent to SEP-41, and the doc comment on `approve` explains how to lower an allowance safely.
 
 ADR-002 describes the token interface as following SEP-41, but it differs in
 several ways:
@@ -381,6 +383,8 @@ explicitly that the contract is not SEP-41 compatible.
 
 **Severity:** Low  **Location:** `rust-toolchain.toml:2`, `.github/workflows/*.yml`
 
+**Status:** Fixed in `d1f0ad7`. `rust-toolchain.toml` pins 1.98.1, CI installs it through rustup, and `build-wasm` publishes `SHA256SUMS`. Byte-for-byte reproduction on a second machine has not been demonstrated.
+
 `rust-toolchain.toml` pins `channel = "stable"`, and CI installs
 `dtolnay/rust-toolchain@stable`. Wasm output depends on the `rustc` version,
 so a given commit produces different bytes over time. As a result, nobody can
@@ -397,6 +401,8 @@ the sha256 of each release wasm alongside the tag.
 ### IR-11 — Dependency review never runs, and no SDK dependency audit exists
 
 **Severity:** Low  **Location:** `.github/workflows/security.yml:1-32`
+
+**Status:** Fixed in `d1f0ad7`. `security.yml` also runs on pull requests, pins cargo-audit 0.22.2, and audits the SDK's runtime npm dependencies. The workflow changes have not yet run on GitHub.
 
 - The `dependency-review` job is conditioned on
   `github.event_name == 'pull_request'`, but the workflow has no
@@ -416,6 +422,8 @@ the sha256 of each release wasm alongside the tag.
 
 **Severity:** Low  **Location:** `.github/workflows/contracts-ci.yml`, `testnet-smoke.yml`, `publish-sdk.yml`
 
+**Status:** Fixed in `d1f0ad7`, with one step outside the repository. `Swatinem/rust-cache` is pinned to the commit behind v2.9.2, and the `stellar-cli` tarball is checked against a pinned sha256. `publish-sdk` runs in the `npm-publish` environment, but that environment's required reviewers must still be configured in the repository settings.
+
 - Third-party actions are referenced by mutable tags:
   `dtolnay/rust-toolchain@stable` and `Swatinem/rust-cache@v2`.
 - `stellar-cli` is fetched with `curl | tar` and never checked against a
@@ -432,6 +440,8 @@ approval.
 ### IR-13 — Deployment tooling lacks mainnet guards and has stale paths
 
 **Severity:** Low  **Location:** `scripts/deploy.sh:24-33`, `Makefile:47-53`, `.env.example:21`
+
+**Status:** Fixed in `0c91166`. `NETWORK=mainnet` requires `ADMIN`, every `ASSET_*` variable, and a non-zero 64-hex-digit document hash. `make deploy-testnet` runs `deploy.sh`, and `.env.example` documents the variables. The refusal paths were exercised locally; a successful mainnet deploy was not attempted.
 
 - `deploy.sh` accepts `NETWORK=mainnet` with the placeholder metadata, which
   includes an all-zero `legal_doc_hash`. It also makes the deploying hot key
@@ -450,6 +460,8 @@ is non-zero. Point `make deploy-testnet` at `scripts/deploy.sh` and correct
 ### IR-14 — `propose` accepts a zero voting period and unbounded input
 
 **Severity:** Low  **Location:** `contracts/governance/src/lib.rs:81-131`
+
+**Status:** Fixed in `2f736c0`. The voting period must be between `MIN_VOTING_PERIOD_LEDGERS` (about a day) and `MAX_VOTING_PERIOD_LEDGERS` (about 90 days), and titles are capped at `MAX_TITLE_BYTES` (256). No proposal deposit was added.
 
 - With `voting_period_ledgers = 0`, voting is open only during the ledger the
   proposal is created in, and the proposer can finalize in the next ledger. No
@@ -470,6 +482,8 @@ under looser rules.
 
 **Severity:** Info  **Location:** `contracts/rwa-asset/src/lib.rs:259-285`
 
+**Status:** Fixed in `0e7b905`. A self-`transfer_from` still spends the allowance, but it publishes nothing.
+
 A self-`transfer` returns early and publishes nothing
 (`test_self_transfer_no_op_emits_nothing`). A self-`transfer_from` consumes
 the allowance and publishes `Transfer { from, to: from, amount }`, although no
@@ -486,6 +500,8 @@ so consumption of the allowance is still visible.
 
 **Severity:** Info  **Location:** `contracts/registry/src/lib.rs:56-109`
 
+**Status:** Fixed in `4f04c60` and the README, as documentation. Both state that an entry is an assertion, not a verification.
+
 `register` does not check that the address is a deployed `rwa-asset`, or that
 `asset_class` matches that asset's metadata. `active` is a label only: nothing
 in the protocol reads it. ADR-003 already frames the registry as a directory.
@@ -497,6 +513,8 @@ an asset is genuine or current.
 ### IR-17 — Constructor `require_auth` is untested
 
 **Severity:** Info  **Location:** every `__constructor`
+
+**Status:** Fixed in `d9fc624`. Each contract's `tests/test_constructor_auth.rs` asserts the authorization its constructor demands. Removing the compliance constructor's `require_auth` was confirmed to make its test fail.
 
 The ADR-002 amendment already records this. It is carried forward here so it
 is tracked to closure: `Env::register` mocks constructor authorization, so no
@@ -512,8 +530,8 @@ mocked authorization.
    IR-04 and IR-07. These are permanent once deployed (ADR-003). **Done.**
 2. **Before `@stellarforge/sdk` is published to npm.** Fix IR-05 and IR-06. **Done.**
 3. **Before the external audit.** Fix IR-10, IR-11 and IR-12, so auditors can
-   tie a wasm hash to a commit. Then fix IR-08, IR-09, IR-13 and IR-14.
-4. **Track.** IR-15, IR-16 and IR-17.
+   tie a wasm hash to a commit. Then fix IR-08, IR-09, IR-13 and IR-14. **Done.**
+4. **Track.** IR-15, IR-16 and IR-17. **Done.**
 
 When a finding is fixed, move it into the *Resolved Issues* section of
 [SECURITY.md](../SECURITY.md) with its commit and regression test, following

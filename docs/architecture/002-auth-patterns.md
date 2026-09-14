@@ -190,3 +190,25 @@ The dual-authorization requirement is now asserted by tests in all four
 contracts, where before it was asserted in none. One test supplies only the
 current admin's signature and expects the call to be rejected. Another shows
 that a rotated-out admin cannot use its old powers, even with a valid signature.
+
+## Amendment (2026-09) — SEP-41 surface and constructor coverage
+
+IR-09 aligned `rwa-asset` with SEP-41. `approve` now takes
+`live_until_ledger`, and `transfer` takes `to` as a `MuxedAddress`; neither
+changes who authenticates. Two new entry points extend the map:
+
+| Contract | Entry point | Must authenticate | Notes |
+|---|---|---|---|
+| `rwa-asset` | `burn_from` | `spender` | Not `from`: as with `transfer_from`, the allowance is the authority |
+| | `decimals`, `name`, `symbol` | nobody | Pure reads of `AssetMetadata` |
+
+That makes `burn_from` a fourth deliberate exception, alongside
+`transfer_from`, `screen` and `finalize`.
+
+The *Constructor authorization is not covered by tests* section above is
+resolved (IR-17). `Env::register` still authorizes the constructor itself, but
+under `mock_all_auths` it records the authorization the constructor demanded,
+and each contract's `tests/test_constructor_auth.rs` asserts that record
+exactly. Removing a constructor's `require_auth` now fails a test. What no unit
+test can show is that the network rejects a deploy lacking the signature; that
+is host behaviour.

@@ -68,11 +68,12 @@ The reasoning is ADR-001's, applied: a KYC record is written once and read forev
 | `transfer` | `from` and `to` |
 | `transfer_from` | `from` and `to` |
 | `burn` | nobody |
+| `burn_from` | nobody |
 | `approve` | nobody |
 
 `transfer_from` screens the owner and the recipient, not the spender. The spender moves value it does not own; the parties to the movement are the ones a regulator cares about.
 
-**`burn` screening nobody is deliberate.** A holder whose KYC has lapsed — expired record, revoked verification — can still destroy their own tokens. The alternative traps them: unable to transfer, unable to exit, holding a position they cannot close. Burning reduces supply and moves value to no one, so there is no counterparty to screen and no transfer to prevent. An audit checklist that flags "a balance-changing operation with no compliance check" will flag this line; it is correct as written.
+**`burn` screening nobody is deliberate.** A holder whose KYC has lapsed — expired record, revoked verification — can still destroy their own tokens. The alternative traps them: unable to transfer, unable to exit, holding a position they cannot close. Burning reduces supply and moves value to no one, so there is no counterparty to screen and no transfer to prevent. An audit checklist that flags "a balance-changing operation with no compliance check" will flag this line; it is correct as written. `burn_from`, added with SEP-41 alignment (IR-09), screens nobody for the same reason: it destroys a holder's tokens rather than moving them to anyone.
 
 **`approve` screening nobody** follows from the same reasoning. Granting an allowance moves nothing. The screen happens when the allowance is exercised, at `transfer_from`, which is where the value actually moves and where compliance status is current rather than however old the approval is.
 
