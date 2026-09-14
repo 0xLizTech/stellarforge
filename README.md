@@ -132,7 +132,7 @@ make sdk-test
 
 ```bash
 # Fund a test account first
-stellar keys generate --global mykey --network testnet
+stellar keys generate mykey --network testnet
 stellar keys fund mykey --network testnet
 
 # Deploy
