@@ -212,3 +212,28 @@ and each contract's `tests/test_constructor_auth.rs` asserts that record
 exactly. Removing a constructor's `require_auth` now fails a test. What no unit
 test can show is that the network rejects a deploy lacking the signature; that
 is host behaviour.
+
+## Amendment (2026-09) — fee payers separate from authorizers
+
+Two consequences recorded above no longer hold: that the authorizing address
+must also source the transaction, and that `transfer_admin` is not reachable
+from the SDK. Since #31, the SDK builds a write that one account sources and
+pays for while another address authorizes it. Simulation returns the
+authorization entries, each authorizer signs its entries with an explicit
+expiry ledger, and the fee payer submits. `buildTransferAdminTx` uses the same
+flow, with the current admin paying and the incoming admin signing its entry.
+
+Trying the flow on testnet before building it settled three things:
+
+- **An authorizing account must exist.** Authorization reads the account's
+  signers and thresholds from its ledger entry, so an address that was never
+  funded cannot authorize anything, even when another account pays every fee.
+  "Gasless onboarding" therefore still needs the holder's account created, for
+  instance sponsored by the issuer. Only the ongoing fees can be covered.
+- **The network enforces the entry.** It rejects an entry signed with the wrong
+  key (`Error(Auth, InvalidAction)`), past its expiry (`Error(Auth,
+  InvalidInput)`), submitted a second time (`Error(Auth, ExistingValue)`), and
+  reused for different arguments (`Error(Auth, InvalidAction)`).
+- **`authorizeEntry` checks nothing.** It signs with whatever key it is given,
+  so the SDK compares the signer with each entry's address before signing,
+  instead of leaving the mismatch to surface as a rejected transaction.

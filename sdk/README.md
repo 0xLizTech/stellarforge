@@ -84,9 +84,9 @@ says whether retrying is safe:
 
 Two things worth knowing before you use either:
 
-- **The authorizing address must also source the transaction.** Its signature
-  is what satisfies the contract's `require_auth`. Paying fees from a separate
-  account is not supported yet.
+- **The authorizing address also sources the transaction** in these forms, so
+  its signature satisfies the contract's `require_auth`. To have another account
+  pay, see [Sponsored writes](#sponsored-writes).
 - **Building simulates.** A call the contract would reject — a bad amount, a
   paused asset, a party failing compliance — fails while building, with the
   contract's own error, before anything is signed or submitted.
@@ -100,10 +100,51 @@ Two things worth knowing before you use either:
 | `RegistryClient` | `registry` | Asset directory, paged with `listAssets(start, limit)` or walked with `listAllAssets()`; `register` and `setActive` are admin-only |
 | `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
 
-`transfer_admin` is not offered on any client yet. It needs the current and the incoming
-admin to sign one transaction, which the SDK can't build until it supports separately
-signed authorization entries ([#31](https://github.com/0xLizTech/stellarforge/issues/31)).
-Hand the admin role over with `stellar-cli` in the meantime.
+## Sponsored writes
+
+One account can source and pay for a write while another address only
+authorizes it, for example an issuer covering fees for its holders. The
+authorizer signs an authorization entry rather than the transaction, so the two
+keys can live on different machines.
+
+```typescript
+import { rpc } from "@stellar/stellar-sdk";
+import { DEFAULT_AUTH_VALIDITY_LEDGERS, authorizeEntries } from "@stellarforge-protocol/sdk";
+
+// Fee payer: build the call. Nothing is signed yet.
+const sponsored = await client.buildSponsoredTransferTx(holder, recipient, amount, {
+  feeSource: relayer,
+});
+
+// Authorizer: sign its entries, valid until a ledger it chooses.
+const { sequence } = await new rpc.Server(rpcUrl).getLatestLedger();
+const signed = await authorizeEntries(
+  sponsored.authEntries,
+  holderKeypair,
+  sequence + DEFAULT_AUTH_VALIDITY_LEDGERS,
+  networkPassphrase,
+);
+
+// Fee payer: attach the signatures, then sign and submit.
+const { hash } = await client.submitSponsoredTx(sponsored, signed);
+```
+
+- **Transport.** Entries cross machines as base64 through `authEntriesToXdr`
+  and `authEntriesFromXdr`. `finalizeSponsoredTx` returns the prepared
+  transaction instead of submitting it, for a fee payer signing with a wallet.
+- **Checks before submitting.** Finalizing checks every signed entry against
+  the one built, and requires its expiry to be at least
+  `MIN_AUTH_REMAINING_LEDGERS` (40) and at most `MAX_AUTH_VALIDITY_LEDGERS`
+  (17,280) ledgers ahead. `authorizeEntries` refuses a key the entries don't
+  name.
+- **Network rejections.** The network refuses a signature made with the wrong
+  key, a replayed entry, and an entry reused for other arguments.
+- **The authorizer must have an account.** It must already exist on the
+  network, even though it pays nothing.
+
+`buildTransferAdminTx(admin, newAdmin)`, on every client, uses the same flow,
+because the contract requires both admins to authorize. By default the current
+admin pays, and the incoming admin signs its entry.
 
 ### Governance results are advisory in Phase 1
 
