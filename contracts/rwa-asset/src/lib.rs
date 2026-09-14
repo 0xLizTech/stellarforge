@@ -575,11 +575,16 @@ impl RwaAssetContract {
             panic_with_error!(env, RwaError::DecimalsImmutable);
         }
 
-        // A cap may move, but never below what is already in circulation, and
-        // once set it may never be lifted to uncapped.
-        let lifts_cap = current.max_supply > 0 && next.max_supply == 0;
-        let below_supply = next.max_supply > 0 && next.max_supply < Self::total_supply(env.clone());
-        if lifts_cap || below_supply {
+        // The cap is the holders' ceiling on dilution, and PRD §10.2 promises it
+        // is "not bypassable by admin". So the admin can only tighten a cap:
+        // never raise it, never lift it to uncapped, and never set it below what
+        // is already in circulation. An uncapped asset may be given a cap at or
+        // above its supply.
+        let supply = Self::total_supply(env.clone());
+        let loosens_cap = current.max_supply > 0
+            && (next.max_supply == 0 || next.max_supply > current.max_supply);
+        let below_supply = next.max_supply > 0 && next.max_supply < supply;
+        if loosens_cap || below_supply {
             panic_with_error!(env, RwaError::InvalidSupplyCap);
         }
     }
