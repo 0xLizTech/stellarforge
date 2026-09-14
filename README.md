@@ -202,7 +202,7 @@ authorization entries to sign; the SDK README shows the flow.
 | `transfer_from(spender, from, to, amount)` | spender | Spend allowance |
 | `set_issuer(issuer, approved)` | admin | Grant/revoke issuer role |
 | `set_paused(paused)` | admin | Emergency circuit breaker |
-| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can never be lifted or set below supply |
+| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can only be tightened: never raised, removed or set below supply |
 | `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
 | `set_compliance(compliance, min_level)` | admin | Point at a compliance contract, or `None` to disable screening |
 | `balance(owner)` | — | Query balance |

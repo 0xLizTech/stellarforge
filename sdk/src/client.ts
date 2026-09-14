@@ -369,8 +369,8 @@ export class RwaAssetClient extends ContractClient {
   /**
    * Replace the asset's metadata.
    *
-   * The contract refuses a different `decimals`, a cap below circulating supply,
-   * and lifting a cap back to uncapped. Building simulates, so those surface here
+   * The contract refuses a different `decimals`, a raised cap, a cap below
+   * circulating supply, and lifting a cap back to uncapped. Building simulates, so those surface here
    * before anything is signed. `legalDocHash` must be even-length hex, and is
    * checked before any network call.
    */
