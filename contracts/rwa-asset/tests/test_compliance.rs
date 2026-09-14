@@ -35,13 +35,11 @@ impl Harness<'_> {
 
         let admin = Address::generate(&env);
 
-        let compliance_id = env.register(ComplianceContract, ());
+        let compliance_id = env.register(ComplianceContract, (&admin,));
         let compliance = ComplianceContractClient::new(&env, &compliance_id);
-        compliance.initialize(&admin);
 
-        let asset_id = env.register(RwaAssetContract, ());
+        let asset_id = env.register(RwaAssetContract, (&admin, &metadata(&env)));
         let asset = RwaAssetContractClient::new(&env, &asset_id);
-        asset.initialize(&admin, &metadata(&env));
 
         asset.set_compliance(&Some(compliance_id), &min_level);
 

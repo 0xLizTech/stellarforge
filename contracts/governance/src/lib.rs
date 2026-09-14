@@ -63,10 +63,14 @@ pub struct GovernanceContract;
 
 #[contractimpl]
 impl GovernanceContract {
-    pub fn initialize(env: Env, admin: Address) {
-        if env.storage().instance().has(&ADMIN_KEY) {
-            panic_with_error!(&env, GovernanceError::AlreadyInitialized);
-        }
+    /// Configures the contract as part of the deploy transaction.
+    ///
+    /// A constructor rather than a separate `initialize` entry point: the two
+    /// are equivalent once the contract is running, but a separate call leaves
+    /// a window in which the contract exists with no admin and anyone may name
+    /// themselves. `require_auth` on `admin` still applies, so a deployer
+    /// cannot hand the role to a key whose holder has not signed for it.
+    pub fn __constructor(env: Env, admin: Address) {
         admin.require_auth();
         env.storage().instance().set(&ADMIN_KEY, &admin);
         env.storage().instance().set(&PROP_COUNT, &0_u64);
@@ -82,11 +86,13 @@ impl GovernanceContract {
         voting_period_ledgers: u32,
     ) -> u64 {
         proposer.require_auth();
-        // Proposals must not accumulate on a contract that was never
-        // configured. `initialize` resets the counter to zero, so a proposal
-        // created beforehand would have its id handed out a second time: the
-        // later proposal overwrites the earlier one, while the vote records
-        // keyed to that id survive and lock out everyone who already voted.
+        // Defensive only, and unreachable since the constructor runs at deploy.
+        // It guarded a hazard that no longer has a way to occur: `initialize`
+        // reset the counter to zero, so a proposal created beforehand had its
+        // id handed out a second time — the later proposal overwrote the
+        // earlier one, while the vote records keyed to that id survived and
+        // locked out everyone who had already voted. Nothing resets the
+        // counter now.
         Self::require_initialized(&env);
 
         let count: u64 = env.storage().instance().get(&PROP_COUNT).unwrap_or(0);

@@ -31,10 +31,8 @@ fn setup() -> (Env, Address, RwaAssetContractClient<'static>) {
     env.mock_all_auths();
 
     let admin = Address::generate(&env);
-    let contract_id = env.register(RwaAssetContract, ());
+    let contract_id = env.register(RwaAssetContract, (&admin, &default_metadata(&env)));
     let client = RwaAssetContractClient::new(&env, &contract_id);
-
-    client.initialize(&admin, &default_metadata(&env));
 
     (env, admin, client)
 }
@@ -61,12 +59,9 @@ fn test_initialize_not_paused() {
     assert!(!client.paused());
 }
 
-#[test]
-fn test_double_initialize_fails() {
-    let (env, admin, client) = setup();
-    let res = client.try_initialize(&admin, &default_metadata(&env));
-    assert_eq!(res, Err(Ok(RwaError::AlreadyInitialized.into())));
-}
+// `test_double_initialize_fails` was removed with the `initialize` entry point.
+// A constructor configures the contract inside the deploy transaction, so a
+// second configuration call is not something the contract exposes.
 
 // ─── Issuer Tests ──────────────────────────────────────────────────────────
 
@@ -310,9 +305,8 @@ fn test_supply_invariant_holds_across_operations() {
 /// default, so supply-boundary behaviour can be exercised directly.
 fn setup_with(metadata: AssetMetadata, env: &Env) -> (Address, RwaAssetContractClient<'static>) {
     let admin = Address::generate(env);
-    let contract_id = env.register(RwaAssetContract, ());
+    let contract_id = env.register(RwaAssetContract, (&admin, &metadata));
     let client = RwaAssetContractClient::new(env, &contract_id);
-    client.initialize(&admin, &metadata);
     (admin, client)
 }
 
@@ -370,31 +364,64 @@ fn test_transfer_from_without_allowance_is_rejected() {
     assert_eq!(res, Err(Ok(RwaError::InsufficientAllowance.into())));
 }
 
+fn invalid_metadata_cases(env: &Env) -> [AssetMetadata; 3] {
+    let mut too_many_decimals = default_metadata(env);
+    too_many_decimals.decimals = 19;
+
+    let mut negative_cap = default_metadata(env);
+    negative_cap.max_supply = -1;
+
+    let mut empty_symbol = default_metadata(env);
+    empty_symbol.symbol = String::from_str(env, "");
+
+    [too_many_decimals, negative_cap, empty_symbol]
+}
+
+/// Case-by-case coverage of `validate_metadata` moved here when `initialize`
+/// became a constructor. `update_metadata` runs the same validation and is
+/// still callable through `try_`, so each rule keeps a typed-error assertion;
+/// a constructor can only be observed panicking, which cannot distinguish
+/// `InvalidMetadata` from any other failure.
 #[test]
-fn test_invalid_metadata_is_rejected() {
+fn test_update_metadata_rejects_bad_input() {
+    let (env, _, client) = setup();
+
+    for meta in invalid_metadata_cases(&env) {
+        let res = client.try_update_metadata(&meta);
+        assert_eq!(res, Err(Ok(RwaError::InvalidMetadata.into())));
+    }
+}
+
+/// Guards the negative tests above: were `update_metadata` to reject
+/// everything, they would all still pass.
+#[test]
+fn test_update_metadata_accepts_valid_input() {
+    let (env, _, client) = setup();
+
+    let mut renamed = default_metadata(&env);
+    renamed.symbol = String::from_str(&env, "REIT-NYC-002");
+    client.update_metadata(&renamed);
+
+    assert_eq!(
+        client.metadata().symbol,
+        String::from_str(&env, "REIT-NYC-002")
+    );
+}
+
+/// The constructor must validate too, or a contract could be deployed holding
+/// metadata that `update_metadata` would refuse. Asserted as a panic because
+/// `Env::register` has no fallible form.
+#[test]
+#[should_panic]
+fn test_constructor_rejects_invalid_metadata() {
     let env = create_env();
     env.mock_all_auths();
     let admin = Address::generate(&env);
 
-    let cases = {
-        let mut too_many_decimals = default_metadata(&env);
-        too_many_decimals.decimals = 19;
+    let mut too_many_decimals = default_metadata(&env);
+    too_many_decimals.decimals = 19;
 
-        let mut negative_cap = default_metadata(&env);
-        negative_cap.max_supply = -1;
-
-        let mut empty_symbol = default_metadata(&env);
-        empty_symbol.symbol = String::from_str(&env, "");
-
-        [too_many_decimals, negative_cap, empty_symbol]
-    };
-
-    for meta in cases {
-        let contract_id = env.register(RwaAssetContract, ());
-        let client = RwaAssetContractClient::new(&env, &contract_id);
-        let res = client.try_initialize(&admin, &meta);
-        assert_eq!(res, Err(Ok(RwaError::InvalidMetadata.into())));
-    }
+    env.register(RwaAssetContract, (&admin, &too_many_decimals));
 }
 
 #[test]

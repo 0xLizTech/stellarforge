@@ -112,3 +112,53 @@ Every getter is callable by anyone, including over simulation with no account at
 - **Nothing stops the four admins from being the same key.** In a default deployment they will be, because that is what the deploy script produces. The separation is available, not enforced, and a deployment that uses one key for all four gets one key's blast radius.
 
 - **Deployment window.** `initialize` authenticates the admin it is given, not the account that deployed the contract. It is protected against being run twice, not against being run first by someone else. Deploy and initialize must therefore be treated as one operation — atomically where the tooling allows — and a contract that has been deployed but not yet initialized should not be treated as owned. This is a property of the sequence, not of the contract, and it is the operator's to get right.
+
+## Amendment (2026-09) — `initialize` became `__constructor`
+
+The *Deployment window* consequence above described a hazard and then left it
+to operators:
+
+> Deploy and initialize must therefore be treated as one operation — atomically
+> where the tooling allows — and a contract that has been deployed but not yet
+> initialized should not be treated as owned.
+
+That was an accurate description and an inadequate answer. Correctness rested on
+every operator, now and in future, knowing something the contracts did not
+enforce. The tooling did allow it atomically, and we were not using it.
+
+All four contracts now configure themselves in a `__constructor`, which
+`soroban-sdk` runs as part of the deploy transaction. The `initialize` entry
+point is gone. Where the authorization map above lists `initialize`, read
+`__constructor`; the authenticating address is unchanged in every case.
+
+**What this closes.** There is no longer a moment at which a deployed contract
+exists without an admin, so there is nothing for anyone to claim. The guarantee
+moved from the operator's procedure into the contract's shape.
+
+**What it does not change.** `admin.require_auth()` still applies, for the same
+reason `transfer_admin` needs the incoming admin's signature: it proves the key
+exists and its holder consented, rather than letting a deployer name an address
+nobody controls.
+
+### The `AlreadyInitialized` variants are now unreachable
+
+They are kept anyway. ADR-003 freezes discriminants, so removing a variant and
+letting later ones shift up would be a silent breaking change to any client
+already matching on the numeric code. Each is marked reserved where it is
+defined. `NotInitialized` is likewise unreachable in normal operation and is
+kept as a defined failure rather than an `unwrap`, so an archived-instance case
+would still report something legible.
+
+### Constructor authorization is not covered by tests
+
+`Env::register` invokes a constructor with authorization mocked, so it succeeds
+regardless of what the environment permits, and the SDK documents that it
+therefore cannot be used to test constructor auth. Doing so needs a real deploy
+through `env.deployer()` against uploaded wasm, which no test in this repo does
+yet.
+
+This is worth stating plainly rather than leaving to be discovered: the
+`require_auth` call in each constructor is asserted by no test. It was equally
+unasserted on `initialize`, where every test that called it ran under
+`mock_all_auths`, so nothing regressed — but "nothing regressed" is not the same
+as "covered", and an audit should treat this as an untested control.
