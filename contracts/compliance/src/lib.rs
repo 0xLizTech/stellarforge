@@ -17,6 +17,10 @@ use stellarforge_common::{extend_instance, extend_persistent};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 
+/// Highest verification level on the scale: 0 none, 1 basic, 2 full,
+/// 3 accredited.
+pub const MAX_LEVEL: u32 = 3;
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -56,6 +60,7 @@ impl ComplianceContract {
     /// Set or update KYC record for an address.
     pub fn set_kyc(env: Env, subject: Address, record: KycRecord) {
         Self::require_admin(&env);
+        Self::validate_record(&env, &record);
         let key = DataKey::KycStatus(subject.clone());
         env.storage().persistent().set(&key, &record);
 
@@ -139,6 +144,36 @@ impl ComplianceContract {
 
     fn require_admin(env: &Env) {
         Self::admin(env.clone()).require_auth();
+    }
+
+    /// Rejects a record that could only be an input error (IR-08).
+    ///
+    /// Each of these used to be stored as given and then screen wrongly, with
+    /// nothing to tell the admin that the record was not what they meant.
+    fn validate_record(env: &Env, record: &KycRecord) {
+        // A level above the scale satisfies every `min_level` an asset could
+        // configure, including tiers that do not exist yet.
+        if record.level > MAX_LEVEL {
+            panic_with_error!(env, ComplianceError::InvalidLevel);
+        }
+
+        // An already-expired record screens as non-compliant from the moment
+        // it is written. Zero is the explicit "never expires".
+        if record.expires_at != 0 && record.expires_at <= env.ledger().timestamp() {
+            panic_with_error!(env, ComplianceError::AlreadyExpired);
+        }
+
+        // ISO 3166-1 alpha-2: exactly two ASCII uppercase letters. This checks
+        // shape, not membership, so a well-formed but unassigned code passes.
+        let jurisdiction = &record.jurisdiction;
+        let mut code = [0u8; 2];
+        if jurisdiction.len() != 2 {
+            panic_with_error!(env, ComplianceError::InvalidJurisdiction);
+        }
+        jurisdiction.copy_into_slice(&mut code);
+        if !code.iter().all(u8::is_ascii_uppercase) {
+            panic_with_error!(env, ComplianceError::InvalidJurisdiction);
+        }
     }
 
     fn evaluate(env: &Env, subject: Address, min_level: u32) -> bool {

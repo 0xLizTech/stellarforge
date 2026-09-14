@@ -9,8 +9,8 @@ use soroban_sdk::{
 };
 
 use compliance::{
-    AdminTransferred, ComplianceContract, ComplianceContractClient, DataKey, KycRecord, KycRevoked,
-    KycSet,
+    AdminTransferred, ComplianceContract, ComplianceContractClient, ComplianceError, DataKey,
+    KycRecord, KycRevoked, KycSet, MAX_LEVEL,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -404,5 +404,76 @@ fn test_transfer_admin_emits_event() {
             new_admin,
         }
         .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+// ─── Record validation (IR-08) ─────────────────────────────────────────────
+
+fn record_in(env: &Env, jurisdiction: &str, level: u32, expires_at: u64) -> KycRecord {
+    KycRecord {
+        jurisdiction: String::from_str(env, jurisdiction),
+        level,
+        expires_at,
+    }
+}
+
+#[test]
+fn test_set_kyc_rejects_a_level_above_the_scale() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+
+    // u32::MAX would satisfy any min_level an asset could ever configure.
+    for level in [MAX_LEVEL + 1, u32::MAX] {
+        let res = h
+            .client
+            .try_set_kyc(&subject, &h.record(level, NEVER_EXPIRES));
+        assert_eq!(res, Err(Ok(ComplianceError::InvalidLevel.into())));
+    }
+    assert!(h.client.get_kyc(&subject).is_none());
+
+    h.client
+        .set_kyc(&subject, &h.record(MAX_LEVEL, NEVER_EXPIRES));
+    assert_eq!(h.client.get_kyc(&subject).unwrap().level, MAX_LEVEL);
+}
+
+#[test]
+fn test_set_kyc_rejects_an_already_expired_record() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    // Expiry is strict, so a record expiring now is already stale.
+    for expires_at in [1, 999, 1_000] {
+        let res = h
+            .client
+            .try_set_kyc(&subject, &h.record(LEVEL_FULL, expires_at));
+        assert_eq!(res, Err(Ok(ComplianceError::AlreadyExpired.into())));
+    }
+
+    h.client.set_kyc(&subject, &h.record(LEVEL_FULL, 1_001));
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_FULL, NEVER_EXPIRES));
+}
+
+#[test]
+fn test_set_kyc_rejects_a_malformed_jurisdiction() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+
+    for jurisdiction in ["", "U", "us", "Us", "USA", "U1", "U ", "ÜS"] {
+        let res = h.client.try_set_kyc(
+            &subject,
+            &record_in(&h.env, jurisdiction, LEVEL_BASIC, NEVER_EXPIRES),
+        );
+        assert_eq!(
+            res,
+            Err(Ok(ComplianceError::InvalidJurisdiction.into())),
+            "accepted {jurisdiction:?}"
+        );
+    }
+
+    h.client.set_kyc(
+        &subject,
+        &record_in(&h.env, "GB", LEVEL_BASIC, NEVER_EXPIRES),
     );
 }
