@@ -4,7 +4,7 @@ import { Address, nativeToScVal, Networks, rpc, Transaction, xdr } from "@stella
 import { RwaAssetClient, ComplianceClient } from "../src/client.js";
 import { TransactionExpiredError, TransactionOutcomeUnknownError } from "../src/errors.js";
 import { MAINNET_CONFIG, TESTNET_CONFIG } from "../src/types.js";
-import type { StellarForgeConfig } from "../src/types.js";
+import type { AssetMetadata, KycRecord, StellarForgeConfig } from "../src/types.js";
 import {
   RWA_ID,
   COMPLIANCE_ID,
@@ -26,6 +26,11 @@ import {
   i128,
   bool,
   struct,
+  addr,
+  none,
+  str,
+  u32,
+  u64,
 } from "./helpers.js";
 
 // ─── Fixtures local to this suite ─────────────────────────────────────────────
@@ -627,5 +632,200 @@ describe("network presets", () => {
           contracts: { rwaAsset: RWA_ID },
         }),
     ).not.toThrow();
+  });
+});
+
+// ─── Operator methods ─────────────────────────────────────────────────────────
+
+/** The deterministic signer plays each contract's admin in these suites. */
+const ADMIN = ISSUER;
+const ADMIN_SECRET = ISSUER_SECRET;
+
+const SAMPLE_METADATA: AssetMetadata = {
+  name: "Manhattan REIT",
+  symbol: "REIT-NYC-001",
+  decimals: 7,
+  assetClass: "real_estate",
+  legalDocHash: DOC_HASH_HEX,
+  maxSupply: 1_000_000n,
+};
+
+const SAMPLE_KYC: KycRecord = { jurisdiction: "GB", level: 2, expiresAt: 1_900_000_000 };
+
+describe("RwaAssetClient admin and compliance reads", () => {
+  it("decodes the admin address", async () => {
+    const spy = stubSimulation(succeeds(addr(ADMIN)));
+    await expect(new RwaAssetClient(rwaConfig).admin()).resolves.toBe(ADMIN);
+    expect(invocation(spy)).toEqual({ fn: "admin", args: [] });
+  });
+
+  it("decodes the configured compliance contract", async () => {
+    const spy = stubSimulation(succeeds(addr(COMPLIANCE_ID)));
+    await expect(new RwaAssetClient(rwaConfig).complianceContract()).resolves.toBe(COMPLIANCE_ID);
+    expect(invocation(spy)).toEqual({ fn: "compliance_contract", args: [] });
+  });
+
+  // Option::None. An asset with no compliance contract transfers freely, so
+  // this must read as null rather than as some address.
+  it("reads unconfigured screening as null", async () => {
+    stubSimulation(succeeds(none()));
+    await expect(new RwaAssetClient(rwaConfig).complianceContract()).resolves.toBeNull();
+  });
+
+  it("decodes the minimum compliance level", async () => {
+    const spy = stubSimulation(succeeds(u32(2)));
+    await expect(new RwaAssetClient(rwaConfig).minComplianceLevel()).resolves.toBe(2);
+    expect(invocation(spy)).toEqual({ fn: "min_compliance_level", args: [] });
+  });
+});
+
+describe("RwaAssetClient admin operations", () => {
+  const adminBuilders = [
+    {
+      name: "setIssuer",
+      fn: "set_issuer",
+      build: (c: RwaAssetClient) => c.buildSetIssuerTx(ADMIN, HOLDER, true),
+      args: [HOLDER, true],
+    },
+    {
+      name: "setPaused",
+      fn: "set_paused",
+      build: (c: RwaAssetClient) => c.buildSetPausedTx(ADMIN, true),
+      args: [true],
+    },
+    {
+      name: "setCompliance",
+      fn: "set_compliance",
+      build: (c: RwaAssetClient) => c.buildSetComplianceTx(ADMIN, COMPLIANCE_ID, 2),
+      args: [COMPLIANCE_ID, 2],
+    },
+    {
+      name: "setCompliance with null",
+      fn: "set_compliance",
+      build: (c: RwaAssetClient) => c.buildSetComplianceTx(ADMIN, null, 0),
+      args: [null, 0],
+    },
+  ];
+
+  it.each(adminBuilders)("$name invokes $fn with the documented arguments", async ({ fn, args, build }) => {
+    stubWritePath();
+    const tx = await build(new RwaAssetClient(rwaConfig));
+    expect(builtInvocation(tx)).toEqual({ fn, args });
+  });
+
+  it.each([
+    ...adminBuilders,
+    {
+      name: "updateMetadata",
+      build: (c: RwaAssetClient) => c.buildUpdateMetadataTx(ADMIN, SAMPLE_METADATA),
+    },
+  ])("$name sources the transaction from the admin", async ({ build }) => {
+    const stubs = stubWritePath();
+    const tx = await build(new RwaAssetClient(rwaConfig));
+    expect(tx.source).toBe(ADMIN);
+    expect(stubs.getAccount).toHaveBeenCalledWith(ADMIN);
+  });
+
+  // The encoding has to round-trip to the fields the caller supplied, with the
+  // hash going back to the same bytes.
+  it("encodes metadata as the struct update_metadata decodes", async () => {
+    stubWritePath();
+    const tx = await new RwaAssetClient(rwaConfig).buildUpdateMetadataTx(ADMIN, SAMPLE_METADATA);
+    const { fn, args } = builtInvocation(tx);
+    const [encoded] = args as [Record<string, unknown>];
+
+    expect(fn).toBe("update_metadata");
+    expect({
+      ...encoded,
+      legal_doc_hash: Buffer.from(encoded["legal_doc_hash"] as Uint8Array).toString("hex"),
+    }).toEqual({
+      name: "Manhattan REIT",
+      symbol: "REIT-NYC-001",
+      decimals: 7,
+      asset_class: "real_estate",
+      legal_doc_hash: DOC_HASH_HEX,
+      max_supply: 1_000_000n,
+    });
+  });
+
+  it.each(["abc", "zz".repeat(32)])(
+    "refuses a legalDocHash of %j before touching the network",
+    async (legalDocHash) => {
+      const stubs = stubWritePath();
+      await expect(
+        new RwaAssetClient(rwaConfig).buildUpdateMetadataTx(ADMIN, { ...SAMPLE_METADATA, legalDocHash }),
+      ).rejects.toThrow(/even-length hex/);
+      expect(stubs.getAccount).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { name: "setIssuer", call: (c: RwaAssetClient) => c.setIssuer(ADMIN, HOLDER, false) },
+    { name: "setPaused", call: (c: RwaAssetClient) => c.setPaused(ADMIN, false) },
+    { name: "updateMetadata", call: (c: RwaAssetClient) => c.updateMetadata(ADMIN, SAMPLE_METADATA) },
+    { name: "setCompliance", call: (c: RwaAssetClient) => c.setCompliance(ADMIN, null, 0) },
+  ])("$name submits and reports the settled transaction", async ({ call }) => {
+    stubWritePath();
+    const signed = new RwaAssetClient(configWith({ rwaAsset: RWA_ID }, ADMIN_SECRET));
+    await expect(call(signed)).resolves.toEqual({ hash: SUBMITTED_HASH, ledger: 42 });
+  });
+});
+
+describe("ComplianceClient records", () => {
+  it("decodes a stored record onto camelCase", async () => {
+    stubSimulation(
+      succeeds(struct({ jurisdiction: str("GB"), level: u32(2), expires_at: u64(1_900_000_000n) })),
+    );
+    await expect(new ComplianceClient(complianceConfig).getKyc(HOLDER)).resolves.toEqual(SAMPLE_KYC);
+  });
+
+  it("returns null for a subject with no record", async () => {
+    stubSimulation(succeeds(none()));
+    await expect(new ComplianceClient(complianceConfig).getKyc(HOLDER)).resolves.toBeNull();
+  });
+
+  it("invokes `get_kyc` with the subject", async () => {
+    const spy = stubSimulation(succeeds(none()));
+    await new ComplianceClient(complianceConfig).getKyc(HOLDER);
+    expect(invocation(spy)).toEqual({ fn: "get_kyc", args: [HOLDER] });
+  });
+
+  it("decodes the admin address", async () => {
+    stubSimulation(succeeds(addr(ADMIN)));
+    await expect(new ComplianceClient(complianceConfig).admin()).resolves.toBe(ADMIN);
+  });
+
+  it("encodes the record as the struct set_kyc decodes", async () => {
+    stubWritePath();
+    const tx = await new ComplianceClient(complianceConfig).buildSetKycTx(ADMIN, HOLDER, SAMPLE_KYC);
+    expect(builtInvocation(tx)).toEqual({
+      fn: "set_kyc",
+      args: [HOLDER, { expires_at: 1_900_000_000n, jurisdiction: "GB", level: 2 }],
+    });
+  });
+
+  it("invokes `revoke_kyc` with the subject", async () => {
+    stubWritePath();
+    const tx = await new ComplianceClient(complianceConfig).buildRevokeKycTx(ADMIN, HOLDER);
+    expect(builtInvocation(tx)).toEqual({ fn: "revoke_kyc", args: [HOLDER] });
+  });
+
+  it.each([
+    { name: "setKyc", build: (c: ComplianceClient) => c.buildSetKycTx(ADMIN, HOLDER, SAMPLE_KYC) },
+    { name: "revokeKyc", build: (c: ComplianceClient) => c.buildRevokeKycTx(ADMIN, HOLDER) },
+  ])("$name sources the transaction from the admin", async ({ build }) => {
+    const stubs = stubWritePath();
+    const tx = await build(new ComplianceClient(complianceConfig));
+    expect(tx.source).toBe(ADMIN);
+    expect(stubs.getAccount).toHaveBeenCalledWith(ADMIN);
+  });
+
+  it.each([
+    { name: "setKyc", call: (c: ComplianceClient) => c.setKyc(ADMIN, HOLDER, SAMPLE_KYC) },
+    { name: "revokeKyc", call: (c: ComplianceClient) => c.revokeKyc(ADMIN, HOLDER) },
+  ])("$name submits and reports the settled transaction", async ({ call }) => {
+    stubWritePath();
+    const signed = new ComplianceClient(configWith({ compliance: COMPLIANCE_ID }, ADMIN_SECRET));
+    await expect(call(signed)).resolves.toEqual({ hash: SUBMITTED_HASH, ledger: 42 });
   });
 });
