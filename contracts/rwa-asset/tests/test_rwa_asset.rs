@@ -18,6 +18,10 @@ const UNIT: i128 = 10_000_000;
 /// Supply ceiling configured by [`default_metadata`], in base units.
 const MAX_SUPPLY: i128 = 1_000_000 * UNIT;
 
+/// Allowance expiry used where a test does not care about it. The test ledger
+/// starts at sequence 0.
+const LIVE_UNTIL: u32 = 1_000;
+
 fn create_env() -> Env {
     Env::default()
 }
@@ -159,7 +163,7 @@ fn test_approve_and_transfer_from() {
 
     client.set_issuer(&issuer, &true);
     client.mint(&issuer, &alice, &1000);
-    client.approve(&alice, &bob, &400);
+    client.approve(&alice, &bob, &400, &LIVE_UNTIL);
 
     assert_eq!(client.allowance(&alice, &bob), 400);
 
@@ -249,7 +253,7 @@ fn test_self_transfer_from_does_not_create_tokens() {
 
     client.set_issuer(&issuer, &true);
     client.mint(&issuer, &alice, &1_000);
-    client.approve(&alice, &spender, &500);
+    client.approve(&alice, &spender, &500, &LIVE_UNTIL);
 
     client.transfer_from(&spender, &alice, &alice, &400);
 
@@ -295,7 +299,7 @@ fn test_supply_invariant_holds_across_operations() {
     client.transfer(&alice, &alice, &(100 * UNIT));
     assert_supply_invariant(&client, &holders);
 
-    client.approve(&alice, &bob, &(300 * UNIT));
+    client.approve(&alice, &bob, &(300 * UNIT), &LIVE_UNTIL);
     client.transfer_from(&bob, &alice, &carol, &(200 * UNIT));
     assert_supply_invariant(&client, &holders);
 
@@ -355,7 +359,7 @@ fn test_zero_and_negative_amounts_are_rejected() {
     assert_eq!(client.try_transfer(&alice, &bob, &-1), expected);
     assert_eq!(client.try_mint(&issuer, &bob, &0), expected);
     assert_eq!(client.try_burn(&alice, &0), expected);
-    assert_eq!(client.try_approve(&alice, &bob, &-1), expected);
+    assert_eq!(client.try_approve(&alice, &bob, &-1, &LIVE_UNTIL), expected);
 }
 
 #[test]
@@ -604,4 +608,97 @@ fn test_a_rotated_out_admin_can_no_longer_pause() {
 
     assert!(client.try_set_paused(&true).is_err());
     assert!(!client.paused());
+}
+
+// ─── SEP-41 surface (IR-09) ────────────────────────────────────────────────
+
+/// A fresh issuer mints `amount` to `holder`.
+fn fund(env: &Env, client: &RwaAssetContractClient, holder: &Address, amount: i128) {
+    let issuer = Address::generate(env);
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, holder, &amount);
+}
+
+#[test]
+fn test_allowance_lapses_after_its_live_until_ledger() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    client.approve(&alice, &bob, &400, &10);
+
+    // The expiry ledger itself is still inside the window.
+    env.ledger().with_mut(|li| li.sequence_number = 10);
+    assert_eq!(client.allowance(&alice, &bob), 400);
+
+    env.ledger().with_mut(|li| li.sequence_number = 11);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+    assert_eq!(
+        client.try_transfer_from(&bob, &alice, &bob, &1),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+}
+
+#[test]
+fn test_approve_rejects_an_expiry_already_past_unless_revoking() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number = 50);
+
+    assert_eq!(
+        client.try_approve(&alice, &bob, &100, &49),
+        Err(Ok(RwaError::InvalidExpiration.into()))
+    );
+
+    // The current ledger is a valid expiry, and a revocation may name any.
+    client.approve(&alice, &bob, &100, &50);
+    client.approve(&alice, &bob, &0, &0);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+}
+
+#[test]
+fn test_spending_an_allowance_keeps_its_expiry() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    client.approve(&alice, &bob, &400, &10);
+    client.transfer_from(&bob, &alice, &carol, &100);
+    assert_eq!(client.allowance(&alice, &bob), 300);
+
+    env.ledger().with_mut(|li| li.sequence_number = 11);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+}
+
+#[test]
+fn test_burn_from_spends_the_allowance_and_reduces_supply() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+    client.approve(&alice, &bob, &300, &LIVE_UNTIL);
+
+    client.burn_from(&bob, &alice, &200);
+
+    assert_eq!(client.balance(&alice), 800);
+    assert_eq!(client.total_supply(), 800);
+    assert_eq!(client.allowance(&alice, &bob), 100);
+    assert_eq!(
+        client.try_burn_from(&bob, &alice, &101),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+}
+
+#[test]
+fn test_sep41_metadata_getters_match_the_metadata() {
+    let (env, _, client) = setup();
+    let meta = default_metadata(&env);
+
+    assert_eq!(client.decimals(), meta.decimals);
+    assert_eq!(client.name(), meta.name);
+    assert_eq!(client.symbol(), meta.symbol);
 }

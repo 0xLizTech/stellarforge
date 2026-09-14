@@ -10,9 +10,24 @@ use soroban_sdk::{contractevent, Address};
 
 use crate::AssetMetadata;
 
-#[contractevent(topics = ["transfer"], data_format = "single-value")]
+/// Published by `transfer`, in SEP-41's current format: the amount, plus the
+/// recipient's muxed id when `to` was a muxed address.
+#[contractevent(topics = ["transfer"], data_format = "map")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Transfer {
+    #[topic]
+    pub from: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+    pub to_muxed_id: Option<u64>,
+}
+
+/// Published by `transfer_from`. SEP-41 specifies the amount alone here,
+/// because `transfer_from` takes no muxed address.
+#[contractevent(topics = ["transfer"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransferFrom {
     #[topic]
     pub from: Address,
     #[topic]
@@ -38,7 +53,8 @@ pub struct Burn {
     pub amount: i128,
 }
 
-#[contractevent(topics = ["approve"], data_format = "single-value")]
+/// SEP-41 format: data is `[amount, live_until_ledger]`.
+#[contractevent(topics = ["approve"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Approve {
     #[topic]
@@ -46,6 +62,7 @@ pub struct Approve {
     #[topic]
     pub spender: Address,
     pub amount: i128,
+    pub live_until_ledger: u32,
 }
 
 #[contractevent(topics = ["paused"], data_format = "single-value")]

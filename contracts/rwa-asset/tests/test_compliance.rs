@@ -193,7 +193,7 @@ fn test_transfer_from_screens_both_counterparties_not_the_spender() {
     h.verify(&alice, LEVEL_BASIC, NEVER_EXPIRES);
     h.verify(&bob, LEVEL_BASIC, NEVER_EXPIRES);
     h.asset.mint(&h.issuer, &alice, &1_000);
-    h.asset.approve(&alice, &spender, &500);
+    h.asset.approve(&alice, &spender, &500, &1_000);
 
     // The spender holds no KYC record and never holds the asset, so the
     // transfer must still settle.

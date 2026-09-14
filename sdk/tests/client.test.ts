@@ -355,6 +355,13 @@ describe("RwaAssetClient write builders", () => {
       args: [HOLDER, 25n],
     },
     {
+      name: "burnFrom",
+      fn: "burn_from",
+      authorizer: SPENDER,
+      build: (c: RwaAssetClient) => c.buildBurnFromTx(SPENDER, HOLDER, 12n),
+      args: [SPENDER, HOLDER, 12n],
+    },
+    {
       name: "transfer",
       fn: "transfer",
       authorizer: HOLDER,
@@ -365,8 +372,8 @@ describe("RwaAssetClient write builders", () => {
       name: "approve",
       fn: "approve",
       authorizer: HOLDER,
-      build: (c: RwaAssetClient) => c.buildApproveTx(HOLDER, SPENDER, 99n),
-      args: [HOLDER, SPENDER, 99n],
+      build: (c: RwaAssetClient) => c.buildApproveTx(HOLDER, SPENDER, 99n, 5_000),
+      args: [HOLDER, SPENDER, 99n, 5_000],
     },
     {
       name: "transferFrom",
@@ -384,8 +391,17 @@ describe("RwaAssetClient write builders", () => {
   it.each([
     { name: "mint", authorizer: ISSUER, build: (c: RwaAssetClient) => c.buildMintTx(ISSUER, HOLDER, 1n) },
     { name: "burn", authorizer: HOLDER, build: (c: RwaAssetClient) => c.buildBurnTx(HOLDER, 1n) },
+    {
+      name: "burnFrom",
+      authorizer: SPENDER,
+      build: (c: RwaAssetClient) => c.buildBurnFromTx(SPENDER, HOLDER, 1n),
+    },
     { name: "transfer", authorizer: HOLDER, build: (c: RwaAssetClient) => c.buildTransferTx(HOLDER, SPENDER, 1n) },
-    { name: "approve", authorizer: HOLDER, build: (c: RwaAssetClient) => c.buildApproveTx(HOLDER, SPENDER, 1n) },
+    {
+      name: "approve",
+      authorizer: HOLDER,
+      build: (c: RwaAssetClient) => c.buildApproveTx(HOLDER, SPENDER, 1n, 5_000),
+    },
     {
       name: "transferFrom",
       authorizer: SPENDER,
@@ -564,8 +580,9 @@ describe("RwaAssetClient write submission", () => {
 
   it.each([
     { name: "burn", call: (c: RwaAssetClient) => c.burn(ISSUER, 1n) },
+    { name: "burnFrom", call: (c: RwaAssetClient) => c.burnFrom(ISSUER, HOLDER, 1n) },
     { name: "transfer", call: (c: RwaAssetClient) => c.transfer(ISSUER, HOLDER, 1n) },
-    { name: "approve", call: (c: RwaAssetClient) => c.approve(ISSUER, SPENDER, 1n) },
+    { name: "approve", call: (c: RwaAssetClient) => c.approve(ISSUER, SPENDER, 1n, 5_000) },
     {
       name: "transferFrom",
       call: (c: RwaAssetClient) => c.transferFrom(ISSUER, HOLDER, SPENDER, 1n),

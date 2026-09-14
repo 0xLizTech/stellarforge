@@ -45,4 +45,7 @@ pub enum RwaError {
     /// `update_metadata` tried to remove a supply cap, or set one below the
     /// circulating supply.
     InvalidSupplyCap = 13,
+    /// `approve` set a non-zero allowance whose `live_until_ledger` has
+    /// already passed.
+    InvalidExpiration = 14,
 }
