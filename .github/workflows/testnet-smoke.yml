@@ -121,28 +121,18 @@ jobs:
 
       # Runs after the read smoke test, so reads see the deployment untouched.
       #
-      # The write test needs three parties: the deployer as issuer, a funded
-      # spender to sign transfer_from and burn_from, and a recipient that is
-      # never funded, since contract balances need no account. Compliance is
-      # switched on with KYC records for the issuer and the recipient, so mint,
-      # transfer and transfer_from all go through the real cross-contract
-      # screen. The spender moves tokens it does not own and is not screened.
+      # The write test needs three parties: the deployer, as issuer and admin of
+      # both contracts; a funded spender, to sign transfer_from and burn_from and
+      # to pay for sponsored writes; and a recipient that is never funded, since
+      # contract balances need no account. The test itself grants the issuer
+      # role, records KYC and switches compliance on, through the SDK's operator
+      # methods (SMOKE_WRITE_SETUP below), so it needs no stellar-cli invocations.
       - name: Prepare the write smoke test
         run: |
           stellar keys generate ci-spender --network "$NETWORK"
           stellar keys fund ci-spender --network "$NETWORK"
           stellar keys generate ci-recipient --network "$NETWORK"
-          RECIPIENT_ADDRESS=$(stellar keys address ci-recipient)
-          echo "RECIPIENT_ADDRESS=$RECIPIENT_ADDRESS" >> "$GITHUB_ENV"
-
-          invoke() { stellar contract invoke --network "$NETWORK" --source "$DEPLOYER" "$@"; }
-          invoke --id "$rwaAsset" -- set_issuer --issuer "$DEPLOYER_ADDRESS" --approved true
-          # Option<Address> is read as JSON, so the id goes in as a quoted string.
-          invoke --id "$rwaAsset" -- set_compliance --compliance "\"$compliance\"" --min_level 1
-          for subject in "$DEPLOYER_ADDRESS" "$RECIPIENT_ADDRESS"; do
-            invoke --id "$compliance" -- set_kyc --subject "$subject" \
-              --record '{ "expires_at": 0, "jurisdiction": "US", "level": 1 }'
-          done
+          echo "RECIPIENT_ADDRESS=$(stellar keys address ci-recipient)" >> "$GITHUB_ENV"
 
       # Mints, moves and burns tokens and spends fees on the contracts deployed
       # above. The secrets are throwaway testnet keys, read inside this step only
@@ -152,6 +142,9 @@ jobs:
         env:
           SMOKE_WRITE_RWA_ASSET_ID: ${{ env.rwaAsset }}
           SMOKE_WRITE_RECIPIENT_ADDRESS: ${{ env.RECIPIENT_ADDRESS }}
+          SMOKE_WRITE_COMPLIANCE_ID: ${{ env.compliance }}
+          # Configure the fresh deployment through the SDK's operator methods.
+          SMOKE_WRITE_SETUP: "true"
           SMOKE_WRITE_SCREENED: "true"
           # A throwaway deployment, so the admin handover can run too.
           SMOKE_WRITE_TRANSFER_ADMIN: "true"
