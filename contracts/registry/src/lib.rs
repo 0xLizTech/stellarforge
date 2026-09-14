@@ -66,6 +66,12 @@ impl RegistryContract {
 
     /// Record an asset contract, or update an already-registered one.
     ///
+    /// An entry records what the admin asserted, and nothing more. `register`
+    /// does not check that `contract` is a deployed `rwa-asset` or that
+    /// `asset_class` matches that asset's metadata, and no contract reads
+    /// `active`. Integrators must not treat an entry as proof that an asset is
+    /// genuine or current (IR-16).
+    ///
     /// The directory is one entry per asset rather than a single list. A list
     /// held in one ledger entry hit the 64 KiB entry size limit at around
     /// 1,600 assets, after which every registration failed permanently
