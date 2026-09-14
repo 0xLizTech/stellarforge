@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/architecture/002-auth-patterns.md`, `003-upgrade-path.md` and `004-cross-contract-interaction.md`, the three ADRs `CONTRIBUTING.md` has called for since Phase 1 opened. They record the authorization map across all four contracts, why Phase 1 ships no upgrade entry point and what that costs, and the `ComplianceInterface` binding including the `screen` / `is_compliant` split.
 - `.github/workflows/testnet-smoke.yml`, a manually dispatched job that deploys all four contracts to testnet with a throwaway friendbot-funded key, initializes them, and runs the live smoke test against them. It is the only thing in CI that exercises the wire format; `sdk-ci` stubs `simulateTransaction` and so passes identically whatever changed underneath.
 - Unit tests for `RwaAssetClient` and `ComplianceClient`, stubbing Soroban RPC at `rpc.Server.prototype.simulateTransaction` so the contract call, the ScVal codecs and both failure paths are exercised for real.
+- `docs/audits/2026-09-14-internal-review-phase1.md`, the Phase 1 internal security review of all four contracts, the SDK and the deployment/CI tooling. Findings are open.
 - `sdk/tests/smoke.testnet.test.ts`, an opt-in live check of both clients against a deployed contract over real Soroban RPC. It asserts contract invariants rather than fixed values, and skips unless `SMOKE_RWA_ASSET_ID` or `SMOKE_COMPLIANCE_ID` names a contract, so CI never runs it.
 
 ### Changed
