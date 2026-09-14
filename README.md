@@ -161,7 +161,7 @@ for a wallet to sign, so no secret ever reaches the SDK:
 
 ```typescript
 const tx = await client.buildTransferTx(from, to, toStroops("100", meta.decimals));
-const signedXdr = await freighter.signTransaction(tx.toXDR(), { networkPassphrase });
+const signedXdr = await freighter.signTransaction(tx.toXdr(), { networkPassphrase });
 ```
 
 The bare method signs with `signerSecret` and submits, for server-side use:

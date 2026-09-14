@@ -21,6 +21,7 @@ import {
   fails,
   succeedsWithoutResult,
   invocation,
+  invocationArgs,
   builtInvocation,
   i128,
   bool,
@@ -321,10 +322,7 @@ describe("contract targeting", () => {
 
     const contractOf = (call: number): string => {
       const tx = spy.mock.calls[call]?.[0] as Transaction;
-      const op = tx.operations[0] as { func: xdr.HostFunction };
-      return Address.fromScAddress(
-        op.func.invokeContract().contractAddress(),
-      ).toString();
+      return Address.fromScAddress(invocationArgs(tx).contractAddress).toString();
     };
 
     expect(contractOf(0)).toBe(RWA_ID);
