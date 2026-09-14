@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-14
+
+Breaking for SDK users on Node.js older than 22.12, for anyone relying on `MAINNET_CONFIG` to supply an RPC URL, and for code that handles the `@stellar/stellar-sdk` objects the SDK returns. The contract interfaces are unchanged from 0.1.0.
+
 ### Added
 
 - `sdk/tests/smoke.write.testnet.test.ts`, a live write-path smoke test. It runs `mint`, `transfer` (including to a muxed address, checking the event's `to_muxed_id`), `approve`, `transferFrom`, `burnFrom` and `burn` against a deployed `rwa-asset`, asserting before-and-after deltas, and checks that screening refuses an unverified recipient. It has its own opt-in variables and refuses any passphrase but testnet's. The Testnet Smoke workflow now runs it against a fresh deployment with compliance switched on.
