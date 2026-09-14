@@ -1,0 +1,138 @@
+name: Testnet Smoke
+
+# Deploys the Phase 1 contracts to testnet and runs the SDK against them over
+# real Soroban RPC.
+#
+# This is the only thing that exercises the wire format. `sdk-ci` stubs
+# `simulateTransaction`, so it passes identically on any stellar-sdk version no
+# matter what changed underneath — see #25.
+#
+# Manual only for now. Worth adding a weekly schedule once it has run green a
+# few times, so protocol or SDK drift surfaces on its own; a cron that fails
+# every week before it has ever passed is just noise.
+on:
+  workflow_dispatch:
+
+# No secret is needed. Testnet accounts are funded by friendbot, so the run
+# generates a throwaway keypair and discards it with the runner.
+permissions:
+  contents: read
+
+env:
+  # Keep in step with the soroban-sdk major in Cargo.toml, as contracts-ci does.
+  STELLAR_CLI_VERSION: "27.1.0"
+  NETWORK: testnet
+  DEPLOYER: ci-deployer
+
+jobs:
+  smoke:
+    name: Deploy and smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+
+      # Same pinned release tarball contracts-ci uses. Building the CLI from
+      # source would add ten minutes for no benefit.
+      - name: Install stellar-cli
+        run: |
+          curl -sSfL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar xz -C /usr/local/bin stellar
+          stellar --version
+
+      - name: Generate and fund a throwaway deployer
+        run: |
+          stellar keys generate --global "$DEPLOYER" --network "$NETWORK"
+          stellar keys fund "$DEPLOYER" --network "$NETWORK"
+          DEPLOYER_ADDRESS=$(stellar keys address "$DEPLOYER")
+          echo "DEPLOYER_ADDRESS=$DEPLOYER_ADDRESS" >> "$GITHUB_ENV"
+          echo "Deployer: $DEPLOYER_ADDRESS"
+
+      # Runs the real scripts/deploy.sh rather than reimplementing it, so this
+      # is also the first time that script has ever been exercised in CI.
+      - name: Deploy contracts
+        run: STELLAR_ACCOUNT="$DEPLOYER" NETWORK="$NETWORK" ./scripts/deploy.sh
+
+      - name: Read the deployed contract ids
+        run: |
+          for key in rwaAsset compliance registry governance; do
+            id=$(jq -r ".contracts.$key" deployed-contracts.json)
+            echo "${key}=${id}" >> "$GITHUB_ENV"
+            echo "$key: $id"
+          done
+
+      # deploy.sh deploys but does not initialize, and rwa-asset's `metadata`
+      # panics with NotInitialized until it has been. Printing the generated
+      # CLI schema first means that if the argument encoding below is wrong,
+      # the log already shows what the contract actually expects.
+      - name: Show the initialize signature
+        continue-on-error: true
+        run: |
+          stellar contract invoke --id "$rwaAsset" --network "$NETWORK" \
+            --source "$DEPLOYER" -- initialize --help
+
+      - name: Initialize rwa-asset
+        run: |
+          METADATA=$(jq -nc \
+            --arg hash "$(printf 'ab%.0s' {1..32})" \
+            '{
+              name: "CI Smoke REIT",
+              symbol: "CI-SMOKE",
+              decimals: 7,
+              asset_class: "real_estate",
+              legal_doc_hash: $hash,
+              max_supply: "1000000000000"
+            }')
+          echo "metadata: $METADATA"
+
+          stellar contract invoke --id "$rwaAsset" --network "$NETWORK" \
+            --source "$DEPLOYER" -- initialize \
+            --admin "$DEPLOYER_ADDRESS" \
+            --metadata "$METADATA"
+
+      # is_compliant reads storage and returns false for an unknown subject, so
+      # the compliance block would pass uninitialized. Initialize anyway, so the
+      # contract under test is in a realistic state rather than a degenerate one.
+      - name: Initialize compliance
+        run: |
+          stellar contract invoke --id "$compliance" --network "$NETWORK" \
+            --source "$DEPLOYER" -- initialize --admin "$DEPLOYER_ADDRESS"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: npm ci
+
+      # The deployer is used as the holder so balance and allowance are read
+      # against a real funded account rather than an arbitrary address.
+      - name: Run the smoke test
+        working-directory: sdk
+        env:
+          SMOKE_RWA_ASSET_ID: ${{ env.rwaAsset }}
+          SMOKE_COMPLIANCE_ID: ${{ env.compliance }}
+          SMOKE_HOLDER_ADDRESS: ${{ env.DEPLOYER_ADDRESS }}
+        run: npm run test:smoke
+
+      # The contract ids outlive the run and are useful for reproducing a
+      # failure by hand against the same deployment.
+      - name: Upload the deployment record
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: deployed-contracts
+          path: deployed-contracts.json
+          retention-days: 7
