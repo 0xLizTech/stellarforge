@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-14
+
+Adds operator methods and sponsored writes to the SDK. Nothing is removed or changed incompatibly from 0.2.0, and the contract interfaces are unchanged.
+
 ### Added
 
 - Operator methods in the SDK. `RwaAssetClient` gains `admin`, `complianceContract` and `minComplianceLevel` reads, and `setIssuer`, `setPaused`, `updateMetadata` and `setCompliance` admin writes (`setCompliance(admin, null, level)` switches screening off). `ComplianceClient` gains `getKyc` and `admin` reads, and `setKyc` and `revokeKyc` admin writes. Each write has a `build*Tx` and a submitting form.
