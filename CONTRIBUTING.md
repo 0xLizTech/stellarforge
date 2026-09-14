@@ -286,6 +286,33 @@ SMOKE_RWA_ASSET_ID=C... SMOKE_COMPLIANCE_ID=C... npm run test:smoke
 
 The two layers are not interchangeable. A stub replaces the SDK's own behaviour with a fixture, so those tests pass identically across SDK versions no matter what changed underneath. Only the smoke test exercises the real wire format, which is what a major `@stellar/stellar-sdk` bump needs evidence for. Run it before merging one.
 
+#### Live write smoke test (opt-in, moves testnet tokens)
+
+`tests/smoke.write.testnet.test.ts` runs the write methods against a deployed `rwa-asset`: `mint`, `transfer` (including to a muxed address), `approve`, `transferFrom`, `burnFrom` and `burn`. Each step asserts a before-and-after delta, so it can be re-run against the same contract. It is gated separately from the read smoke test, and it refuses any network passphrase except testnet's.
+
+```bash
+cd sdk
+SMOKE_WRITE_RWA_ASSET_ID=C... \
+SMOKE_WRITE_ISSUER_SECRET=S... \
+SMOKE_WRITE_SPENDER_SECRET=S... \
+SMOKE_WRITE_RECIPIENT_ADDRESS=G... \
+npm run test:smoke:write
+```
+
+| Variable | Purpose |
+|---|---|
+| `SMOKE_WRITE_RWA_ASSET_ID` | Deployed `rwa-asset` contract id. Unset skips the whole file. |
+| `SMOKE_WRITE_ISSUER_SECRET` | Account holding the issuer role on that asset. It signs and pays for `mint`, `transfer`, `approve` and `burn`. |
+| `SMOKE_WRITE_SPENDER_SECRET` | A second funded account. It signs and pays for `transferFrom` and `burnFrom`. |
+| `SMOKE_WRITE_RECIPIENT_ADDRESS` | Receives the transfers. It needs no account. |
+| `SMOKE_WRITE_SCREENED` | Set to `true` when the asset has a compliance contract, to also assert that a transfer to an unverified address is refused. |
+
+**Before running it**, the asset's admin must grant the issuer role (`set_issuer`), and the asset must not be paused. If a compliance contract is configured, the issuer and the recipient both need KYC records at the asset's `min_level`, or the transfers fail with `NotCompliant`.
+
+**What one run changes:** it mints 1,000 base units, transfers 470 of them to the recipient, burns 80, and leaves the spender an allowance of 150 over the issuer's balance. Total supply rises by 920 per run. The issuer and the spender each pay testnet fees for the transactions they sign. Nothing is cleaned up afterwards.
+
+The **Testnet Smoke** workflow runs it on every dispatch, against a fresh deployment with compliance screening switched on.
+
 ### Coverage targets (aspirational, not enforced in CI yet)
 
 | Layer | Target |

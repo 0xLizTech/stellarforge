@@ -28,6 +28,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "vitest run tests/smoke.testnet.test.ts",
+    "test:smoke:write": "vitest run tests/smoke.write.testnet.test.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "prepack": "cp ../LICENSE ./LICENSE"
