@@ -1,5 +1,5 @@
 {
-  "name": "@stellarforge/sdk",
+  "name": "@stellarforge-protocol/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for the StellarForge RWA protocol on Stellar/Soroban",
   "main": "dist/index.js",

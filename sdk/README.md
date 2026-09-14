@@ -1,4 +1,4 @@
-# @stellarforge/sdk
+# @stellarforge-protocol/sdk
 
 TypeScript client for the [StellarForge](https://github.com/0xLizTech/stellarforge)
 Real World Asset tokenization protocol on Stellar/Soroban.
@@ -7,7 +7,7 @@ Clients for all four Phase 1 contracts: `rwa-asset`, `compliance`, `registry`
 and `governance`.
 
 ```bash
-npm install @stellarforge/sdk
+npm install @stellarforge-protocol/sdk
 ```
 
 Requires Node.js 22 or newer, which is what `@stellar/stellar-sdk` requires.
@@ -18,7 +18,7 @@ Every read is a simulation. Nothing is written, nothing is signed, and no
 account is needed.
 
 ```typescript
-import { RwaAssetClient, TESTNET_CONFIG, fromStroops } from "@stellarforge/sdk";
+import { RwaAssetClient, TESTNET_CONFIG, fromStroops } from "@stellarforge-protocol/sdk";
 
 const client = new RwaAssetClient({
   ...TESTNET_CONFIG,

@@ -24,7 +24,7 @@ A clear description of what you expected to happen.
 
 ## Environment
 
-- Component: <!-- e.g. rwa-asset / registry / compliance / governance / @stellarforge/sdk -->
+- Component: <!-- e.g. rwa-asset / registry / compliance / governance / @stellarforge-protocol/sdk -->
 - soroban-sdk / stellar-cli version:
 - Node version (SDK only):
 - Network: <!-- testnet / futurenet / local -->

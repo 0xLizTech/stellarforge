@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TxResult`, the hash and ledger of a submitted write transaction.
 - `RegistryClient` and `GovernanceClient`, covering every entry point on the registry and governance contracts. Reads and writes follow the same patterns as `RwaAssetClient`, including the build-or-submit split.
 - `AssetEntry`, `Proposal`, `ProposalStatus` and `ProposalCreated` types.
-- `.github/workflows/publish-sdk.yml`, publishing `@stellarforge/sdk` on a published release or by manual dispatch. The manual path defaults to a dry run, and a release publish refuses if `package.json` disagrees with the tag.
+- `.github/workflows/publish-sdk.yml`, publishing `@stellarforge-protocol/sdk` on a published release or by manual dispatch. The manual path defaults to a dry run, and a release publish refuses if `package.json` disagrees with the tag.
 - `sdk/README.md`, which is what the npm package page renders.
 - `docs/architecture/002-auth-patterns.md`, `003-upgrade-path.md` and `004-cross-contract-interaction.md`, the three ADRs `CONTRIBUTING.md` has called for since Phase 1 opened. They record the authorization map across all four contracts, why Phase 1 ships no upgrade entry point and what that costs, and the `ComplianceInterface` binding including the `screen` / `is_compliant` split.
 - `.github/workflows/testnet-smoke.yml`, a manually dispatched job that deploys all four contracts to testnet with a throwaway friendbot-funded key, initializes them, and runs the live smoke test against them. It is the only thing in CI that exercises the wire format; `sdk-ci` stubs `simulateTransaction` and so passes identically whatever changed underneath.
@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The SDK package is `@stellarforge-protocol/sdk`. The `stellarforge` npm organization belongs to someone else, and nothing was ever published under the old name.
+- `publish-sdk.yml` authenticates with npm trusted publishing (OIDC) instead of an `NPM_TOKEN` secret. npm only accepts a publish from this workflow, in this repository, in the `npm-publish` environment, and attaches provenance automatically. `docs/RELEASING.md` covers the one-time setup and the release steps.
 - **BREAKING:** `registry.list_assets` takes `(start, limit)` and returns at most 100 addresses per call. A larger `limit` fails with `PageTooLarge` rather than being silently truncated. `RegistryClient.listAssets(start, limit)` defaults to the first full page. `RegistryError` appends `PageTooLarge = 4` and `Overflow = 5`.
 - `rwa-asset.update_metadata` refuses to change `decimals` (`DecimalsImmutable = 12`), and refuses to set a cap below circulating supply or lift it to uncapped (`InvalidSupplyCap = 13`). Raising a cap is still allowed.
 - **BREAKING:** `governance.propose` requires a voting period of `MIN_VOTING_PERIOD_LEDGERS` to `MAX_VOTING_PERIOD_LEDGERS` (about 1 to 90 days) and a title of at most `MAX_TITLE_BYTES` (256). `GovernanceError` appends `InvalidVotingPeriod = 10` and `TitleTooLong = 11`.
