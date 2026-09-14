@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `authorizeEntries` signs an authorizer's entries and refuses a key they don't name. `authEntriesToXdr` and `authEntriesFromXdr` move entries between machines.
   - Finalizing checks each signed entry against the one built, and requires its expiry to fall between `MIN_AUTH_REMAINING_LEDGERS` (40) and `MAX_AUTH_VALIDITY_LEDGERS` (17,280) ledgers ahead.
   - The write smoke test runs a sponsored transfer, and with `SMOKE_WRITE_TRANSFER_ADMIN`, a sponsored admin handover.
+- The write smoke test can configure its own deployment through the operator methods (`SMOKE_WRITE_SETUP`). It runs `setIssuer`, `setKyc`, `revokeKyc`, `setCompliance`, `setPaused` and `updateMetadata` on testnet, checking each through its read. The Testnet Smoke workflow now sets up this way instead of with `stellar-cli`.
 
 ## [0.2.0] - 2026-09-14
 

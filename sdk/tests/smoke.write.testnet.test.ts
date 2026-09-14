@@ -20,16 +20,26 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { Account, Keypair, MuxedAccount, Networks, rpc, scValToNative } from "@stellar/stellar-sdk";
 
-import { RwaAssetClient } from "../src/client.js";
+import { ComplianceClient, RwaAssetClient } from "../src/client.js";
 import { DEFAULT_AUTH_VALIDITY_LEDGERS, authorizeEntries } from "../src/sponsored.js";
 import { TESTNET_CONFIG } from "../src/types.js";
-import { isValidContractId, isValidStellarAddress } from "../src/utils.js";
-import type { StellarForgeConfig } from "../src/types.js";
+import { isValidContractId, isValidStellarAddress, sha256Hex } from "../src/utils.js";
+import type { KycRecord, StellarForgeConfig } from "../src/types.js";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const ASSET_ID = process.env["SMOKE_WRITE_RWA_ASSET_ID"];
 const ISSUER_SECRET = process.env["SMOKE_WRITE_ISSUER_SECRET"];
+/** Admin of the asset and the compliance contract. A default deploy makes the issuer both. */
+const ADMIN_SECRET = process.env["SMOKE_WRITE_ADMIN_SECRET"] ?? ISSUER_SECRET;
+const COMPLIANCE_ID = process.env["SMOKE_WRITE_COMPLIANCE_ID"];
+/**
+ * Set to have the test configure the deployment itself through the SDK's
+ * operator methods before the holder writes: grant the issuer role, record KYC,
+ * switch compliance on, and exercise pause and metadata updates. Needs
+ * SMOKE_WRITE_COMPLIANCE_ID and an admin of both contracts.
+ */
+const SETUP = process.env["SMOKE_WRITE_SETUP"] === "true";
 const SPENDER_SECRET = process.env["SMOKE_WRITE_SPENDER_SECRET"];
 const RECIPIENT = process.env["SMOKE_WRITE_RECIPIENT_ADDRESS"];
 /** Set when the asset screens transfers, so the rejection path is asserted too. */
@@ -83,6 +93,9 @@ describe.runIf(ASSET_ID)("live RwaAssetClient writes", () => {
   let issuer: string;
   let spender: string;
   let recipient: string;
+  let admin: string;
+  let adminClient: RwaAssetClient;
+  let complianceAdmin: ComplianceClient;
 
   interface Snapshot {
     supply: bigint;
@@ -137,19 +150,123 @@ describe.runIf(ASSET_ID)("live RwaAssetClient writes", () => {
     spenderClient = new RwaAssetClient(configFor(SPENDER_SECRET));
     server = new rpc.Server(RPC_URL);
 
-    // Preconditions the admin has to set up. Failing here names the missing
-    // step instead of surfacing as a contract error inside the first write.
+    if (SETUP) {
+      if (!COMPLIANCE_ID || !isValidContractId(COMPLIANCE_ID)) {
+        throw new Error("SMOKE_WRITE_SETUP needs SMOKE_WRITE_COMPLIANCE_ID set to the compliance contract id");
+      }
+      admin = Keypair.fromSecret(ADMIN_SECRET as string).publicKey();
+      adminClient = new RwaAssetClient(configFor(ADMIN_SECRET as string));
+      complianceAdmin = new ComplianceClient({
+        ...configFor(ADMIN_SECRET as string),
+        contracts: { compliance: COMPLIANCE_ID },
+      });
+    }
+  }, WRITE_TIMEOUT);
+
+  /**
+   * Preconditions the holder writes rely on. Checked when they start, not in
+   * beforeAll, so that with SMOKE_WRITE_SETUP the operator tests can establish
+   * them first. Failing here names the missing step instead of surfacing as a
+   * contract error inside the first write.
+   */
+  async function assertReady(): Promise<void> {
     if (!(await issuerClient.isIssuer(issuer))) {
-      throw new Error(`${issuer} does not hold the issuer role; grant it with set_issuer first`);
+      throw new Error(
+        `${issuer} does not hold the issuer role; grant it with set_issuer first, or set SMOKE_WRITE_SETUP`,
+      );
     }
     if (await issuerClient.isPaused()) {
       throw new Error("The asset is paused, so every write would fail with ContractPaused");
     }
-  }, WRITE_TIMEOUT);
+  }
+
+  // ─── Operator methods (SMOKE_WRITE_SETUP) ────────────────────────────────────
+  //
+  // These configure the deployment the holder writes run against, so they run
+  // first. Each checks its effect through the matching read.
+
+  it.runIf(SETUP)(
+    "setIssuer grants the issuer role",
+    async () => {
+      await adminClient.setIssuer(admin, issuer, true);
+      expect(await issuerClient.isIssuer(issuer)).toBe(true);
+    },
+    WRITE_TIMEOUT,
+  );
+
+  it.runIf(SETUP)(
+    "setKyc records a verification that getKyc and isCompliant report",
+    async () => {
+      const record: KycRecord = { jurisdiction: "US", level: 1, expiresAt: 0 };
+      for (const subject of [issuer, recipient]) {
+        await complianceAdmin.setKyc(admin, subject, record);
+      }
+      expect(await complianceAdmin.getKyc(recipient)).toEqual(record);
+      expect(await complianceAdmin.isCompliant(issuer, 1)).toBe(true);
+    },
+    WRITE_TIMEOUT,
+  );
+
+  it.runIf(SETUP)(
+    "revokeKyc removes a record",
+    async () => {
+      const subject = Keypair.random().publicKey();
+      await complianceAdmin.setKyc(admin, subject, { jurisdiction: "GB", level: 2, expiresAt: 0 });
+      expect(await complianceAdmin.getKyc(subject)).not.toBeNull();
+
+      await complianceAdmin.revokeKyc(admin, subject);
+      expect(await complianceAdmin.getKyc(subject)).toBeNull();
+    },
+    WRITE_TIMEOUT,
+  );
+
+  it.runIf(SETUP)(
+    "setCompliance points the asset at the compliance contract",
+    async () => {
+      await adminClient.setCompliance(admin, COMPLIANCE_ID as string, 1);
+      expect(await issuerClient.complianceContract()).toBe(COMPLIANCE_ID);
+      expect(await issuerClient.minComplianceLevel()).toBe(1);
+    },
+    WRITE_TIMEOUT,
+  );
+
+  it.runIf(SETUP)(
+    "setPaused refuses a mint until the asset is unpaused",
+    async () => {
+      await adminClient.setPaused(admin, true);
+      expect(await issuerClient.isPaused()).toBe(true);
+      // ContractPaused is RwaError 8; building simulates, so it surfaces here.
+      await expect(issuerClient.buildMintTx(issuer, issuer, 1n)).rejects.toThrow(/Error\(Contract, #8\)/);
+
+      await adminClient.setPaused(admin, false);
+      expect(await issuerClient.isPaused()).toBe(false);
+    },
+    WRITE_TIMEOUT,
+  );
+
+  it.runIf(SETUP)(
+    "updateMetadata replaces the document hash and refuses a new decimals",
+    async () => {
+      const current = await issuerClient.metadata();
+      const legalDocHash = sha256Hex(`stellarforge smoke ${Date.now()}`);
+
+      await adminClient.updateMetadata(admin, { ...current, legalDocHash });
+      expect((await issuerClient.metadata()).legalDocHash).toBe(legalDocHash);
+
+      // DecimalsImmutable is RwaError 12.
+      await expect(
+        adminClient.buildUpdateMetadataTx(admin, { ...current, legalDocHash, decimals: current.decimals + 1 }),
+      ).rejects.toThrow(/Error\(Contract, #12\)/);
+    },
+    WRITE_TIMEOUT,
+  );
+
+  // ─── Holder writes ───────────────────────────────────────────────────────────
 
   it(
     "mint raises total supply and the holder's balance by the amount",
     async () => {
+      await assertReady();
       const before = await snapshot();
 
       const { hash, ledger } = await issuerClient.mint(issuer, issuer, MINT);
