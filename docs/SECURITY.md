@@ -51,9 +51,11 @@ All completed audit reports are published in [`docs/audits/`](audits/) as they b
 
 ## Resolved Issues
 
-Findings are recorded here once fixed. Both entries below were found during
+Findings are recorded here once fixed. Every entry below was found during
 internal review while the protocol was pre-deployment, so no funds were ever
-at risk, and both are covered by regression tests.
+at risk, and each is covered by regression tests. SF-2026-003 onward come from
+the [Phase 1 internal security review](audits/2026-09-14-internal-review-phase1.md),
+whose IDs are given in brackets.
 
 ### SF-2026-001 — Self-transfer minted tokens (critical)
 
@@ -88,3 +90,61 @@ automatically by the transaction that touches it, so the residual exposure is a
 restore fee for a holder idle longer than the maximum TTL, not a failed
 transfer. State rent means that exposure cannot be removed, only reassigned;
 [ADR-001](architecture/001-storage-key-design.md) records who pays and why.*
+
+### SF-2026-003 — Registry directory stopped accepting assets (medium) [IR-01]
+
+The directory index was a single `Vec<Address>` held in one persistent entry,
+and every `register` rewrote the whole vector. Each address adds 40 bytes, so
+at about 1,600 assets the entry crossed the 64 KiB contract-data limit. From
+then on every `register` failed, and without an upgrade path (ADR-003) nothing
+could recover the contract in place. NFR-P-3 requires 10,000 assets.
+
+*Fixed in `70b761a`. Each asset now has its own `AssetAt(index)` entry, and
+`list_assets(start, limit)` pages at most 100 addresses per call. Regression
+tests: `test_directory_scales_past_the_former_entry_size_ceiling` (2,000
+assets, under mainnet limits), and `test_directory_scales_to_the_nfr_p_3_size`
+(10,000 assets, run with `--ignored`).*
+
+### SF-2026-004 — `update_metadata` could re-denominate or uncap an asset (medium) [IR-02]
+
+`update_metadata` checked the new metadata only in isolation. The admin could
+change `decimals` after issuance, which resizes every holder's position by a
+power of ten, lift a cap back to uncapped, or set a cap below circulating
+supply. None of these changes emitted an event.
+
+*Fixed in `a1c73c2`. `decimals` is now immutable. A cap can move, but never
+below `total_supply` and never back to 0. Regression tests:
+`test_update_metadata_cannot_change_decimals`,
+`test_update_metadata_cannot_lift_a_cap`,
+`test_update_metadata_cannot_cap_below_circulating_supply`.*
+
+### SF-2026-005 — Privileged state changes emitted no events (medium) [IR-03]
+
+Only holder operations and `set_paused` published events. Admin handover,
+issuer grants, metadata changes, disabling compliance, KYC decisions, registry
+changes and every governance action left no trace for monitors, which
+violated NFR-A-1 and NFR-A-3.
+
+*Fixed in `8147f6d`. Every state-changing entry point now publishes an
+event, and each wire format is pinned by a test in its contract's suite.*
+
+### SF-2026-006 — Three contracts could not rotate their admin (medium) [IR-04]
+
+Only `rwa-asset` exposed `transfer_admin`. The admin of `compliance`,
+`registry` and `governance` was fixed at deployment for good. A compromised
+compliance key could mark any address permanently compliant on every
+dependent asset, and could never be rotated out.
+
+*Fixed in `2021ed5`. All four contracts now have dual-authorization
+`transfer_admin`. Regression tests in each:
+`test_transfer_admin_without_the_incoming_signature_is_rejected`, plus a
+test showing that a rotated-out admin loses its powers.*
+
+### SF-2026-007 — Two write paths skipped the TTL policy (low) [IR-07]
+
+`update_metadata` and `transfer_admin` wrote storage without extending its
+TTL. That is the SF-2026-002 policy, missed in two places. Since protocol 23
+the consequence is a restore fee rather than a failure.
+
+*Fixed in `a1c73c2`. Regression test:
+`test_admin_write_paths_extend_what_they_write`.*

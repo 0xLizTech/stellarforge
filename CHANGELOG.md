@@ -22,11 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/architecture/002-auth-patterns.md`, `003-upgrade-path.md` and `004-cross-contract-interaction.md`, the three ADRs `CONTRIBUTING.md` has called for since Phase 1 opened. They record the authorization map across all four contracts, why Phase 1 ships no upgrade entry point and what that costs, and the `ComplianceInterface` binding including the `screen` / `is_compliant` split.
 - `.github/workflows/testnet-smoke.yml`, a manually dispatched job that deploys all four contracts to testnet with a throwaway friendbot-funded key, initializes them, and runs the live smoke test against them. It is the only thing in CI that exercises the wire format; `sdk-ci` stubs `simulateTransaction` and so passes identically whatever changed underneath.
 - Unit tests for `RwaAssetClient` and `ComplianceClient`, stubbing Soroban RPC at `rpc.Server.prototype.simulateTransaction` so the contract call, the ScVal codecs and both failure paths are exercised for real.
-- `docs/audits/2026-09-14-internal-review-phase1.md`, the Phase 1 internal security review of all four contracts, the SDK and the deployment/CI tooling. Findings are open.
+- `docs/audits/2026-09-14-internal-review-phase1.md`, the Phase 1 internal security review of all four contracts, the SDK and the deployment/CI tooling. IR-01 to IR-04 and IR-07 are fixed; the rest are open.
+- `transfer_admin` on `compliance`, `registry` and `governance`. As on `rwa-asset`, the current and the incoming admin must both authorize in one transaction (NFR-S-4). Previously the admin named at deployment could never be rotated out.
+- Events for every privileged and governance state change. `rwa-asset`: `IssuerSet`, `MetadataUpdated`, `AdminTransferred`, `ComplianceSet`. `compliance`: `KycSet`, `KycRevoked`, `AdminTransferred`. `registry`: `AssetRegistered`, `ActiveSet`, `AdminTransferred`. `governance`: `ProposalCreated`, `VoteCast`, `ProposalFinalized`, `AdminTransferred`. Each topic is the entry point name, and each wire format is pinned by a test.
+- `registry.asset_count()`, plus `RegistryClient.assetCount()` and `RegistryClient.listAllAssets()`, which walks every page.
 - `sdk/tests/smoke.testnet.test.ts`, an opt-in live check of both clients against a deployed contract over real Soroban RPC. It asserts contract invariants rather than fixed values, and skips unless `SMOKE_RWA_ASSET_ID` or `SMOKE_COMPLIANCE_ID` names a contract, so CI never runs it.
 
 ### Changed
 
+- **BREAKING:** `registry.list_assets` takes `(start, limit)` and returns at most 100 addresses per call. A larger `limit` fails with `PageTooLarge` rather than being silently truncated. `RegistryClient.listAssets(start, limit)` defaults to the first full page. `RegistryError` appends `PageTooLarge = 4` and `Overflow = 5`.
+- `rwa-asset.update_metadata` refuses to change `decimals` (`DecimalsImmutable = 12`), and refuses to set a cap below circulating supply or lift it to uncapped (`InvalidSupplyCap = 13`). Raising a cap is still allowed.
+- `governance.propose` now fails when the title is too large for the per-transaction event size limit, because `ProposalCreated` carries the title.
 - **BREAKING:** all four contracts configure themselves in a `__constructor` and no longer expose `initialize`. Deployment and configuration are now one transaction, closing the window in which a deployed contract had no admin and anyone could name themselves. `stellar contract deploy` takes the arguments after `--`; `scripts/deploy.sh` does this for all four and so now initializes what it deploys, which it previously did not.
 - `AlreadyInitialized` and `NotInitialized` are unreachable but retained in every error enum, marked reserved. ADR-003 freezes discriminants, so deleting a variant and letting later ones shift up would silently change what a deployed client believes went wrong.
 - `docs/architecture/002-auth-patterns.md` carries an amendment recording the change, including that constructor `require_auth` is asserted by no test: `Env::register` mocks authorization, and the SDK documents that it cannot be used to test it. The same call was equally unasserted on `initialize`, so nothing regressed.
@@ -41,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `stellar keys generate --global` in `README.md` and `CONTRIBUTING.md`. stellar-cli 27 removed the flag, so the documented setup step failed outright on a current CLI.
 - SF-2026-001: a self-transfer wrote debit and credit to the same storage key and minted tokens out of nothing (critical).
 - SF-2026-002: storage TTL was never extended, risking archival of live balances and instance state (high).
+- SF-2026-003: the registry directory stopped accepting assets at about 1,600 entries (medium).
+- SF-2026-004: `update_metadata` could re-denominate every balance or lift the supply cap (medium).
+- SF-2026-005: privileged and governance state changes emitted no events (medium).
+- SF-2026-006: `compliance`, `registry` and `governance` could not rotate their admin (medium).
+- SF-2026-007: `update_metadata` and `transfer_admin` did not extend the storage they wrote (low).
 - `registry.register` no longer duplicates an asset in `list_assets` when an already-registered asset is re-registered.
 - `ComplianceClient.isCompliant` asserted the simulation result was present and threw `Cannot read properties of undefined` when it was not. It now reports the missing result the same way `RwaAssetClient` does.
 

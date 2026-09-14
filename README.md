@@ -217,6 +217,7 @@ no compliance contract is configured.
 |---|---|---|
 | `set_kyc(subject, record)` | admin | Set KYC record |
 | `revoke_kyc(subject)` | admin | Remove KYC record |
+| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
 | `is_compliant(subject, min_level)` | — | Check compliance; pure query, no ledger write |
 | `screen(subject, min_level)` | — | As above, but refreshes the record's TTL; bound by `RwaAsset` |
 | `get_kyc(subject)` | — | Read KYC record |
@@ -235,7 +236,9 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 | `register(entry)` | admin | Register a new asset contract, or update a registered one |
 | `set_active(contract, active)` | admin | Activate/deactivate asset |
 | `get_asset(contract)` | — | Look up asset entry |
-| `list_assets()` | — | List all registered contracts, each exactly once |
+| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `list_assets(start, limit)` | — | Page through registered contracts in registration order, at most 100 per call, each exactly once |
+| `asset_count()` | — | Count registered contracts |
 | `admin()` | — | Query admin address |
 
 ### Governance
@@ -245,6 +248,7 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 | `propose(proposer, title, hash, period)` | proposer | Create proposal |
 | `vote(voter, id, support, weight)` | voter | Cast vote |
 | `finalize(id)` | — | Tally and finalize; a tie is rejected |
+| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role; no other admin powers in Phase 1 |
 | `get_proposal(id)` | — | Read proposal |
 | `has_voted(id, voter)` | — | Whether an address has voted on a proposal |
 | `proposal_count()` | — | Count proposals |
@@ -255,6 +259,11 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 > applies no quorum. Governance is a skeleton until the `SFORGE` token and
 > execution hooks land in Phase 3 — do not treat a passed proposal as a
 > trustworthy signal before then.
+
+**Events.** Every state-changing entry point publishes a Soroban event whose
+first topic is the entry point's name, so admin handovers, issuer grants,
+KYC decisions, compliance being switched off, and every governance action
+can be followed without re-reading contract state.
 
 **Error codes.** Every contract returns a typed `contracterror` enum, so
 clients match on a stable numeric code. Discriminants are part of the public

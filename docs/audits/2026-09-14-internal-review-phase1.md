@@ -1,15 +1,16 @@
 # Internal Security Review — Phase 1
 
-**Status:** Open. Findings are not yet fixed.
+**Status:** In remediation. IR-01, IR-02, IR-03, IR-04 and IR-07 are fixed; the rest are open.
 **Date:** 2026-09-14
 **Commit reviewed:** `1f43935` (`main`)
 **Roadmap item:** Phase 1, *Formal security review (internal)*
 
-> **Handling.** [SECURITY.md](../SECURITY.md) says findings are recorded publicly
-> *once fixed*. This report lists open findings. Keep it off the public `main`
-> branch until the Medium findings are fixed, or move it into a private
-> security advisory. None of the contracts are deployed on mainnet, so no funds
-> are at risk today.
+> **Handling.** [SECURITY.md](../SECURITY.md) records findings publicly
+> *once fixed*. IR-01, IR-02, IR-03, IR-04 and IR-07 are fixed and recorded
+> there as SF-2026-003 to SF-2026-007. IR-05 and IR-06 are both Medium, both in
+> the SDK, and still open. The SDK is not yet published to npm, which limits
+> exposure, but keep this report off the public `main` branch until those two
+> are fixed as well. None of the contracts are deployed on mainnet.
 
 ---
 
@@ -65,25 +66,25 @@ any deployment that will hold real positions.
 
 ## 2. Summary
 
-| ID | Title | Component | Severity |
-|---|---|---|---|
-| IR-01 | Registry stops accepting assets after ~1,600 entries | registry | Medium |
-| IR-02 | `update_metadata` can break the supply cap and re-denominate balances | rwa-asset | Medium |
-| IR-03 | Privileged and governance state changes emit no events | all contracts | Medium |
-| IR-04 | `compliance`, `registry` and `governance` admins cannot be rotated | compliance, registry, governance | Medium |
-| IR-05 | SDK can report a failed transaction that later succeeds | sdk | Medium |
-| IR-06 | SDK amount helpers silently accept malformed input | sdk | Medium |
-| IR-07 | `update_metadata` and `transfer_admin` skip the TTL policy | rwa-asset | Low |
-| IR-08 | `set_kyc` accepts out-of-range levels and past expiries | compliance | Low |
-| IR-09 | Token surface diverges from SEP-41; allowances never expire | rwa-asset | Low |
-| IR-10 | Build is not reproducible (NFR-S-5) | toolchain, CI | Low |
-| IR-11 | Dependency review never runs, and no SDK dependency audit exists | CI | Low |
-| IR-12 | CI trusts mutable action tags and an unverified CLI download | CI | Low |
-| IR-13 | Deployment tooling lacks mainnet guards and has stale paths | scripts, Makefile | Low |
-| IR-14 | `propose` accepts a zero voting period and unbounded input | governance | Low |
-| IR-15 | Self-`transfer_from` emits a phantom `Transfer` event | rwa-asset | Info |
-| IR-16 | Registry entries are unverified, and `active` is unenforced | registry | Info |
-| IR-17 | Constructor `require_auth` is untested (carried from ADR-002) | all contracts | Info |
+| ID | Title | Component | Severity | Status |
+|---|---|---|---|---|
+| IR-01 | Registry stops accepting assets after ~1,600 entries | registry | Medium | Fixed `70b761a` |
+| IR-02 | `update_metadata` can break the supply cap and re-denominate balances | rwa-asset | Medium | Fixed `a1c73c2` |
+| IR-03 | Privileged and governance state changes emit no events | all contracts | Medium | Fixed `8147f6d` |
+| IR-04 | `compliance`, `registry` and `governance` admins cannot be rotated | compliance, registry, governance | Medium | Fixed `2021ed5` |
+| IR-05 | SDK can report a failed transaction that later succeeds | sdk | Medium | Open |
+| IR-06 | SDK amount helpers silently accept malformed input | sdk | Medium | Open |
+| IR-07 | `update_metadata` and `transfer_admin` skip the TTL policy | rwa-asset | Low | Fixed `a1c73c2` |
+| IR-08 | `set_kyc` accepts out-of-range levels and past expiries | compliance | Low | Open |
+| IR-09 | Token surface diverges from SEP-41; allowances never expire | rwa-asset | Low | Open |
+| IR-10 | Build is not reproducible (NFR-S-5) | toolchain, CI | Low | Open |
+| IR-11 | Dependency review never runs, and no SDK dependency audit exists | CI | Low | Open |
+| IR-12 | CI trusts mutable action tags and an unverified CLI download | CI | Low | Open |
+| IR-13 | Deployment tooling lacks mainnet guards and has stale paths | scripts, Makefile | Low | Open |
+| IR-14 | `propose` accepts a zero voting period and unbounded input | governance | Low | Open |
+| IR-15 | Self-`transfer_from` emits a phantom `Transfer` event | rwa-asset | Info | Open |
+| IR-16 | Registry entries are unverified, and `active` is unenforced | registry | Info | Open |
+| IR-17 | Constructor `require_auth` is untested (carried from ADR-002) | all contracts | Info | Open |
 
 **Counts:** 0 Critical, 0 High, 6 Medium, 8 Low, 3 Info.
 
@@ -115,6 +116,8 @@ The review looked for these problems specifically and found none:
 ### IR-01 — Registry stops accepting assets after ~1,600 entries
 
 **Severity:** Medium  **Location:** `contracts/registry/src/lib.rs:56-95`
+
+**Status:** Fixed in `70b761a`. The directory is now one `AssetAt(index)` entry per asset plus a persistent `AssetCount`. `list_assets(start, limit)` pages at most `MAX_PAGE_SIZE` (100) addresses and rejects a larger page with `PageTooLarge` instead of truncating it. Under mainnet limits, tests cover 2,000 assets by default and 10,000 with `--ignored`.
 
 `DataKey::AssetList` is a single persistent `Vec<Address>`. `register` reads
 the whole vector, appends to it and writes it back. Each contract address
@@ -148,6 +151,8 @@ than six times the actual ceiling.
 ### IR-02 — `update_metadata` can break the supply cap and re-denominate balances
 
 **Severity:** Medium  **Location:** `contracts/rwa-asset/src/lib.rs:338-344`
+
+**Status:** Fixed in `a1c73c2`. `decimals` is immutable (`DecimalsImmutable`). A cap can move, but never below `total_supply` and never back to 0 (`InvalidSupplyCap`). Raising a cap is still allowed, and since IR-03 it is visible through `MetadataUpdated`.
 
 `update_metadata` runs only `validate_metadata`, which checks the shape of the
 value and never compares it with the asset's current state. The admin can,
@@ -189,6 +194,8 @@ narrower version of that same power.
 
 **Severity:** Medium  **Requirement:** NFR-A-1, NFR-A-3
 
+**Status:** Fixed in `8147f6d`. Every entry point in the table publishes an event, each wire format is pinned by a test, and `AdminTransferred` was added with IR-04. `ProposalCreated` carries the title, so a title too large for the per-transaction event size limit now makes `propose` fail.
+
 Only `rwa-asset`'s holder operations and `set_paused` publish events. The
 following state changes are invisible to indexers:
 
@@ -217,6 +224,8 @@ that every state-changing entry point is asserted to publish.
 ### IR-04 — `compliance`, `registry` and `governance` admins cannot be rotated
 
 **Severity:** Medium  **Location:** `contracts/compliance/src/lib.rs`, `contracts/registry/src/lib.rs`, `contracts/governance/src/lib.rs`
+
+**Status:** Fixed in `2021ed5`. All four contracts expose `transfer_admin` with dual authorization and an `AdminTransferred` event. In each contract, tests assert that the current admin's signature alone is rejected and that a rotated-out admin loses its powers. The runbook recommendation about a single shared deploy key is tracked under IR-13.
 
 Only `rwa-asset` exposes `transfer_admin`. In the other three contracts,
 the admin set in the constructor holds the role for the contract's whole
@@ -304,6 +313,8 @@ negative values in `fromStroops`. Validate `/^[0-9a-fA-F]{64}$/` in
 ### IR-07 — `update_metadata` and `transfer_admin` skip the TTL policy
 
 **Severity:** Low  **Location:** `contracts/rwa-asset/src/lib.rs:338-350`
+
+**Status:** Fixed in `a1c73c2`, with a test asserting both TTLs.
 
 `contracts/common/src/storage.rs` says write paths must extend the entries
 they write, which is the SF-2026-002 fix. `update_metadata` writes
@@ -494,7 +505,7 @@ mocked authorization.
 ## 4. Recommended order of work
 
 1. **Before any contract is deployed with holders.** Fix IR-01, IR-02, IR-03,
-   IR-04 and IR-07. These are permanent once deployed (ADR-003).
+   IR-04 and IR-07. These are permanent once deployed (ADR-003). **Done.**
 2. **Before `@stellarforge/sdk` is published to npm.** Fix IR-05 and IR-06.
 3. **Before the external audit.** Fix IR-10, IR-11 and IR-12, so auditors can
    tie a wasm hash to a commit. Then fix IR-08, IR-09, IR-13 and IR-14.

@@ -69,7 +69,7 @@ Two things worth knowing before you use either:
 |---|---|---|
 | `RwaAssetClient` | `rwa-asset` | Balances, metadata, allowances; mint, burn, transfer, approve, transferFrom |
 | `ComplianceClient` | `compliance` | `isCompliant` is the pure query, never the TTL-extending `screen` |
-| `RegistryClient` | `registry` | Asset directory; `register` and `setActive` are admin-only |
+| `RegistryClient` | `registry` | Asset directory, paged with `listAssets(start, limit)` or walked with `listAllAssets()`; `register` and `setActive` are admin-only |
 | `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
 
 ### Governance results are advisory in Phase 1
