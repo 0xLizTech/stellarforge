@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/audits/external-audit-handover-phase1.md`, the handover for the Phase 1 external audit. It covers scope, how to rebuild the audited wasm, the trust model, the invariants to test, the deliberate design choices, and how the PRD relates to Phase 1.
+
 ### Changed
 
 - **BREAKING:** `rwa-asset.update_metadata` refuses raising a supply cap, with `InvalidSupplyCap`. The admin could already neither remove a cap nor set it below supply. Now a cap can only be tightened, which makes PRD §10.2's "not bypassable by admin" true. An uncapped asset can still be given a cap at or above its supply.
+- `docs/prd/PRODUCT_REQUIREMENTS.md` scopes three security claims to the phases that implement them. The over-minting mitigation now describes the cap rule (#54). Quorum, timelock and veto defences apply once governance can execute (Phase 3+). The only Phase 1 emergency control is `set_paused` on `rwa-asset`, since Phase 1 contracts cannot be upgraded.
 
 ## [0.3.0] - 2026-09-14
 

@@ -49,6 +49,8 @@ A formal bug bounty program will be announced when Phase 2 contracts are deploye
 
 All completed audit reports are published in [`docs/audits/`](audits/) as they become available.
 
+The handover for the Phase 1 external audit (scope, build reproduction, trust model, invariants and deliberate design choices) is [`docs/audits/external-audit-handover-phase1.md`](audits/external-audit-handover-phase1.md).
+
 ## Resolved Issues
 
 Findings are recorded here once fixed. Every entry below was found during
