@@ -35,4 +35,8 @@ pub enum GovernanceError {
     InvalidWeight = 8,
     /// An arithmetic operation overflowed.
     Overflow = 9,
+    /// `propose` was given a voting period outside the allowed range.
+    InvalidVotingPeriod = 10,
+    /// `propose` was given a title longer than `MAX_TITLE_BYTES`.
+    TitleTooLong = 11,
 }

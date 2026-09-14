@@ -26,10 +26,24 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
     Symbol,
 };
-use stellarforge_common::{extend_instance, extend_persistent};
+use stellarforge_common::{extend_instance, extend_persistent, storage::DAY_IN_LEDGERS};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const PROP_COUNT: Symbol = symbol_short!("PCOUNT");
+
+/// Shortest voting period `propose` accepts, about a day.
+///
+/// A proposer could previously pass 0 and have voting open only in the ledger
+/// the proposal was created in, so nobody else could realistically see it,
+/// let alone vote, before the proposer finalized it (IR-14).
+pub const MIN_VOTING_PERIOD_LEDGERS: u32 = DAY_IN_LEDGERS;
+
+/// Longest voting period `propose` accepts, about 90 days.
+pub const MAX_VOTING_PERIOD_LEDGERS: u32 = 90 * DAY_IN_LEDGERS;
+
+/// Longest title `propose` accepts, in bytes. The full text belongs in the
+/// document `description_hash` points to.
+pub const MAX_TITLE_BYTES: u32 = 256;
 
 #[contracttype]
 #[derive(Clone)]
@@ -96,6 +110,16 @@ impl GovernanceContract {
         // locked out everyone who had already voted. Nothing resets the
         // counter now.
         Self::require_initialized(&env);
+
+        // Bounded now rather than in Phase 3, so proposals created under looser
+        // rules are not inherited once outcomes can execute.
+        if !(MIN_VOTING_PERIOD_LEDGERS..=MAX_VOTING_PERIOD_LEDGERS).contains(&voting_period_ledgers)
+        {
+            panic_with_error!(&env, GovernanceError::InvalidVotingPeriod);
+        }
+        if title.len() > MAX_TITLE_BYTES {
+            panic_with_error!(&env, GovernanceError::TitleTooLong);
+        }
 
         let count: u64 = env.storage().instance().get(&PROP_COUNT).unwrap_or(0);
         let id = match count.checked_add(1) {

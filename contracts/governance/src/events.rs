@@ -12,9 +12,8 @@ use soroban_sdk::{contractevent, Address, Bytes, String};
 
 use crate::ProposalStatus;
 
-/// Carries the title, so a title too long to fit the network's per-transaction
-/// event size limit makes `propose` fail rather than create a proposal whose
-/// creation cannot be observed.
+/// Carries the title, which `propose` caps at `MAX_TITLE_BYTES` so the event
+/// stays well inside the network's per-transaction event size limit.
 #[contractevent(topics = ["propose"], data_format = "map")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProposalCreated {

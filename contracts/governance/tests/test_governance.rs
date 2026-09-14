@@ -10,11 +10,14 @@ use soroban_sdk::{
 
 use governance::{
     AdminTransferred, DataKey, GovernanceContract, GovernanceContractClient, GovernanceError,
-    ProposalCreated, ProposalFinalized, ProposalStatus, VoteCast,
+    ProposalCreated, ProposalFinalized, ProposalStatus, VoteCast, MAX_TITLE_BYTES,
+    MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
-const VOTING_PERIOD: u32 = 1_000;
+/// The shortest period `propose` accepts, so tests advance the ledger as little
+/// as the contract allows.
+const VOTING_PERIOD: u32 = MIN_VOTING_PERIOD_LEDGERS;
 
 struct Harness<'a> {
     env: Env,
@@ -160,24 +163,12 @@ fn test_get_unknown_proposal_returns_none() {
     assert!(h.client.get_proposal(&42).is_none());
 }
 
-#[test]
-fn test_voting_period_that_would_overflow_the_sequence_is_rejected() {
-    let h = setup();
-    let proposer = Address::generate(&h.env);
-
-    // The test ledger starts at sequence 0, where nothing can overflow.
-    h.env.ledger().with_mut(|li| li.sequence_number = 100);
-
-    // Wrapping would put the deadline in the past and close voting on a
-    // proposal the moment it was created.
-    let res = h.client.try_propose(
-        &proposer,
-        &String::from_str(&h.env, "overflow"),
-        &Bytes::from_array(&h.env, &[0u8; 32]),
-        &u32::MAX,
-    );
-    assert_eq!(res, Err(Ok(GovernanceError::Overflow.into())));
-}
+// `test_voting_period_that_would_overflow_the_sequence_is_rejected` went with
+// the voting-period cap (IR-14). With the period at most
+// MAX_VOTING_PERIOD_LEDGERS, the deadline can only overflow at a sequence within
+// about 90 days of u32::MAX, and the test host cannot run a contract there: its
+// own TTL arithmetic overflows first. `propose` keeps the checked addition, so
+// the case still ends in a defined `Overflow` rather than a wrapped deadline.
 
 // ─── Voting ────────────────────────────────────────────────────────────────
 
@@ -569,4 +560,66 @@ fn test_transfer_admin_emits_event() {
         }
         .to_xdr(&h.env, &h.contract_id)],
     );
+}
+
+// ─── Proposal bounds (IR-14) ───────────────────────────────────────────────
+
+fn try_propose_with(h: &Harness, title: &str, voting_period: u32) -> bool {
+    h.client
+        .try_propose(
+            &Address::generate(&h.env),
+            &String::from_str(&h.env, title),
+            &Bytes::from_array(&h.env, &[7u8; 32]),
+            &voting_period,
+        )
+        .is_ok()
+}
+
+#[test]
+fn test_voting_period_outside_the_bounds_is_rejected() {
+    let h = setup();
+
+    for period in [
+        0,
+        MIN_VOTING_PERIOD_LEDGERS - 1,
+        MAX_VOTING_PERIOD_LEDGERS + 1,
+    ] {
+        let res = h.client.try_propose(
+            &Address::generate(&h.env),
+            &String::from_str(&h.env, "title"),
+            &Bytes::from_array(&h.env, &[7u8; 32]),
+            &period,
+        );
+        assert_eq!(
+            res,
+            Err(Ok(GovernanceError::InvalidVotingPeriod.into())),
+            "accepted a period of {period}"
+        );
+    }
+    assert_eq!(h.client.proposal_count(), 0);
+}
+
+/// Guards the rejections above: both bounds are inclusive.
+#[test]
+fn test_voting_period_bounds_are_inclusive() {
+    let h = setup();
+    assert!(try_propose_with(&h, "shortest", MIN_VOTING_PERIOD_LEDGERS));
+    assert!(try_propose_with(&h, "longest", MAX_VOTING_PERIOD_LEDGERS));
+}
+
+#[test]
+fn test_title_longer_than_the_cap_is_rejected() {
+    let h = setup();
+    let at_cap = "a".repeat(MAX_TITLE_BYTES as usize);
+    let over_cap = "a".repeat(MAX_TITLE_BYTES as usize + 1);
+
+    assert!(try_propose_with(&h, &at_cap, VOTING_PERIOD));
+
+    let res = h.client.try_propose(
+        &Address::generate(&h.env),
+        &String::from_str(&h.env, &over_cap),
+        &Bytes::from_array(&h.env, &[7u8; 32]),
+        &VOTING_PERIOD,
+    );
+    assert_eq!(res, Err(Ok(GovernanceError::TitleTooLong.into())));
 }
