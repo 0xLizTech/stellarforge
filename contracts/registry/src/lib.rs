@@ -14,11 +14,23 @@ use stellarforge_common::{extend_instance, extend_persistent};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 
+/// Largest page `list_assets` will return.
+///
+/// Each listed address is its own ledger read, and a read-only simulation is
+/// held to the same per-invocation read limits as a transaction, so a page has
+/// to stay well inside them.
+pub const MAX_PAGE_SIZE: u32 = 100;
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Asset(Address),
-    AssetList,
+    /// Number of distinct assets ever registered, which is also the next free
+    /// directory index.
+    AssetCount,
+    /// The asset registered `n`th, counting from zero. Indices are never
+    /// reused or removed.
+    AssetAt(u32),
 }
 
 #[contracttype]
@@ -44,40 +56,45 @@ impl RegistryContract {
     pub fn __constructor(env: Env, admin: Address) {
         admin.require_auth();
         env.storage().instance().set(&ADMIN_KEY, &admin);
-        env.storage()
-            .persistent()
-            .set(&DataKey::AssetList, &Vec::<Address>::new(&env));
+        env.storage().persistent().set(&DataKey::AssetCount, &0_u32);
 
         extend_instance(&env);
-        extend_persistent(&env, &DataKey::AssetList);
+        extend_persistent(&env, &DataKey::AssetCount);
     }
 
     /// Record an asset contract, or update an already-registered one.
+    ///
+    /// The directory is one entry per asset rather than a single list. A list
+    /// held in one ledger entry hit the 64 KiB entry size limit at around
+    /// 1,600 assets, after which every registration failed permanently
+    /// (IR-01), and each registration rewrote the whole list on the way there.
     pub fn register(env: Env, entry: AssetEntry) {
         Self::require_admin(&env);
         let key = DataKey::Asset(entry.contract.clone());
 
         // The directory index is appended to only for a genuinely new asset.
-        // Pushing unconditionally left the same address in `list_assets` once
-        // per call, so re-registering an asset to correct its class silently
-        // duplicated it for every consumer iterating the directory.
+        // Appending unconditionally listed the same address once per call, so
+        // re-registering an asset to correct its class silently duplicated it
+        // for every consumer iterating the directory.
         let is_new = !env.storage().persistent().has(&key);
         let contract = entry.contract.clone();
         env.storage().persistent().set(&key, &entry);
 
         if is_new {
-            let mut list: Vec<Address> = env
-                .storage()
-                .persistent()
-                .get(&DataKey::AssetList)
-                .unwrap_or(Vec::new(&env));
-            list.push_back(contract);
-            env.storage().persistent().set(&DataKey::AssetList, &list);
+            let index = Self::asset_count(env.clone());
+            let next = match index.checked_add(1) {
+                Some(v) => v,
+                None => panic_with_error!(&env, RegistryError::Overflow),
+            };
+            let at = DataKey::AssetAt(index);
+            env.storage().persistent().set(&at, &contract);
+            env.storage().persistent().set(&DataKey::AssetCount, &next);
+            extend_persistent(&env, &at);
+            extend_persistent(&env, &DataKey::AssetCount);
         }
 
         extend_instance(&env);
         extend_persistent(&env, &key);
-        extend_persistent(&env, &DataKey::AssetList);
     }
 
     /// A pure query: registry lookups do not extend the entries they read, so
@@ -87,11 +104,40 @@ impl RegistryContract {
         env.storage().persistent().get(&DataKey::Asset(contract))
     }
 
-    pub fn list_assets(env: Env) -> Vec<Address> {
+    /// Registered assets in registration order, `limit` of them starting at
+    /// index `start`.
+    ///
+    /// A page shorter than `limit` means the end of the directory was reached;
+    /// a `start` at or past [`RegistryContract::asset_count`] returns an empty
+    /// page. `limit` above [`MAX_PAGE_SIZE`] is rejected rather than quietly
+    /// truncated, so a caller cannot mistake a clipped page for the whole
+    /// directory.
+    pub fn list_assets(env: Env, start: u32, limit: u32) -> Vec<Address> {
+        if limit > MAX_PAGE_SIZE {
+            panic_with_error!(&env, RegistryError::PageTooLarge);
+        }
+
+        let end = start
+            .saturating_add(limit)
+            .min(Self::asset_count(env.clone()));
+        let mut page = Vec::new(&env);
+        for index in start..end {
+            // Every index below the count was written by `register` and
+            // nothing removes one, so this is always present.
+            if let Some(asset) = env.storage().persistent().get(&DataKey::AssetAt(index)) {
+                page.push_back(asset);
+            }
+        }
+        page
+    }
+
+    /// How many distinct assets have been registered. Valid `list_assets`
+    /// indices run from 0 to one less than this.
+    pub fn asset_count(env: Env) -> u32 {
         env.storage()
             .persistent()
-            .get(&DataKey::AssetList)
-            .unwrap_or(Vec::new(&env))
+            .get(&DataKey::AssetCount)
+            .unwrap_or(0)
     }
 
     pub fn set_active(env: Env, contract: Address, active: bool) {

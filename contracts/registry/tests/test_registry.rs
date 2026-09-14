@@ -2,13 +2,16 @@
 
 use soroban_sdk::{
     testutils::{
+        cost_estimate::NetworkInvocationResourceLimits,
         storage::{Instance as _, Persistent as _},
         Address as _, Ledger,
     },
     Address, Env, String,
 };
 
-use registry::{AssetEntry, DataKey, RegistryContract, RegistryContractClient, RegistryError};
+use registry::{
+    AssetEntry, DataKey, RegistryContract, RegistryContractClient, RegistryError, MAX_PAGE_SIZE,
+};
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 struct Harness<'a> {
@@ -74,7 +77,7 @@ fn test_initialize_sets_admin() {
 #[test]
 fn test_initialize_starts_with_an_empty_directory() {
     let h = setup();
-    assert_eq!(h.client.list_assets().len(), 0);
+    assert_eq!(h.client.list_assets(&0, &MAX_PAGE_SIZE).len(), 0);
 }
 
 // The double-initialize and uninitialized-admin tests went with the
@@ -97,8 +100,11 @@ fn test_register_then_get_asset() {
     assert_eq!(stored.asset_class, String::from_str(&h.env, "real_estate"));
     assert!(stored.active);
 
-    assert_eq!(h.client.list_assets().len(), 1);
-    assert_eq!(h.client.list_assets().get(0).unwrap(), asset);
+    assert_eq!(h.client.list_assets(&0, &MAX_PAGE_SIZE).len(), 1);
+    assert_eq!(
+        h.client.list_assets(&0, &MAX_PAGE_SIZE).get(0).unwrap(),
+        asset
+    );
 }
 
 #[test]
@@ -118,7 +124,7 @@ fn test_registering_distinct_assets_lists_each_once() {
     h.client
         .register(&entry(&h.env, &second, "commodity", true));
 
-    assert_eq!(h.client.list_assets().len(), 2);
+    assert_eq!(h.client.list_assets(&0, &MAX_PAGE_SIZE).len(), 2);
 }
 
 #[test]
@@ -135,7 +141,7 @@ fn test_reregistering_an_asset_does_not_duplicate_the_directory() {
 
     // Three registrations, one asset: a consumer iterating the directory must
     // not see the same contract three times.
-    let listed = h.client.list_assets();
+    let listed = h.client.list_assets(&0, &MAX_PAGE_SIZE);
     assert_eq!(listed.len(), 1);
     assert_eq!(listed.get(0).unwrap(), asset);
 }
@@ -189,7 +195,125 @@ fn test_set_active_does_not_touch_the_directory() {
         .register(&entry(&h.env, &asset, "real_estate", true));
 
     h.client.set_active(&asset, &false);
-    assert_eq!(h.client.list_assets().len(), 1);
+    assert_eq!(h.client.list_assets(&0, &MAX_PAGE_SIZE).len(), 1);
+}
+
+// ─── Directory paging ──────────────────────────────────────────────────────
+
+fn register_many(h: &Harness, n: u32) -> std::vec::Vec<Address> {
+    (0..n)
+        .map(|_| {
+            let asset = Address::generate(&h.env);
+            h.client
+                .register(&entry(&h.env, &asset, "real_estate", true));
+            asset
+        })
+        .collect()
+}
+
+#[test]
+fn test_asset_count_counts_distinct_assets() {
+    let h = setup();
+    assert_eq!(h.client.asset_count(), 0);
+
+    let assets = register_many(&h, 3);
+    h.client
+        .register(&entry(&h.env, &assets[0], "commodity", false));
+
+    assert_eq!(h.client.asset_count(), 3);
+}
+
+#[test]
+fn test_pages_partition_the_directory_in_registration_order() {
+    let h = setup();
+    let assets = register_many(&h, 7);
+
+    let mut walked = std::vec::Vec::new();
+    let mut start = 0;
+    loop {
+        let page = h.client.list_assets(&start, &3);
+        walked.extend(page.iter());
+        if page.len() < 3 {
+            break;
+        }
+        start += 3;
+    }
+
+    assert_eq!(walked, assets);
+}
+
+#[test]
+fn test_a_page_past_the_end_is_empty() {
+    let h = setup();
+    register_many(&h, 2);
+
+    assert_eq!(h.client.list_assets(&2, &MAX_PAGE_SIZE).len(), 0);
+    assert_eq!(h.client.list_assets(&u32::MAX, &MAX_PAGE_SIZE).len(), 0);
+}
+
+#[test]
+fn test_an_oversized_page_is_rejected() {
+    let h = setup();
+    let res = h.client.try_list_assets(&0, &(MAX_PAGE_SIZE + 1));
+    assert_eq!(res, Err(Ok(RegistryError::PageTooLarge.into())));
+}
+
+/// Writes `prefilled` directory entries straight to storage, then registers
+/// and pages through the contract with mainnet per-invocation limits enforced.
+///
+/// The prefill bypasses `register` because the test host's cost grows with its
+/// whole in-memory ledger, and it runs as one frame, so limits are lifted for
+/// that setup alone and reinstated before the calls under test.
+fn assert_directory_accepts_and_pages_after(prefilled: u32) {
+    let h = setup();
+
+    h.env.cost_estimate().disable_resource_limits();
+    h.env.cost_estimate().budget().reset_unlimited();
+    h.env.as_contract(&h.contract_id, || {
+        for index in 0..prefilled {
+            h.env
+                .storage()
+                .persistent()
+                .set(&DataKey::AssetAt(index), &Address::generate(&h.env));
+        }
+        h.env
+            .storage()
+            .persistent()
+            .set(&DataKey::AssetCount, &prefilled);
+    });
+    h.env.cost_estimate().budget().reset_default();
+    h.env
+        .cost_estimate()
+        .enforce_resource_limits(NetworkInvocationResourceLimits::mainnet());
+
+    let newest = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &newest, "real_estate", true));
+
+    assert_eq!(h.client.asset_count(), prefilled + 1);
+    let last_page = h
+        .client
+        .list_assets(&(prefilled + 1 - MAX_PAGE_SIZE), &MAX_PAGE_SIZE);
+    assert_eq!(last_page.len(), MAX_PAGE_SIZE);
+    assert_eq!(last_page.get(MAX_PAGE_SIZE - 1).unwrap(), newest);
+}
+
+/// IR-01. The directory used to be one `Vec` in one ledger entry, which
+/// crossed the 64 KiB entry limit at around 1,600 assets and then refused
+/// every registration for good. 2,000 is past that ceiling.
+#[test]
+fn test_directory_scales_past_the_former_entry_size_ceiling() {
+    assert_directory_accepts_and_pages_after(2_000);
+}
+
+/// NFR-P-3 requires 10,000 assets. No entry grows with the directory, so this
+/// exercises the same per-call footprint as the test above; it is kept
+/// runnable rather than in the default suite because the prefill alone takes
+/// minutes in the test host. Run with `cargo test -p registry -- --ignored`.
+#[test]
+#[ignore = "slow: prefills 10,000 entries; run with --ignored"]
+fn test_directory_scales_to_the_nfr_p_3_size() {
+    assert_directory_accepts_and_pages_after(10_000);
 }
 
 // ─── Storage lifetime ──────────────────────────────────────────────────────
@@ -211,7 +335,8 @@ fn test_register_extends_to_the_network_maximum() {
 
     let max = h.max_ttl();
     assert_eq!(h.ttl_of(&DataKey::Asset(asset)), max);
-    assert_eq!(h.ttl_of(&DataKey::AssetList), max);
+    assert_eq!(h.ttl_of(&DataKey::AssetAt(0)), max);
+    assert_eq!(h.ttl_of(&DataKey::AssetCount), max);
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
 
@@ -229,10 +354,10 @@ fn test_reads_do_not_extend_the_entries_they_touch() {
     // a ledger write; the network-maximum bump on the write path is what keeps
     // the entry alive instead.
     h.client.get_asset(&asset);
-    h.client.list_assets();
+    h.client.list_assets(&0, &MAX_PAGE_SIZE);
 
     assert_eq!(h.ttl_of(&DataKey::Asset(asset)), expected);
-    assert_eq!(h.ttl_of(&DataKey::AssetList), expected);
+    assert_eq!(h.ttl_of(&DataKey::AssetAt(0)), expected);
 }
 
 #[test]

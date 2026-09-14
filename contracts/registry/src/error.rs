@@ -23,4 +23,8 @@ pub enum RegistryError {
     NotInitialized = 2,
     /// No entry exists for the requested contract address.
     AssetNotFound = 3,
+    /// `list_assets` was asked for more than `MAX_PAGE_SIZE` entries.
+    PageTooLarge = 4,
+    /// The directory index would overflow `u32`.
+    Overflow = 5,
 }
