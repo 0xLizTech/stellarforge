@@ -1,4 +1,8 @@
 [toolchain]
-channel = "stable"
+# An exact release, not "stable". The contracts compile to wasm that is
+# deployed and cannot be upgraded (ADR-003), so anyone must be able to rebuild
+# a release from source and get the same bytes (NFR-S-5). Bump it deliberately,
+# in a commit of its own.
+channel = "1.98.1"
 targets = ["wasm32v1-none"]
 components = ["rustfmt", "clippy"]

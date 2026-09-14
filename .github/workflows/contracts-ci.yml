@@ -20,6 +20,9 @@ env:
   RUST_BACKTRACE: 1
   # Keep in step with the soroban-sdk major in Cargo.toml.
   STELLAR_CLI_VERSION: "27.1.0"
+  # sha256 of that version's x86_64-unknown-linux-gnu tarball. Change it with
+  # the version; the install step refuses a mismatch.
+  STELLAR_CLI_SHA256: "9915fe63753d7154c26bb9e6410cf1d1ff9727a9b378e663c2790ab7a266af94"
 
 jobs:
   check:
@@ -28,14 +31,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # rustup installs the exact toolchain, target and components pinned in
+      # rust-toolchain.toml, so CI builds what a release is reproduced from.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32v1-none
-          components: rustfmt, clippy
+        run: rustup toolchain install && rustc --version
 
       - name: Cache cargo registry
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
@@ -51,13 +53,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # rustup installs the exact toolchain, target and components pinned in
+      # rust-toolchain.toml, so CI builds what a release is reproduced from.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32v1-none
+        run: rustup toolchain install && rustc --version
 
       - name: Cache cargo registry
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Run tests
         run: cargo test --all --features testutils
@@ -68,18 +70,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # rustup installs the exact toolchain, target and components pinned in
+      # rust-toolchain.toml, so CI builds what a release is reproduced from.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32v1-none
+        run: rustup toolchain install && rustc --version
 
       - name: Cache cargo registry
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      # Checked against STELLAR_CLI_SHA256 before extraction, so a swapped or
+      # tampered release asset fails here instead of building deployable wasm.
       - name: Install stellar-cli
         run: |
-          curl -sSfL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C /usr/local/bin stellar
+          curl -sSfL -o stellar-cli.tar.gz \
+            "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${STELLAR_CLI_SHA256}  stellar-cli.tar.gz" | sha256sum --check --strict
+          tar xzf stellar-cli.tar.gz -C /usr/local/bin stellar
+          rm stellar-cli.tar.gz
           stellar --version
 
       - name: Build contracts
@@ -89,9 +96,17 @@ jobs:
           stellar contract build --manifest-path contracts/compliance/Cargo.toml
           stellar contract build --manifest-path contracts/governance/Cargo.toml
 
+      # Published with the artifacts, so the hash of a deployed contract's wasm
+      # can be checked against the commit that built it.
+      - name: Record wasm checksums
+        working-directory: target/wasm32v1-none/release
+        run: sha256sum *.wasm | tee SHA256SUMS
+
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v7
         with:
           name: contract-wasm
-          path: target/wasm32v1-none/release/*.wasm
+          path: |
+            target/wasm32v1-none/release/*.wasm
+            target/wasm32v1-none/release/SHA256SUMS
           retention-days: 7

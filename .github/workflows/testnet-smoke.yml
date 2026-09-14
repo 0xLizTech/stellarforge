@@ -21,6 +21,9 @@ permissions:
 env:
   # Keep in step with the soroban-sdk major in Cargo.toml, as contracts-ci does.
   STELLAR_CLI_VERSION: "27.1.0"
+  # sha256 of that version's x86_64-unknown-linux-gnu tarball. Change it with
+  # the version; the install step refuses a mismatch.
+  STELLAR_CLI_SHA256: "9915fe63753d7154c26bb9e6410cf1d1ff9727a9b378e663c2790ab7a266af94"
   NETWORK: testnet
   DEPLOYER: ci-deployer
 
@@ -33,20 +36,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # rustup installs the exact toolchain, target and components pinned in
+      # rust-toolchain.toml, so CI builds what a release is reproduced from.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32v1-none
+        run: rustup toolchain install && rustc --version
 
       - name: Cache cargo registry
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       # Same pinned release tarball contracts-ci uses. Building the CLI from
       # source would add ten minutes for no benefit.
+      # Checked against STELLAR_CLI_SHA256 before extraction, so a swapped or
+      # tampered release asset fails here instead of building deployable wasm.
       - name: Install stellar-cli
         run: |
-          curl -sSfL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C /usr/local/bin stellar
+          curl -sSfL -o stellar-cli.tar.gz \
+            "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${STELLAR_CLI_SHA256}  stellar-cli.tar.gz" | sha256sum --check --strict
+          tar xzf stellar-cli.tar.gz -C /usr/local/bin stellar
+          rm stellar-cli.tar.gz
           stellar --version
 
       # No --global: stellar-cli 27 dropped it, and keys now always land in the
