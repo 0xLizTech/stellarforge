@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { Address, Transaction, nativeToScVal, rpc, xdr } from "@stellar/stellar-sdk";
 
 import { RwaAssetClient, ComplianceClient } from "../src/client.js";
+import { TransactionExpiredError, TransactionOutcomeUnknownError } from "../src/errors.js";
 import { TESTNET_CONFIG } from "../src/types.js";
 import type { StellarForgeConfig } from "../src/types.js";
 import {
@@ -485,13 +486,80 @@ describe("RwaAssetClient write submission", () => {
     );
   });
 
-  it("throws when the transaction never appears", async () => {
+  // IR-05. The RPC has seen a ledger close after the transaction's maxTime and
+  // still does not know the hash, so it can never land and a retry is safe.
+  it("reports a transaction that expired unincluded as safe to retry", async () => {
     stubWritePath({
-      poll: { status: rpc.Api.GetTransactionStatus.NOT_FOUND, txHash: SUBMITTED_HASH },
+      poll: {
+        status: rpc.Api.GetTransactionStatus.NOT_FOUND,
+        txHash: SUBMITTED_HASH,
+        latestLedger: 99,
+        latestLedgerCloseTime: 9_999_999_999,
+      },
+    });
+    const err = await new RwaAssetClient(signerConfig)
+      .mint(ISSUER, HOLDER, 1n)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(TransactionExpiredError);
+    expect((err as TransactionExpiredError).hash).toBe(SUBMITTED_HASH);
+  });
+
+  // IR-05. With no ledger yet past maxTime the transaction may still land, so
+  // a caller that retried on an ordinary failure would execute it twice.
+  it("reports an unsettled transaction as outcome unknown, not as failed", async () => {
+    stubWritePath({
+      poll: {
+        status: rpc.Api.GetTransactionStatus.NOT_FOUND,
+        txHash: SUBMITTED_HASH,
+        latestLedger: 11,
+        latestLedgerCloseTime: 0,
+      },
+    });
+    const err = await new RwaAssetClient(signerConfig)
+      .mint(ISSUER, HOLDER, 1n)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(TransactionOutcomeUnknownError);
+    expect((err as TransactionOutcomeUnknownError).hash).toBe(SUBMITTED_HASH);
+  });
+
+  // IR-05. The stellar-sdk default is 30 attempts, a sixth of the 180-second
+  // validity window every write is built with.
+  it("polls for the transaction's whole validity window", async () => {
+    const stubs = stubWritePath();
+    await new RwaAssetClient(signerConfig).mint(ISSUER, HOLDER, 1n);
+
+    const [hash, opts] = stubs.poll.mock.calls[0] ?? [];
+    expect(hash).toBe(SUBMITTED_HASH);
+    expect(opts?.attempts).toBeGreaterThanOrEqual(180);
+  });
+
+  it("refuses TRY_AGAIN_LATER without polling, since nothing was queued", async () => {
+    const stubs = stubWritePath({
+      send: {
+        status: "TRY_AGAIN_LATER",
+        hash: SUBMITTED_HASH,
+        latestLedger: 10,
+        latestLedgerCloseTime: 0,
+      },
     });
     await expect(new RwaAssetClient(signerConfig).mint(ISSUER, HOLDER, 1n)).rejects.toThrow(
-      /did not succeed: NOT_FOUND/,
+      /TRY_AGAIN_LATER/,
     );
+    expect(stubs.poll).not.toHaveBeenCalled();
+  });
+
+  // DUPLICATE means this exact transaction is already queued, so the right
+  // response is to wait for it, not to report a failure a caller might retry.
+  it("waits for a DUPLICATE submission to settle", async () => {
+    stubWritePath({
+      send: { status: "DUPLICATE", hash: SUBMITTED_HASH, latestLedger: 10, latestLedgerCloseTime: 0 },
+    });
+    await expect(new RwaAssetClient(signerConfig).mint(ISSUER, HOLDER, 1n)).resolves.toEqual({
+      hash: SUBMITTED_HASH,
+      ledger: 42,
+    });
   });
 
   it.each([
