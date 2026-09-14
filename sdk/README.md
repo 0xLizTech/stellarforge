@@ -10,7 +10,7 @@ and `governance`.
 npm install @stellarforge-protocol/sdk
 ```
 
-Requires Node.js 22 or newer, which is what `@stellar/stellar-sdk` requires.
+Requires Node.js 22.12 or newer, which is what `@stellar/stellar-sdk` 17 requires. Its CommonJS build loads ESM-only dependencies with `require()`, and Node supports that without a flag only from 22.12.
 
 ## Reading
 
@@ -47,7 +47,7 @@ browser.
 
 ```typescript
 const tx = await client.buildTransferTx(from, to, toStroops("100", meta.decimals));
-const signedXdr = await freighter.signTransaction(tx.toXDR(), { networkPassphrase });
+const signedXdr = await freighter.signTransaction(tx.toXdr(), { networkPassphrase });
 ```
 
 **The bare method signs and submits**, for server-side automation.

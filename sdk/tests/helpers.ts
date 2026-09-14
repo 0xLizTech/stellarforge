@@ -160,12 +160,26 @@ export interface Invocation {
 
 /** The contract function and decoded arguments of a built transaction. */
 export function builtInvocation(tx: Transaction): Invocation {
-  const op = tx.operations[0] as { func: xdr.HostFunction };
-  const invoked = op.func.invokeContract();
+  const invoked = invocationArgs(tx);
   return {
-    fn: invoked.functionName().toString(),
-    args: invoked.args().map((arg) => scValToNative(arg)),
+    fn: invoked.functionName.toString(),
+    args: invoked.args.map((arg) => scValToNative(arg)),
   };
+}
+
+/**
+ * The contract call made by a built transaction's first operation.
+ *
+ * `xdr.HostFunction` is a discriminated union, so the arm is checked before it
+ * is read. A test inspecting some other kind of host function fails here
+ * instead of passing on whatever that arm happens to hold.
+ */
+export function invocationArgs(tx: Transaction): xdr.InvokeContractArgs {
+  const { func } = tx.operations[0] as { func: xdr.HostFunction };
+  if (func.type !== "hostFunctionTypeInvokeContract") {
+    throw new Error(`Expected a contract invocation, got ${func.type}`);
+  }
+  return func.invokeContract;
 }
 
 /** The contract function and decoded arguments of the simulated transaction. */

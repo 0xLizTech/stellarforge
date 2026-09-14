@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `sdk/tests/smoke.write.testnet.test.ts`, a live write-path smoke test. It runs `mint`, `transfer` (including to a muxed address, checking the event's `to_muxed_id`), `approve`, `transferFrom`, `burnFrom` and `burn` against a deployed `rwa-asset`, asserting before-and-after deltas, and checks that screening refuses an unverified recipient. It has its own opt-in variables and refuses any passphrase but testnet's. The Testnet Smoke workflow now runs it against a fresh deployment with compliance switched on.
 
+### Changed
+
+- **BREAKING:** the SDK depends on `@stellar/stellar-sdk` 17 (Protocol 28), up from 16, and so requires Node.js 22.12 or newer. Transactions returned by `build*Tx` are version 17 objects. `toXdr()` is their current spelling; `toXDR()` remains as a deprecated alias. The SDK's own API is unchanged. The read and write testnet smoke tests pass against this version.
+
 ### Security
 
 - The SDK's build tooling now uses esbuild 0.28 through an npm override, which clears [GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr). tsup 8.5.1, the newest release, still requires esbuild `^0.27`. esbuild is a development dependency only, and the built `dist` output is byte-for-byte identical under both versions, so the published package is unaffected.
