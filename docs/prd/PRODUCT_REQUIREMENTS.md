@@ -253,7 +253,7 @@ Enable investors to prove compliance without revealing identity.
 - Full CI pipeline
 - Internal security review
 - Testnet deployment tooling
-- `@stellarforge/sdk` npm package v0.1.0
+- `@stellarforge-protocol/sdk` npm package v0.1.0
 
 **Out of scope:**
 - Fractionalization, yield, tranching

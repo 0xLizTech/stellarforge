@@ -46,7 +46,7 @@ StellarForge is an open-source, permissionless protocol for **Real World Asset (
          │                                               │
          │              TypeScript SDK                   │
          └───────────────────────────────────────────────┘
-                  @stellarforge/sdk  ·  npm package
+                  @stellarforge-protocol/sdk  ·  npm package
 ```
 
 **Planned modules** (see [ROADMAP.md](ROADMAP.md)):
@@ -142,7 +142,7 @@ STELLAR_ACCOUNT=mykey make deploy-testnet
 ### 6. Use the SDK
 
 ```typescript
-import { RwaAssetClient, toStroops, TESTNET_CONFIG } from "@stellarforge/sdk";
+import { RwaAssetClient, toStroops, TESTNET_CONFIG } from "@stellarforge-protocol/sdk";
 
 const client = new RwaAssetClient({
   ...TESTNET_CONFIG,

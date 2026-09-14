@@ -3,6 +3,12 @@ name: Publish SDK
 # Publishing is deliberately not automatic on merge. It fires when a release is
 # published, or by hand — and the manual path defaults to a dry run, because an
 # npm version number cannot be reused once it is taken.
+#
+# Authentication is npm trusted publishing (OIDC). npm accepts a publish only
+# from this workflow file, in this repository, running in the npm-publish
+# environment. No npm token is stored anywhere, and npm attaches a provenance
+# attestation to every version published this way. See docs/RELEASING.md for
+# the one-time setup on npmjs.com.
 on:
   release:
     types: [published]
@@ -15,26 +21,42 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # OIDC token for npm trusted publishing
 
 jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
-    # Holds NPM_TOKEN behind the environment's protection rules. Configure
-    # required reviewers on `npm-publish` in the repository settings; until
-    # that is done the environment exists but gates nothing.
+    # Runs wait for approval from this environment's required reviewers. The
+    # npm trusted publisher is bound to the same environment name, so a run
+    # outside it cannot publish.
     environment: npm-publish
 
     steps:
       - uses: actions/checkout@v7
 
+      # Node 24 bundles an npm new enough for trusted publishing. The dependency
+      # cache stays off, so a release build never restores state that another
+      # run could have written.
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
-          cache: "npm"
-          cache-dependency-path: sdk/package-lock.json
+          package-manager-cache: false
+
+      # Fail here with a clear message, rather than with an authentication
+      # error at the publish step.
+      - name: Check npm supports trusted publishing
+        run: |
+          node -e '
+            const v = process.argv[1];
+            const [a, b, c] = v.split(".").map(Number);
+            if (a < 11 || (a === 11 && (b < 5 || (b === 5 && c < 1)))) {
+              console.error(`::error::npm ${v} is older than 11.5.1, which trusted publishing requires`);
+              process.exit(1);
+            }
+            console.log(`npm ${v} supports trusted publishing`);
+          ' "$(npm --version)"
 
       - name: Install dependencies
         working-directory: sdk
@@ -79,9 +101,9 @@ jobs:
       - name: Publish
         if: github.event_name == 'release' || inputs.dry_run == false
         working-directory: sdk
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # No token: the npm CLI exchanges this job's OIDC token for a
+        # short-lived publish credential, and adds provenance itself.
+        run: npm publish --access public
 
       - name: Dry run complete
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run

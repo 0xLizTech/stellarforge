@@ -127,7 +127,7 @@ stellarforge/
 │   ├── registry/           # Global registry of deployed asset contracts
 │   ├── compliance/         # KYC/AML record management
 │   └── governance/         # On-chain proposal & voting
-├── sdk/                    # @stellarforge/sdk (TypeScript)
+├── sdk/                    # @stellarforge-protocol/sdk (TypeScript)
 │   ├── src/
 │   │   ├── client.ts       # RwaAssetClient, ComplianceClient
 │   │   ├── types.ts        # Shared data types
