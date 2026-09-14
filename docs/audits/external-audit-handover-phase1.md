@@ -63,12 +63,12 @@ The **Contracts CI** workflow publishes `SHA256SUMS` next to the wasm artifacts 
 **Tests.**
 
 ```bash
-cargo test --workspace                       # 146 contract tests, 1 ignored
+cargo test --workspace                       # 145 contract tests pass; 1 is ignored
 cargo test -p registry -- --ignored          # the 10,000-asset registry test (slow)
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-Per crate, including the ignored test: `rwa-asset` 60, `compliance` 26, `registry` 26, `governance` 34. Live testnet coverage runs in the **Testnet Smoke** workflow (read and write paths, described in `CONTRIBUTING.md`).
+Per crate, counting the ignored test: `rwa-asset` 60, `compliance` 26, `registry` 26, `governance` 34, for 146 in all. Live testnet coverage runs in the **Testnet Smoke** workflow (read and write paths, described in `CONTRIBUTING.md`).
 
 ---
 
