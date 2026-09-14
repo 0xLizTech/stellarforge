@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { Address, Transaction, nativeToScVal, rpc, xdr } from "@stellar/stellar-sdk";
+import { Address, nativeToScVal, Networks, rpc, Transaction, xdr } from "@stellar/stellar-sdk";
 
 import { RwaAssetClient, ComplianceClient } from "../src/client.js";
 import { TransactionExpiredError, TransactionOutcomeUnknownError } from "../src/errors.js";
-import { TESTNET_CONFIG } from "../src/types.js";
+import { MAINNET_CONFIG, TESTNET_CONFIG } from "../src/types.js";
 import type { StellarForgeConfig } from "../src/types.js";
 import {
   RWA_ID,
@@ -591,5 +591,41 @@ describe("RwaAssetClient write submission", () => {
       hash: SUBMITTED_HASH,
       ledger: 42,
     });
+  });
+});
+
+// ─── Network presets ──────────────────────────────────────────────────────────
+
+describe("network presets", () => {
+  it("TESTNET_CONFIG names the testnet passphrase and SDF's public testnet RPC", () => {
+    expect(TESTNET_CONFIG.networkPassphrase).toBe(Networks.TESTNET);
+    expect(TESTNET_CONFIG.rpcUrl).toBe("https://soroban-testnet.stellar.org");
+  });
+
+  // In 0.1.0 MAINNET_CONFIG named https://soroban-rpc.stellar.org, which does
+  // not resolve. There is no public mainnet RPC to default to instead.
+  it("MAINNET_CONFIG names the mainnet passphrase and no RPC endpoint", () => {
+    expect(MAINNET_CONFIG.networkPassphrase).toBe(Networks.PUBLIC);
+    expect("rpcUrl" in MAINNET_CONFIG).toBe(false);
+  });
+
+  it("refuses a config with no rpcUrl, and says where to find one", () => {
+    // @ts-expect-error rpcUrl is required, and MAINNET_CONFIG deliberately has none.
+    const incomplete: StellarForgeConfig = { ...MAINNET_CONFIG, contracts: { rwaAsset: RWA_ID } };
+
+    expect(() => new RwaAssetClient(incomplete)).toThrow(
+      /config\.rpcUrl is required.*docs\/data\/apis\/rpc\/providers/,
+    );
+  });
+
+  it("accepts MAINNET_CONFIG once an RPC URL is supplied", () => {
+    expect(
+      () =>
+        new RwaAssetClient({
+          ...MAINNET_CONFIG,
+          rpcUrl: "https://mainnet-rpc.example.org",
+          contracts: { rwaAsset: RWA_ID },
+        }),
+    ).not.toThrow();
   });
 });

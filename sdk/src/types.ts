@@ -111,8 +111,17 @@ export const TESTNET_CONFIG: Omit<NetworkConfig, "network"> & { network: "testne
   networkPassphrase: "Test SDF Network ; September 2015",
 };
 
-export const MAINNET_CONFIG: Omit<NetworkConfig, "network"> & { network: "mainnet" } = {
+/**
+ * Mainnet's network identity, without an RPC endpoint.
+ *
+ * SDF runs a public RPC for testnet but not for mainnet, so there is no URL the
+ * SDK could honestly default to. Spread this preset and supply `rpcUrl` from the
+ * provider you use: https://developers.stellar.org/docs/data/apis/rpc/providers. TypeScript rejects a config that omits it.
+ *
+ * In 0.1.0 this preset named `https://soroban-rpc.stellar.org`, which does not
+ * resolve, so every mainnet call made with it failed.
+ */
+export const MAINNET_CONFIG: Omit<NetworkConfig, "network" | "rpcUrl"> & { network: "mainnet" } = {
   network: "mainnet",
-  rpcUrl: "https://soroban-rpc.stellar.org",
   networkPassphrase: "Public Global Stellar Network ; September 2015",
 };

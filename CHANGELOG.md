@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING:** the SDK depends on `@stellar/stellar-sdk` 17 (Protocol 28), up from 16, and so requires Node.js 22.12 or newer. Transactions returned by `build*Tx` are version 17 objects. `toXdr()` is their current spelling; `toXDR()` remains as a deprecated alias. The SDK's own API is unchanged. The read and write testnet smoke tests pass against this version.
 
+### Fixed
+
+- **BREAKING:** `MAINNET_CONFIG` no longer includes an `rpcUrl`. In 0.1.0 it named `https://soroban-rpc.stellar.org`, which does not resolve, so every mainnet call made with the preset failed. SDF runs no public mainnet RPC, so there is no URL to default to. Callers now supply `rpcUrl` from an [RPC provider](https://developers.stellar.org/docs/data/apis/rpc/providers). TypeScript rejects a config without one, and the clients throw a message naming where to find one. `TESTNET_CONFIG` is unchanged.
+
 ### Security
 
 - The SDK's build tooling now uses esbuild 0.28 through an npm override, which clears [GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr). tsup 8.5.1, the newest release, still requires esbuild `^0.27`. esbuild is a development dependency only, and the built `dist` output is byte-for-byte identical under both versions, so the published package is unaffected.
