@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-14
+
+First release. The SDK is published to npm as `@stellarforge-protocol/sdk@0.1.0` and tagged `v0.1.0`. The contracts are not deployed to mainnet.
+
 ### Added
 
 - `stellarforge-common` crate centralising the shared storage/TTL policy across all contracts.
@@ -47,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `toStroops` throws on anything but plain decimal notation, on digits beyond `decimals` (except zeros), and on a `number` that is not a safe integer. It used to truncate or guess. `fromStroops` and `toStroops` require `decimals` from 0 to 18, and `hexToBytes32` requires exactly 64 hex digits.
 - **BREAKING:** all four contracts configure themselves in a `__constructor` and no longer expose `initialize`. Deployment and configuration are now one transaction, closing the window in which a deployed contract had no admin and anyone could name themselves. `stellar contract deploy` takes the arguments after `--`; `scripts/deploy.sh` does this for all four and so now initializes what it deploys, which it previously did not.
 - `AlreadyInitialized` and `NotInitialized` are unreachable but retained in every error enum, marked reserved. ADR-003 freezes discriminants, so deleting a variant and letting later ones shift up would silently change what a deployed client believes went wrong.
-- `docs/architecture/002-auth-patterns.md` carries an amendment recording the change, including that constructor `require_auth` is asserted by no test: `Env::register` mocks authorization, and the SDK documents that it cannot be used to test it. The same call was equally unasserted on `initialize`, so nothing regressed.
+- `docs/architecture/002-auth-patterns.md` carries amendments recording the change. The first noted that constructor `require_auth` was asserted by no test, because `Env::register` authorizes the constructor itself. A later one records the `tests/test_constructor_auth.rs` coverage that closed that gap.
 - `sdk/package.json` declares `publishConfig.access: public`. A scoped package defaults to restricted, so the first publish would otherwise have failed or gone private. A `prepack` script copies the repo LICENSE into the package, since npm ships those only from the package root.
 - The four clients now share one `ContractClient` base rather than each carrying its own copy of the RPC server, contract handle, simulation helper and write path.
 - `npm run typecheck` now covers `tests/` as well as `src/`, via a `tsconfig.test.json` that relaxes the `rootDir` the published build depends on. Test files were previously transpiled by vitest but never typechecked, so type errors in them reached no CI gate.
@@ -68,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SF-2026-009: SDK amount and hash helpers silently misread malformed input, and `fromStroops` misrendered zero-decimal and negative amounts (medium).
 - SF-2026-010 to SF-2026-019: the Low and Info findings of the internal review, IR-08 to IR-17. `docs/SECURITY.md` lists each with its fix.
 - `registry.register` no longer duplicates an asset in `list_assets` when an already-registered asset is re-registered.
+- The SDK's `package.json` exports map listed `types` after `import` and `require`, so no resolver used it. Each condition now names its own declaration file first, and `repository.url` is in the form npm expects.
 - `ComplianceClient.isCompliant` asserted the simulation result was present and threw `Cannot read properties of undefined` when it was not. It now reports the missing result the same way `RwaAssetClient` does.
 
 ### Security
