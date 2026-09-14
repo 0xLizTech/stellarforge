@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `oracle-adapter` contract, the first Phase 2 contract: a SEP-40 price feed for net asset values (ADR-005). It implements SEP-40's consumer interface (`base`, `assets`, `decimals`, `resolution`, `price`, `prices`, `lastprice`), so a consumer reads it the same way as any SEP-40 oracle.
+  - The admin lists assets and authorizes reporters per asset.
+  - History is append-only, one price per resolution tick.
+  - A report may move the price at most the asset's `max_deviation_bps`. A larger move needs the admin's `override_price`, which publishes its own event.
+  - Staleness is left to the consumer, as SEP-40 specifies.
+  - Not yet in `scripts/deploy.sh` or the SDK.
 - `docs/audits/external-audit-handover-phase1.md`, the handover for the Phase 1 external audit. It covers scope, how to rebuild the audited wasm, the trust model, the invariants to test, the deliberate design choices, and how the PRD relates to Phase 1.
 
 ### Changed

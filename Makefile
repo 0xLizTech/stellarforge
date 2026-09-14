@@ -15,6 +15,7 @@ build:
 	$(STELLAR_CLI) contract build --manifest-path contracts/registry/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/compliance/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/governance/Cargo.toml
+	$(STELLAR_CLI) contract build --manifest-path contracts/oracle-adapter/Cargo.toml
 	@echo "Build complete. Artifacts in target/wasm32v1-none/release/"
 
 test:

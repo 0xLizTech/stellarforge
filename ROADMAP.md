@@ -49,8 +49,9 @@ This document describes the planned evolution of the StellarForge protocol acros
   - Snapshot-based distribution (balance at ledger N)
   - Multi-currency yield (XLM, USDC)
   - Unclaimed yield reclaim after configurable timeout
-- [ ] **`oracle` adapter contract:** Standardized interface for price/NAV feeds (Pyth, Band, custom)
-- [ ] SDK: write-path helpers for mint, burn, transfer, approve
+- [x] **`oracle-adapter` contract:** Standardized interface for price/NAV feeds. SEP-40, so Reflector and custom feeds read the same way; Pyth and Band wrappers when an asset needs them (ADR-005)
+- [ ] SDK and deploy script: oracle adapter
+- [x] SDK: write-path helpers for mint, burn, transfer, approve (0.2.0), plus sponsored writes (0.3.0)
 - [ ] SDK: vault and yield-distributor clients
 - [ ] Automated testnet deployment with deterministic contract IDs
 - [ ] External security audit (Phase 1 + Phase 2 scope)

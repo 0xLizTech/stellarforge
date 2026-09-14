@@ -68,7 +68,8 @@ stellarforge/
 │   ├── rwa-asset/          # Core tokenization contract (Soroban/Rust)
 │   ├── registry/           # Global asset registry
 │   ├── compliance/         # KYC/AML compliance engine
-│   └── governance/         # On-chain governance
+│   ├── governance/         # On-chain governance
+│   └── oracle-adapter/     # SEP-40 NAV price feed (Phase 2)
 ├── sdk/
 │   ├── src/
 │   │   ├── client.ts       # Contract interaction clients
@@ -276,6 +277,32 @@ the admin's directory, not as proof that an asset is genuine or current.
 > applies no quorum. Governance is a skeleton until the `SFORGE` token and
 > execution hooks land in Phase 3 — do not treat a passed proposal as a
 > trustworthy signal before then.
+
+### Oracle Adapter (Phase 2)
+
+A SEP-40 price feed for net asset values, which market oracles don't publish.
+The read functions are SEP-40's, so anything that reads a SEP-40 oracle reads
+this one. Prices are scaled by `10^decimals()` and timestamped in Unix seconds,
+rounded down to `resolution()`. See [ADR-005](docs/architecture/005-oracle-adapter.md).
+
+| Function | Auth | Description |
+|---|---|---|
+| `report(reporter, asset, price, timestamp)` | reporter | Record a price; the reporter must be authorized for the asset, the tick must be later than the latest, and the move must be within the asset's limit |
+| `override_price(asset, price, timestamp)` | admin | Record a price beyond the deviation limit; every other rule still applies |
+| `add_asset(asset, max_deviation_bps)` | admin | List an asset, up to 100 |
+| `set_max_deviation(asset, max_deviation_bps)` | admin | Change an asset's deviation limit |
+| `set_reporter(asset, reporter, allowed)` | admin | Grant or revoke a reporter for one asset |
+| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `lastprice(asset)` | — | Most recent price (SEP-40) |
+| `price(asset, timestamp)` | — | Price in the tick containing `timestamp` (SEP-40) |
+| `prices(asset, records)` | — | Up to 20 most recent prices, newest first (SEP-40) |
+| `base()`, `assets()`, `decimals()`, `resolution()` | — | Feed configuration (SEP-40) |
+| `admin()`, `is_reporter(asset, reporter)`, `asset_config(asset)` | — | Roles and limits |
+
+> **Freshness is the consumer's check.** The feed never refuses to return an
+> old price. Compare `timestamp` against the ledger time before relying on it.
+> The admin can record any price through `override_price`, so a feed's admin
+> should be a multisig.
 
 **Events.** Every state-changing entry point publishes a Soroban event whose
 first topic is the entry point's name, so admin handovers, issuer grants,
