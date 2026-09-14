@@ -338,15 +338,20 @@ impl RwaAssetContract {
     pub fn update_metadata(env: Env, metadata: AssetMetadata) {
         Self::require_admin(&env);
         Self::validate_metadata(&env, &metadata);
+        Self::validate_metadata_change(&env, &Self::metadata(env.clone()), &metadata);
         env.storage()
             .persistent()
             .set(&DataKey::Metadata, &metadata);
+
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::Metadata);
     }
 
     pub fn transfer_admin(env: Env, new_admin: Address) {
         Self::require_admin(&env);
         new_admin.require_auth();
         env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        extend_instance(&env);
     }
 
     // ── Compliance Configuration ──────────────────────────────────────────────
@@ -418,6 +423,29 @@ impl RwaAssetContract {
             || metadata.name.is_empty()
         {
             panic_with_error!(env, RwaError::InvalidMetadata);
+        }
+    }
+
+    /// Rejects a metadata change that would alter what holders already own.
+    ///
+    /// `validate_metadata` judges a value in isolation; this judges it against
+    /// the asset as it stands. Without it the admin could re-denominate every
+    /// balance or lift the supply cap in one silent call (IR-02), a narrower
+    /// form of the "rewrite the rules at any time" power ADR-003 declined to
+    /// ship as an upgrade entry point.
+    fn validate_metadata_change(env: &Env, current: &AssetMetadata, next: &AssetMetadata) {
+        // Balances are stored in base units, so a different `decimals` changes
+        // the size of every position without moving a single token.
+        if next.decimals != current.decimals {
+            panic_with_error!(env, RwaError::DecimalsImmutable);
+        }
+
+        // A cap may move, but never below what is already in circulation, and
+        // once set it may never be lifted to uncapped.
+        let lifts_cap = current.max_supply > 0 && next.max_supply == 0;
+        let below_supply = next.max_supply > 0 && next.max_supply < Self::total_supply(env.clone());
+        if lifts_cap || below_supply {
+            panic_with_error!(env, RwaError::InvalidSupplyCap);
         }
     }
 
