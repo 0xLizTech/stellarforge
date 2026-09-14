@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The SDK's build tooling now uses esbuild 0.28 through an npm override, which clears [GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr). tsup 8.5.1, the newest release, still requires esbuild `^0.27`. esbuild is a development dependency only, and the built `dist` output is byte-for-byte identical under both versions, so the published package is unaffected.
+
 ## [0.1.0] - 2026-09-14
 
 First release. The SDK is published to npm as `@stellarforge-protocol/sdk@0.1.0` and tagged `v0.1.0`. The contracts are not deployed to mainnet.
