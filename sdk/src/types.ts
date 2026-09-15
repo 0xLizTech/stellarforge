@@ -48,6 +48,7 @@ export interface ContractAddresses {
   compliance?: string;
   governance?: string;
   vault?: string;
+  oracleAdapter?: string;
 }
 
 export interface StellarForgeConfig extends NetworkConfig {

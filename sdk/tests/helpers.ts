@@ -29,6 +29,7 @@ export const RWA_ID = StrKey.encodeContract(Buffer.alloc(32, 1));
 export const COMPLIANCE_ID = StrKey.encodeContract(Buffer.alloc(32, 2));
 export const REGISTRY_ID = StrKey.encodeContract(Buffer.alloc(32, 5));
 export const GOVERNANCE_ID = StrKey.encodeContract(Buffer.alloc(32, 6));
+export const ORACLE_ID = StrKey.encodeContract(Buffer.alloc(32, 9));
 
 export const HOLDER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 3));
 export const SPENDER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 4));
