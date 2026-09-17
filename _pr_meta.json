@@ -1,0 +1,10 @@
+{
+  "repo": "0xLizTech/stellarforge",
+  "number": 65,
+  "base": "main",
+  "head": "feat/sdk-oracle-adapter-client",
+  "fork": "VedantMadane/stellarforge",
+  "title": "feat(sdk): add OracleAdapterClient for SEP-40 price feeds",
+  "url": "https://github.com/0xLizTech/stellarforge/pull/65",
+  "rebased": true
+}

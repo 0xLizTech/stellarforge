@@ -411,3 +411,13 @@ describe("OracleErrorCode enum", () => {
     expect(OracleErrorCode.Overflow).toBe(13);
   });
 });
+
+
+describe("Oracle asset encoding", () => {
+  it("round-trips stellar and other assets", () => {
+    const stellar = { type: "stellar" as const, address: RWA_ID };
+    const other = { type: "other" as const, symbol: "USD" };
+    expect(scValToAsset(assetToScVal(stellar))).toEqual(stellar);
+    expect(scValToAsset(assetToScVal(other))).toEqual(other);
+  });
+});
