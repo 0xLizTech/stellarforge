@@ -158,6 +158,7 @@ fn test_constructor_initial_state() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #2)")]
 fn test_constructor_rejects_zero_exchange_rate() {
     let env = Env::default();
     env.mock_all_auths();
@@ -175,11 +176,11 @@ fn test_constructor_rejects_zero_exchange_rate() {
         min_compliance_level: 0,
     };
 
-    let res = env.register_at(&Address::generate(&env), VaultContract, (&admin, &config));
-    assert_eq!(res, Err(Ok(VaultError::InvalidExchangeRate.into())));
+    env.register(VaultContract, (&admin, &config));
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #3)")]
 fn test_constructor_rejects_negative_max_supply() {
     let env = Env::default();
     env.mock_all_auths();
@@ -197,11 +198,11 @@ fn test_constructor_rejects_negative_max_supply() {
         min_compliance_level: 0,
     };
 
-    let res = env.register_at(&Address::generate(&env), VaultContract, (&admin, &config));
-    assert_eq!(res, Err(Ok(VaultError::InvalidMaxSupply.into())));
+    env.register(VaultContract, (&admin, &config));
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #4)")]
 fn test_constructor_rejects_excessive_lockup() {
     let env = Env::default();
     env.mock_all_auths();
@@ -219,11 +220,11 @@ fn test_constructor_rejects_excessive_lockup() {
         min_compliance_level: 0,
     };
 
-    let res = env.register_at(&Address::generate(&env), VaultContract, (&admin, &config));
-    assert_eq!(res, Err(Ok(VaultError::InvalidLockup.into())));
+    env.register(VaultContract, (&admin, &config));
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #5)")]
 fn test_constructor_rejects_empty_name() {
     let env = Env::default();
     env.mock_all_auths();
@@ -241,11 +242,11 @@ fn test_constructor_rejects_empty_name() {
         min_compliance_level: 0,
     };
 
-    let res = env.register_at(&Address::generate(&env), VaultContract, (&admin, &config));
-    assert_eq!(res, Err(Ok(VaultError::InvalidMetadata.into())));
+    env.register(VaultContract, (&admin, &config));
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #5)")]
 fn test_constructor_rejects_empty_symbol() {
     let env = Env::default();
     env.mock_all_auths();
@@ -263,11 +264,11 @@ fn test_constructor_rejects_empty_symbol() {
         min_compliance_level: 0,
     };
 
-    let res = env.register_at(&Address::generate(&env), VaultContract, (&admin, &config));
-    assert_eq!(res, Err(Ok(VaultError::InvalidMetadata.into())));
+    env.register(VaultContract, (&admin, &config));
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #6)")]
 fn test_constructor_rejects_non_token_underlying() {
     let env = Env::default();
     env.mock_all_auths();
@@ -285,8 +286,7 @@ fn test_constructor_rejects_non_token_underlying() {
         min_compliance_level: 0,
     };
 
-    let res = env.register_at(&Address::generate(&env), VaultContract, (&admin, &config));
-    assert_eq!(res, Err(Ok(VaultError::InvalidUnderlying.into())));
+    env.register(VaultContract, (&admin, &config));
 }
 
 // ─── 2. Emergency Pause & Admin Handover Tests ────────────────────────────────
@@ -464,7 +464,10 @@ fn test_transfer_from_refused_for_locked_owner() {
     );
 
     h.env.ledger().set_timestamp(lock_expiry);
-    assert!(h.client.try_transfer_from(&spender, &alice, &bob, &100).is_ok());
+    assert!(h
+        .client
+        .try_transfer_from(&spender, &alice, &bob, &100)
+        .is_ok());
     assert_eq!(h.client.balance(&bob), 100);
     assert_eq!(h.client.allowance(&alice, &spender), 200);
 }
@@ -582,16 +585,14 @@ fn test_internal_mint_and_burn_helpers() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #15)")]
 fn test_internal_mint_exceeds_max_supply_rejected() {
     let h = default_setup();
     let alice = Address::generate(&h.env);
 
-    let res = h.env.as_contract(&h.contract_id, || {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            VaultContract::mint_shares(&h.env, &alice, 1_000_000_001);
-        }))
+    h.env.as_contract(&h.contract_id, || {
+        VaultContract::mint_shares(&h.env, &alice, 1_000_000_001);
     });
-    assert!(res.is_err());
 }
 
 // ─── 8. Storage TTL Policy ───────────────────────────────────────────────────
@@ -599,8 +600,8 @@ fn test_internal_mint_exceeds_max_supply_rejected() {
 #[test]
 fn test_storage_instance_ttl_bumped() {
     let h = default_setup();
-    let instance_ttl = h.env.as_contract(&h.contract_id, || {
-        h.env.storage().instance().get_ttl()
-    });
-    assert!(instance_ttl >= INSTANCE_BUMP_AMOUNT - 100);
+    let instance_ttl = h
+        .env
+        .as_contract(&h.contract_id, || h.env.storage().instance().get_ttl());
+    assert_eq!(instance_ttl, INSTANCE_BUMP_AMOUNT);
 }
