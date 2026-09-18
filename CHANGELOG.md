@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `contracts/vault` contract foundation, the cornerstone Phase 2 vault contract (ADR-006, #57).
+  - Deployment configuration (`VaultConfig`) with constructor admin auth (IR-17), immutable share decimals from the underlying token, and initial state.
+  - Emergency pause (`set_paused`) taking effect in the same ledger (NFR-R-2) and dual-auth admin handover (`transfer_admin`, NFR-S-4).
+  - SEP-41 share token with per-holder lock-ups (`locked_until`), compliance screening on every transfer, muxed address support, and allowance management.
+  - Deliberately omits public `burn` or `burn_from` to protect vault asset backing invariants.
+  - Central internal write path (`write_balance`, `mint_shares`, `burn_shares`) for upcoming deposit/redeem (#58) and balance checkpoints (#60).
 - `oracle-adapter` contract, the first Phase 2 contract: a SEP-40 price feed for net asset values (ADR-005). It implements SEP-40's consumer interface (`base`, `assets`, `decimals`, `resolution`, `price`, `prices`, `lastprice`), so a consumer reads it the same way as any SEP-40 oracle.
   - The admin lists assets and authorizes reporters per asset.
   - History is append-only, one price per resolution tick.
