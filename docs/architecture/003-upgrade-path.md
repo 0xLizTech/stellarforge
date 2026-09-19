@@ -49,7 +49,7 @@ Every `#[contracterror]` enum pins its variants with `#[repr(u32)]` and explicit
 
 > Discriminants are part of the contract's public interface: clients match on the numeric code, so existing variants must keep their values and new ones must be appended. Renumbering silently changes what a deployed client believes went wrong.
 
-The current allocations are `RwaError` 1–14, `GovernanceError` 1–11, `RegistryError` 1–5, `ComplianceError` 1–5, and for Phase 2 `OracleError` 1–13.
+The current allocations are `RwaError` 1–14, `GovernanceError` 1–11, `RegistryError` 1–5, `ComplianceError` 1–5, and for Phase 2 `OracleError` 1–13 and `VaultError` 1–15.
 
 The word doing the work is *silently*. A renumbered variant does not break a build or fail a test. A deployed SDK that maps 11 to "not compliant" keeps mapping 11 to "not compliant", and simply starts telling people the wrong thing about why their transfer failed. Nothing anywhere reports an error, which is the property that makes this worth an ADR rather than a comment.
 

@@ -64,12 +64,15 @@ The reasoning is ADR-001's, applied: a KYC record is written once and read forev
 
 | Operation | Screened |
 |---|---|
-| `mint` | `to` |
-| `transfer` | `from` and `to` |
-| `transfer_from` | `from` and `to` |
-| `burn` | nobody |
-| `burn_from` | nobody |
-| `approve` | nobody |
+| `rwa-asset.mint` | `to` |
+| `rwa-asset.transfer` | `from` and `to` |
+| `rwa-asset.transfer_from` | `from` and `to` |
+| `rwa-asset.burn` | nobody |
+| `rwa-asset.burn_from` | nobody |
+| `rwa-asset.approve` | nobody |
+| `vault.transfer` | `from` and `to` |
+| `vault.transfer_from` | `from` and `to` |
+| `vault.approve` | nobody |
 
 `transfer_from` screens the owner and the recipient, not the spender. The spender moves value it does not own; the parties to the movement are the ones a regulator cares about.
 
