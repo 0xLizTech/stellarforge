@@ -14,6 +14,8 @@
 mod compliance;
 mod error;
 mod events;
+#[cfg(test)]
+mod test;
 mod token;
 
 pub use compliance::{ComplianceClient, ComplianceInterface};
@@ -352,6 +354,7 @@ impl VaultContract {
     }
 
     /// Internal share mint helper for deposit operations (#58).
+    #[allow(dead_code)] // Called by deposit (#58) and balance checkpoints (#60)
     pub(crate) fn mint_shares(env: &Env, to: &Address, amount: i128) {
         Self::require_positive(env, amount);
         let total = Self::total_supply(env.clone());
@@ -375,6 +378,7 @@ impl VaultContract {
     }
 
     /// Internal share burn helper for redeem operations (#58).
+    #[allow(dead_code)] // Called by redeem (#58) and balance checkpoints (#60)
     pub(crate) fn burn_shares(env: &Env, from: &Address, amount: i128) {
         Self::require_positive(env, amount);
         let bal = Self::balance(env.clone(), from.clone());
@@ -395,6 +399,7 @@ impl VaultContract {
     }
 
     /// Internal helper to update underlying held balance for deposit/redeem (#58).
+    #[allow(dead_code)] // Called by deposit and redeem (#58)
     pub(crate) fn set_underlying_held(env: &Env, amount: i128) {
         env.storage()
             .persistent()
@@ -404,6 +409,7 @@ impl VaultContract {
     }
 
     /// Internal helper to set lock-up timestamp for a holder.
+    #[allow(dead_code)] // Called by deposit lock-up enforcement (#58)
     pub(crate) fn set_locked_until(env: &Env, holder: &Address, until: u64) {
         let key = DataKey::LockedUntil(holder.clone());
         env.storage().persistent().set(&key, &until);
@@ -496,6 +502,7 @@ impl VaultContract {
         }
     }
 
+    #[allow(dead_code)] // Called by burn_shares for redeem (#58)
     fn checked_sub(env: &Env, a: i128, b: i128) -> i128 {
         match a.checked_sub(b) {
             Some(v) => v,

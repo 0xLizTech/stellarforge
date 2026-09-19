@@ -4,15 +4,15 @@ use soroban_sdk::{
     contract, contractimpl,
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Ledger,
+        Address as _, Events as _, Ledger, MuxedAddress as _,
     },
     Address, Env, MuxedAddress, String,
 };
 
-use compliance::{ComplianceContract, ComplianceContractClient};
+use compliance::{ComplianceContract, ComplianceContractClient, KycRecord};
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 use vault::{
-    events, DataKey, VaultConfig, VaultContract, VaultContractClient, VaultError, MAX_LOCKUP_SECS,
+    DataKey, Transfer, VaultConfig, VaultContract, VaultContractClient, VaultError, MAX_LOCKUP_SECS,
 };
 
 // ─── Test Helpers & Fixtures ──────────────────────────────────────────────────
@@ -491,29 +491,59 @@ fn test_compliance_screening_enforced() {
         Err(Ok(VaultError::NotCompliant.into()))
     );
     assert_eq!(h.client.balance(&alice), 1000);
+    assert_eq!(h.client.balance(&bob), 0);
 
     // Set Alice compliant (level 2) but Bob unverified -> fails.
     comp_client.set_kyc(
         &alice,
-        &String::from_str(&h.env, "US"),
-        &2,
-        &0, // never expires
+        &KycRecord {
+            jurisdiction: String::from_str(&h.env, "US"),
+            level: 2,
+            expires_at: 0, // never expires
+        },
     );
     assert_eq!(
         h.client.try_transfer(&alice, &muxed_bob, &100),
         Err(Ok(VaultError::NotCompliant.into()))
     );
+    assert_eq!(h.client.balance(&alice), 1000);
+    assert_eq!(h.client.balance(&bob), 0);
 
     // Set Bob to level 1 (below min level 2) -> fails.
-    comp_client.set_kyc(&bob, &String::from_str(&h.env, "US"), &1, &0);
+    comp_client.set_kyc(
+        &bob,
+        &KycRecord {
+            jurisdiction: String::from_str(&h.env, "US"),
+            level: 1,
+            expires_at: 0,
+        },
+    );
     assert_eq!(
         h.client.try_transfer(&alice, &muxed_bob, &100),
         Err(Ok(VaultError::NotCompliant.into()))
     );
+    assert_eq!(h.client.balance(&alice), 1000);
+    assert_eq!(h.client.balance(&bob), 0);
 
     // Set Bob to level 2 -> transfer succeeds.
-    comp_client.set_kyc(&bob, &String::from_str(&h.env, "US"), &2, &0);
+    comp_client.set_kyc(
+        &bob,
+        &KycRecord {
+            jurisdiction: String::from_str(&h.env, "US"),
+            level: 2,
+            expires_at: 0,
+        },
+    );
     assert!(h.client.try_transfer(&alice, &muxed_bob, &100).is_ok());
+    assert_eq!(h.client.balance(&alice), 900);
+    assert_eq!(h.client.balance(&bob), 100);
+
+    // Revoke Alice -> transfer fails and changes no state.
+    comp_client.revoke_kyc(&alice);
+    assert_eq!(
+        h.client.try_transfer(&alice, &muxed_bob, &100),
+        Err(Ok(VaultError::NotCompliant.into()))
+    );
     assert_eq!(h.client.balance(&alice), 900);
     assert_eq!(h.client.balance(&bob), 100);
 }
@@ -539,15 +569,23 @@ fn test_muxed_transfer_credits_base_account() {
     let bob = Address::generate(&h.env);
     h.set_balance(&alice, 1000);
 
-    let muxed = MuxedAddress::Muxed {
-        id: 9999,
-        address: bob.clone(),
-    };
+    let muxed = <MuxedAddress as soroban_sdk::testutils::MuxedAddress>::new(bob.clone(), 9999);
 
     h.client.transfer(&alice, &muxed, &300);
 
     assert_eq!(h.client.balance(&alice), 700);
     assert_eq!(h.client.balance(&bob), 300);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![Transfer {
+            from: alice,
+            to: bob,
+            amount: 300,
+            to_muxed_id: Some(9999),
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
 }
 
 #[test]
@@ -560,42 +598,13 @@ fn test_self_transfer_is_noop() {
     h.client.transfer(&alice, &muxed, &300);
 
     assert_eq!(h.client.balance(&alice), 1000);
+    assert!(
+        h.env.events().all().events().is_empty(),
+        "self-transfer no-op published an event"
+    );
 }
 
-// ─── 7. Internal Mint/Burn Helpers Tests ───────────────────────────────────────
-
-#[test]
-fn test_internal_mint_and_burn_helpers() {
-    let h = default_setup();
-    let alice = Address::generate(&h.env);
-
-    h.env.as_contract(&h.contract_id, || {
-        VaultContract::mint_shares(&h.env, &alice, 500);
-    });
-
-    assert_eq!(h.client.balance(&alice), 500);
-    assert_eq!(h.client.total_supply(), 500);
-
-    h.env.as_contract(&h.contract_id, || {
-        VaultContract::burn_shares(&h.env, &alice, 200);
-    });
-
-    assert_eq!(h.client.balance(&alice), 300);
-    assert_eq!(h.client.total_supply(), 300);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #15)")]
-fn test_internal_mint_exceeds_max_supply_rejected() {
-    let h = default_setup();
-    let alice = Address::generate(&h.env);
-
-    h.env.as_contract(&h.contract_id, || {
-        VaultContract::mint_shares(&h.env, &alice, 1_000_000_001);
-    });
-}
-
-// ─── 8. Storage TTL Policy ───────────────────────────────────────────────────
+// ─── 7. Storage TTL Policy ───────────────────────────────────────────────────
 
 #[test]
 fn test_storage_instance_ttl_bumped() {
