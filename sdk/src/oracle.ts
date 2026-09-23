@@ -2,9 +2,13 @@ import { nativeToScVal, scValToNative, xdr } from "@stellar/stellar-sdk";
 
 import type { Transaction } from "@stellar/stellar-sdk";
 
-import { ContractClient } from "./base.js";
+import { ContractClient, unwrapEnumVariant } from "./base.js";
 import type { SponsoredTransaction } from "./sponsored.js";
 import type { StellarForgeConfig, TxResult } from "./types.js";
+
+/** Inclusive i128 bounds used by the oracle-adapter contract. */
+const I128_MAX = (1n << 127n) - 1n;
+const I128_MIN = -(1n << 127n);
 
 // ─── Oracle Types ─────────────────────────────────────────────────────────────
 
@@ -83,15 +87,19 @@ export function assetToScVal(asset: OracleAsset): xdr.ScVal {
 }
 
 /**
- * Decodes an ScVal into an `OracleAsset`.
+ * Decodes a native `scValToNative` value into an `OracleAsset`.
+ *
+ * Shared by {@link scValToAsset} and any path that already holds the decoded
+ * tuple, so both enforce the same tag/payload checks. The tag is unwrapped the
+ * same way {@link unwrapEnumVariant} handles unit enums.
  */
-export function scValToAsset(val: xdr.ScVal): OracleAsset {
-  const native = scValToNative(val) as unknown;
+export function nativeToAsset(native: unknown): OracleAsset {
   if (!Array.isArray(native) || native.length < 2) {
     throw new Error(`Expected tuple enum variant for Asset, got ${JSON.stringify(native)}`);
   }
 
-  const [tag, payload] = native;
+  const tag = unwrapEnumVariant(native[0]);
+  const payload = native[1];
   if (tag === "Stellar" && typeof payload === "string") {
     return { type: "stellar", address: payload };
   }
@@ -100,6 +108,13 @@ export function scValToAsset(val: xdr.ScVal): OracleAsset {
   }
 
   throw new Error(`Unrecognized Asset variant: ${JSON.stringify(native)}`);
+}
+
+/**
+ * Decodes an ScVal into an `OracleAsset`.
+ */
+export function scValToAsset(val: xdr.ScVal): OracleAsset {
+  return nativeToAsset(scValToNative(val));
 }
 
 function decodePriceData(native: unknown): PriceData {
@@ -127,9 +142,57 @@ export function tickOf(timestamp: bigint, resolution: number): bigint {
 }
 
 /**
+ * Thrown by {@link checkDeviation} when an intermediate product exceeds i128,
+ * matching the contract's `OracleError::Overflow` panic.
+ */
+export class OracleOverflowError extends Error {
+  readonly code = OracleErrorCode.Overflow;
+
+  constructor(message = "Oracle deviation check overflowed i128") {
+    super(message);
+    this.name = "OracleOverflowError";
+  }
+}
+
+/**
+ * Thrown by {@link checkDeviation} when `maxDeviationBps` is 0, matching the
+ * contract's `OracleError::InvalidDeviation` (the feed never stores a zero limit).
+ */
+export class OracleInvalidDeviationError extends Error {
+  readonly code = OracleErrorCode.InvalidDeviation;
+
+  constructor(message = "maxDeviationBps must be at least 1") {
+    super(message);
+    this.name = "OracleInvalidDeviationError";
+  }
+}
+
+/**
+ * Multiplies two integers and throws {@link OracleOverflowError} if the product
+ * would not fit in a signed 128-bit integer, matching Soroban's `checked_mul`.
+ */
+function checkedMulI128(a: bigint, b: bigint): bigint {
+  const product = a * b;
+  if (product > I128_MAX || product < I128_MIN) {
+    throw new OracleOverflowError();
+  }
+  return product;
+}
+
+function assertNonNegativeInteger(name: string, value: number): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative integer, got ${value}`);
+  }
+}
+
+/**
  * Checks whether a proposed next price is within `maxDeviationBps` of previous price.
  *
- * Implements exact integer arithmetic without floating point rounding:
+ * Mirrors the contract's `record` deviation check: rejects `maxDeviationBps = 0`
+ * ({@link OracleInvalidDeviationError}), and throws {@link OracleOverflowError}
+ * when `diff * 10_000` or `previous * maxDeviationBps` exceeds i128.
+ *
+ * Exact integer arithmetic without floating point:
  * `|next - previous| * 10_000 <= previous * maxDeviationBps`
  */
 export function checkDeviation(
@@ -143,13 +206,20 @@ export function checkDeviation(
   if (next <= 0n) {
     throw new RangeError(`next price must be positive, got ${next}`);
   }
-  if (maxDeviationBps < 0) {
-    throw new RangeError(`maxDeviationBps cannot be negative, got ${maxDeviationBps}`);
+  if (!Number.isInteger(maxDeviationBps) || maxDeviationBps < 0) {
+    throw new RangeError(`maxDeviationBps must be a non-negative integer, got ${maxDeviationBps}`);
+  }
+  if (maxDeviationBps === 0) {
+    throw new OracleInvalidDeviationError(
+      `maxDeviationBps must be at least 1 (InvalidDeviation), got ${maxDeviationBps}`,
+    );
   }
 
+  // Contract: moved = (price - latest).abs(); both prices are positive so the
+  // subtraction cannot overflow i128, then checked_mul for both sides.
   const diff = next >= previous ? next - previous : previous - next;
-  const lhs = diff * BPS_DENOMINATOR;
-  const rhs = previous * BigInt(maxDeviationBps);
+  const lhs = checkedMulI128(diff, BPS_DENOMINATOR);
+  const rhs = checkedMulI128(previous, BigInt(maxDeviationBps));
   return lhs <= rhs;
 }
 
@@ -158,6 +228,8 @@ export function checkDeviation(
  * Rejects records timestamped in the future.
  */
 export function isFresh(price: PriceData, maxAgeSecs: number, nowSecs: number): boolean {
+  assertNonNegativeInteger("maxAgeSecs", maxAgeSecs);
+  assertNonNegativeInteger("nowSecs", nowSecs);
   const now = BigInt(nowSecs);
   const maxAge = BigInt(maxAgeSecs);
   if (price.timestamp > now) {
@@ -213,14 +285,12 @@ export class OracleAdapterClient extends ContractClient {
    */
   async assets(): Promise<OracleAsset[]> {
     const result = await this.simulateReadOnly("assets", []);
-    const native = scValToNative(result) as unknown[];
-    return native.map((entry) => {
-      const [tag, payload] = entry as [string, string];
-      if (tag === "Stellar") {
-        return { type: "stellar", address: payload };
-      }
-      return { type: "other", symbol: payload };
-    });
+    const native = scValToNative(result) as unknown;
+    if (!Array.isArray(native)) {
+      throw new Error(`Expected assets vec, got ${JSON.stringify(native)}`);
+    }
+    // Decode each entry through the shared Asset decoder (same checks as scValToAsset).
+    return native.map((entry) => nativeToAsset(entry));
   }
 
   /**

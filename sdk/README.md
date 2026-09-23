@@ -3,8 +3,8 @@
 TypeScript client for the [StellarForge](https://github.com/0xLizTech/stellarforge)
 Real World Asset tokenization protocol on Stellar/Soroban.
 
-Clients for all four Phase 1 contracts: `rwa-asset`, `compliance`, `registry`
-and `governance`.
+Clients for the Phase 1 contracts (`rwa-asset`, `compliance`, `registry`,
+`governance`) and the Phase 2 `oracle-adapter` SEP-40 price feed.
 
 ```bash
 npm install @stellarforge-protocol/sdk
@@ -100,6 +100,7 @@ Two things worth knowing before you use either:
 | `RegistryClient` | `registry` | Asset directory, paged with `listAssets(start, limit)` or walked with `listAllAssets()`; `register` and `setActive` are admin-only |
 | `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
 | `VaultClient` | `vault` | Real estate / RWA share vault: config, balances, historical checkpoints, NAV, sponsored deposits/redeems, and typed event decoders |
+| `OracleAdapterClient` | `oracle-adapter` | SEP-40 NAV feed — **see [Oracle adapter](#oracle-adapter)** |
 
 ## Vault & Auth-Tree Verification
 
@@ -156,6 +157,73 @@ for (const event of events) {
   }
 }
 ```
+
+## Oracle adapter
+
+`OracleAdapterClient` talks to the Phase 2 `oracle-adapter` contract: a SEP-40
+price feed appraisers report NAV into. Set `contracts.oracleAdapter` to the
+deployed contract id.
+
+```typescript
+import {
+  OracleAdapterClient,
+  TESTNET_CONFIG,
+  tickOf,
+  checkDeviation,
+  isFresh,
+  toDecimalString,
+  authorizeEntries,
+  DEFAULT_AUTH_VALIDITY_LEDGERS,
+} from "@stellarforge-protocol/sdk";
+
+const client = new OracleAdapterClient({
+  ...TESTNET_CONFIG,
+  contracts: { oracleAdapter: "C..." },
+});
+
+const base = await client.base(); // { type: "other", symbol: "USD" }
+const last = await client.lastprice({ type: "stellar", address: rwaId });
+const config = await client.assetConfig({ type: "stellar", address: rwaId });
+
+// Pure helpers mirror the contract's tick rounding and deviation check.
+const tick = tickOf(observedAtSecs, await client.resolution());
+const withinLimit = last && config
+  ? checkDeviation(last.price, nextPrice, config.maxDeviationBps)
+  : true;
+```
+
+**Reads:** `base`, `assets`, `decimals`, `resolution`, `price`, `prices`,
+`lastprice` (SEP-40), plus `admin`, `isReporter`, `assetConfig`. Missing
+optional prices decode as `null`.
+
+**Writes**, each as `build*Tx` plus a submitting form: `report`,
+`overridePrice`, `addAsset`, `setMaxDeviation`, `setReporter`.
+
+**Sponsored reporting** (reporter authorizes; relayer pays):
+
+```typescript
+const sponsored = await client.buildSponsoredReportTx(
+  reporter,
+  { type: "stellar", address: rwaId },
+  price,
+  timestamp,
+  { feeSource: relayer },
+);
+const signed = await authorizeEntries(
+  sponsored.authEntries,
+  reporterKeypair,
+  sequence + DEFAULT_AUTH_VALIDITY_LEDGERS,
+  networkPassphrase,
+);
+const { hash } = await client.submitSponsoredTx(sponsored, signed);
+```
+
+`buildSponsoredOverridePriceTx` is the same flow for an admin override that
+bypasses the deviation limit. Assets encode as the SEP-40 tuple variants
+`["Stellar", Address]` / `["Other", Symbol]`.
+
+The `stellarforge-nav-reporter` CLI that signs appraisals and submits sponsored
+reports is tracked separately under #62 and is not part of this package yet.
 
 ## Sponsored writes
 
