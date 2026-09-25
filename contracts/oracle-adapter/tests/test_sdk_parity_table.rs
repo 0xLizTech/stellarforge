@@ -100,16 +100,24 @@ fn test_generate_sdk_parity_table() {
                     if up < i128::MAX {
                         let past_up = up + 1;
                         if past_up > 0 {
-                            deviation_cases
-                                .push((prev, past_up, bps, check_deviation(prev, past_up, bps)));
+                            deviation_cases.push((
+                                prev,
+                                past_up,
+                                bps,
+                                check_deviation(prev, past_up, bps),
+                            ));
                         }
                     }
                 }
                 if down > 0 {
                     deviation_cases.push((prev, down, bps, check_deviation(prev, down, bps)));
                     if down > 1 {
-                        deviation_cases
-                            .push((prev, down - 1, bps, check_deviation(prev, down - 1, bps)));
+                        deviation_cases.push((
+                            prev,
+                            down - 1,
+                            bps,
+                            check_deviation(prev, down - 1, bps),
+                        ));
                     }
                 }
             } else if prev < i128::MAX {
@@ -141,8 +149,18 @@ fn test_generate_sdk_parity_table() {
         check_deviation(prev_for_bps_overflow, prev_for_bps_overflow, 3),
     ));
     let near_max = i128::MAX / 10_001;
-    deviation_cases.push((near_max, near_max + 1, 1, check_deviation(near_max, near_max + 1, 1)));
-    deviation_cases.push((near_max, near_max, 1, check_deviation(near_max, near_max, 1)));
+    deviation_cases.push((
+        near_max,
+        near_max + 1,
+        1,
+        check_deviation(near_max, near_max + 1, 1),
+    ));
+    deviation_cases.push((
+        near_max,
+        near_max,
+        1,
+        check_deviation(near_max, near_max, 1),
+    ));
 
     assert!(
         tick_cases.len() + deviation_cases.len() >= 50,
@@ -152,7 +170,9 @@ fn test_generate_sdk_parity_table() {
     );
 
     let mut out = String::from("SDK_PARITY_TABLE_BEGIN\n");
-    out.push_str("{\n  \"generatedBy\": \"contracts/oracle-adapter/tests/test_sdk_parity_table.rs\",\n");
+    out.push_str(
+        "{\n  \"generatedBy\": \"contracts/oracle-adapter/tests/test_sdk_parity_table.rs\",\n",
+    );
     out.push_str("  \"bpsDenominator\": 10000,\n");
     out.push_str("  \"tickOf\": [\n");
     for (i, (ts, res, exp)) in tick_cases.iter().enumerate() {
@@ -162,7 +182,11 @@ fn test_generate_sdk_parity_table() {
             ts,
             res,
             exp,
-            if i + 1 == tick_cases.len() { "\n" } else { ",\n" }
+            if i + 1 == tick_cases.len() {
+                "\n"
+            } else {
+                ",\n"
+            }
         )
         .unwrap();
     }
