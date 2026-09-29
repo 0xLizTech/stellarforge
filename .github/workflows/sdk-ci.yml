@@ -5,16 +5,42 @@ on:
     branches: [main, develop]
     paths:
       - "sdk/**"
+      - "contracts/oracle-adapter/**"
+      - "scripts/generate-oracle-parity-table.cjs"
       - ".github/workflows/sdk-ci.yml"
   pull_request:
     branches: [main, develop]
     paths:
       - "sdk/**"
+      - "contracts/oracle-adapter/**"
+      - "scripts/generate-oracle-parity-table.cjs"
 
 jobs:
+  oracle-parity:
+    name: Oracle parity fixture (Rust → JSON)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ runner.os }}-oracle-parity-${{ hashFiles('**/Cargo.lock') }}
+
+      # Regenerates nothing; asserts the committed fixture matches values from
+      # oracle_adapter::tick_of / check_price_deviation (contract pure math).
+      - name: Validate oracle-parity-table.json against contract math
+        run: |
+          cargo test -p oracle-adapter --features testutils \
+            test_generate_sdk_parity_table -- --exact
+
   test:
     name: TypeScript Tests
     runs-on: ubuntu-latest
+    needs: [oracle-parity]
     strategy:
       matrix:
         node-version: ["22", "24"]

@@ -7,6 +7,8 @@ on:
       - "contracts/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "sdk/tests/fixtures/oracle-parity-table.json"
+      - "scripts/generate-oracle-parity-table.cjs"
       - ".github/workflows/contracts-ci.yml"
   pull_request:
     branches: [main, develop]
@@ -14,6 +16,8 @@ on:
       - "contracts/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "sdk/tests/fixtures/oracle-parity-table.json"
+      - "scripts/generate-oracle-parity-table.cjs"
 
 env:
   CARGO_TERM_COLOR: always
@@ -63,6 +67,14 @@ jobs:
 
       - name: Run tests
         run: cargo test --all --features testutils
+
+      # Fails if sdk/tests/fixtures/oracle-parity-table.json drifts from a fresh
+      # run of the generator that calls oracle_adapter::tick_of /
+      # check_price_deviation (same pure fns as the contract methods).
+      - name: Oracle SDK parity fixture drift check
+        run: |
+          cargo test -p oracle-adapter --features testutils \
+            test_generate_sdk_parity_table -- --exact
 
   build-wasm:
     name: Build WASM Artifacts

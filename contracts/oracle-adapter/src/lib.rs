@@ -41,11 +41,13 @@
 
 mod error;
 mod events;
+mod math;
 
 pub use error::OracleError;
 pub use events::{
     AdminTransferred, AssetAdded, MaxDeviationSet, PriceOverridden, PriceReported, ReporterSet,
 };
+pub use math::{check_price_deviation, tick_of, DeviationCheck};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol, Vec,
@@ -443,18 +445,13 @@ impl OracleAdapterContract {
                 panic_with_error!(env, OracleError::StaleReport);
             }
             if let Some(max_bps) = max_deviation_bps {
-                // |price - latest| / latest > max_bps / 10_000, cross-multiplied
-                // so no precision is lost to division. Both prices are positive,
-                // so the subtraction cannot overflow.
-                let moved = (price - latest.price).abs();
-                let (Some(lhs), Some(rhs)) = (
-                    moved.checked_mul(BPS_DENOMINATOR),
-                    latest.price.checked_mul(i128::from(max_bps)),
-                ) else {
-                    panic_with_error!(env, OracleError::Overflow);
-                };
-                if lhs > rhs {
-                    panic_with_error!(env, OracleError::DeviationTooLarge);
+                // |price - latest| / latest > max_bps / 10_000, via shared pure math.
+                match check_price_deviation(latest.price, price, max_bps) {
+                    DeviationCheck::WithinLimit => {}
+                    DeviationCheck::TooLarge => {
+                        panic_with_error!(env, OracleError::DeviationTooLarge)
+                    }
+                    DeviationCheck::Overflow => panic_with_error!(env, OracleError::Overflow),
                 }
             }
         }
@@ -484,8 +481,7 @@ impl OracleAdapterContract {
 
     /// Rounds `timestamp` down to a multiple of the resolution.
     fn tick(env: &Env, timestamp: u64) -> u64 {
-        let resolution = u64::from(Self::resolution(env.clone()));
-        timestamp - timestamp % resolution
+        tick_of(timestamp, Self::resolution(env.clone()))
     }
 
     fn validate_deviation(env: &Env, max_deviation_bps: u32) {

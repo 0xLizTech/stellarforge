@@ -1,50 +1,41 @@
-//! Generates the committed SDK parity table for `tickOf` and `checkDeviation`.
+//! Generates and validates the committed SDK parity table for `tickOf` and
+//! `checkDeviation`.
 //!
-//! The arithmetic here is a byte-for-byte copy of `OracleAdapterContract::tick`
-//! and the deviation branch of `record` in `src/lib.rs`. Run with:
+//! Expected values come from the **same** pure functions the contract uses
+//! (`oracle_adapter::tick_of`, `oracle_adapter::check_price_deviation`) — not a
+//! hand-copied mirror. Regenerate the fixture with:
 //!
 //! ```text
-//! cargo test -p oracle-adapter --features testutils \
-//!   test_generate_sdk_parity_table -- --nocapture
+//! UPDATE_ORACLE_PARITY_FIXTURE=1 cargo test -p oracle-adapter --features testutils \
+//!   test_generate_sdk_parity_table -- --exact
 //! ```
 //!
-//! and copy the single JSON object into `sdk/tests/fixtures/oracle-parity-table.json`.
+//! Without that env var, the test fails if
+//! `sdk/tests/fixtures/oracle-parity-table.json` drifts from a fresh run.
 
 #![cfg(test)]
 
-use oracle_adapter::BPS_DENOMINATOR;
+use oracle_adapter::{check_price_deviation, tick_of, DeviationCheck, BPS_DENOMINATOR};
 use std::fmt::Write as _;
+use std::path::PathBuf;
 
-/// Mirrors `OracleAdapterContract::tick`.
-fn tick_of(timestamp: u64, resolution: u32) -> u64 {
-    let resolution = u64::from(resolution);
-    timestamp - timestamp % resolution
-}
-
-/// Mirrors the deviation check inside `OracleAdapterContract::record`.
-///
-/// Returns `Ok(true)` when the move is within the limit, `Ok(false)` when it
-/// would raise `DeviationTooLarge`, and `Err("Overflow")` when either
-/// `checked_mul` fails (contract panics with `OracleError::Overflow`).
 fn check_deviation(previous: i128, next: i128, max_bps: u32) -> Result<bool, &'static str> {
-    // The contract refuses max_bps == 0 at validate_deviation before record.
-    // The SDK mirrors that; this generator only emits positive bps cases plus
-    // overflow cases, never zero.
+    // Contract refuses max_bps == 0 at validate_deviation before record.
     assert!(max_bps > 0, "generator must not emit max_bps=0");
     assert!(previous > 0 && next > 0, "prices must be positive");
-
-    let moved = (next - previous).abs();
-    let (Some(lhs), Some(rhs)) = (
-        moved.checked_mul(BPS_DENOMINATOR),
-        previous.checked_mul(i128::from(max_bps)),
-    ) else {
-        return Err("Overflow");
-    };
-    Ok(lhs <= rhs)
+    match check_price_deviation(previous, next, max_bps) {
+        DeviationCheck::WithinLimit => Ok(true),
+        DeviationCheck::TooLarge => Ok(false),
+        DeviationCheck::Overflow => Err("Overflow"),
+    }
 }
 
-#[test]
-fn test_generate_sdk_parity_table() {
+fn fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../sdk/tests/fixtures/oracle-parity-table.json")
+}
+
+fn build_parity_json() -> String {
     let mut tick_cases: Vec<(u64, u32, u64)> = Vec::new();
     let mut deviation_cases: Vec<(i128, i128, u32, Result<bool, &'static str>)> = Vec::new();
 
@@ -169,50 +160,84 @@ fn test_generate_sdk_parity_table() {
         deviation_cases.len()
     );
 
-    let mut out = String::from("SDK_PARITY_TABLE_BEGIN\n");
+    // Pretty-print to match `JSON.stringify(table, null, 2) + "\n"` so the
+    // committed fixture and a fresh generator run compare byte-for-byte.
+    let mut out = String::new();
+    out.push_str("{\n");
     out.push_str(
-        "{\n  \"generatedBy\": \"contracts/oracle-adapter/tests/test_sdk_parity_table.rs\",\n",
+        "  \"generatedBy\": \"contracts/oracle-adapter/tests/test_sdk_parity_table.rs\",\n",
+    );
+    out.push_str(
+        "  \"note\": \"Expected values from oracle_adapter::tick_of and oracle_adapter::check_price_deviation (same pure fns as OracleAdapterContract::tick / record). BPS_DENOMINATOR=10000. Regenerate: UPDATE_ORACLE_PARITY_FIXTURE=1 cargo test -p oracle-adapter --features testutils test_generate_sdk_parity_table -- --exact\",\n",
     );
     out.push_str("  \"bpsDenominator\": 10000,\n");
     out.push_str("  \"tickOf\": [\n");
     for (i, (ts, res, exp)) in tick_cases.iter().enumerate() {
+        let comma = if i + 1 == tick_cases.len() { "" } else { "," };
         write!(
             out,
-            "    {{\"timestamp\": \"{}\", \"resolution\": {}, \"expected\": \"{}\"}}{}",
-            ts,
-            res,
-            exp,
-            if i + 1 == tick_cases.len() {
-                "\n"
-            } else {
-                ",\n"
-            }
+            "    {{\n      \"timestamp\": \"{ts}\",\n      \"resolution\": {res},\n      \"expected\": \"{exp}\"\n    }}{comma}\n"
         )
         .unwrap();
     }
-    out.push_str("  ],\n  \"checkDeviation\": [\n");
+    out.push_str("  ],\n");
+    out.push_str("  \"checkDeviation\": [\n");
     for (i, (prev, next, bps, result)) in deviation_cases.iter().enumerate() {
         let expected = match result {
             Ok(v) => format!("{v}"),
             Err(e) => format!("\"{e}\""),
         };
+        let comma = if i + 1 == deviation_cases.len() {
+            ""
+        } else {
+            ","
+        };
         write!(
             out,
-            "    {{\"previous\": \"{}\", \"next\": \"{}\", \"maxDeviationBps\": {}, \"expected\": {}}}{}",
-            prev,
-            next,
-            bps,
-            expected,
-            if i + 1 == deviation_cases.len() { "\n" } else { ",\n" }
+            "    {{\n      \"previous\": \"{prev}\",\n      \"next\": \"{next}\",\n      \"maxDeviationBps\": {bps},\n      \"expected\": {expected}\n    }}{comma}\n"
         )
         .unwrap();
     }
-    out.push_str("  ]\n}\n");
-    out.push_str("SDK_PARITY_TABLE_END\n");
-    print!("{out}");
+    out.push_str("  ]\n");
+    out.push_str("}\n");
+    out
+}
+
+#[test]
+fn test_generate_sdk_parity_table() {
+    let generated = build_parity_json();
 
     assert_eq!(tick_of(1_800_000_123, 300), 1_800_000_000);
     assert_eq!(check_deviation(10_000, 11_000, 1_000), Ok(true));
     assert_eq!(check_deviation(10_000, 11_001, 1_000), Ok(false));
     assert_eq!(check_deviation(1, i128::MAX, 1), Err("Overflow"));
+
+    let path = fixture_path();
+    if std::env::var_os("UPDATE_ORACLE_PARITY_FIXTURE").is_some() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create fixture dir");
+        }
+        std::fs::write(&path, &generated).expect("write oracle-parity-table.json");
+        eprintln!("updated {}", path.display());
+        return;
+    }
+
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "missing committed fixture at {}: {e}\n\
+             regenerate with UPDATE_ORACLE_PARITY_FIXTURE=1 cargo test -p oracle-adapter \
+             --features testutils test_generate_sdk_parity_table -- --exact",
+            path.display()
+        )
+    });
+    // Normalize CRLF so a Windows checkout still matches Linux-generated LF.
+    let committed = committed.replace("\r\n", "\n").replace('\r', "\n");
+    let generated = generated.replace("\r\n", "\n").replace('\r', "\n");
+    assert_eq!(
+        committed, generated,
+        "sdk/tests/fixtures/oracle-parity-table.json drifted from contract math.\n\
+         Regenerate with:\n\
+         UPDATE_ORACLE_PARITY_FIXTURE=1 cargo test -p oracle-adapter --features testutils \
+         test_generate_sdk_parity_table -- --exact"
+    );
 }
