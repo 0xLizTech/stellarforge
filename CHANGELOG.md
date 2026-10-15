@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `contracts/vault` contract foundation, deposit/redeem flows, and multi-source NAV integration (ADR-006, #56, #57, #58, #59).
+  - Deployment configuration (`VaultConfig`) with constructor admin auth (IR-17), immutable share decimals from the underlying token, and initial state.
+  - Emergency pause (`set_paused`) taking effect in the same ledger (NFR-R-2) and dual-auth admin handover (`transfer_admin`, NFR-S-4).
+  - SEP-41 share token with per-holder lock-ups (`locked_until`), compliance screening on every transfer, muxed address support, and allowance management.
+  - Deliberately omits public `burn` or `burn_from` to protect vault asset backing invariants.
+  - Central internal write path (`write_balance`, `mint_shares`, `burn_shares`) supporting balance checkpoints and secure share accounting.
+  - Vault deposits (`deposit`) with 1:1 initial pricing or NAV-based exchange rates, minimum deposit checks, and underlying token transfers (#58).
+  - Vault redemptions (`redeem`) and redemption capacity checks (`redeemable`), respecting per-holder lockups, fee deductions, and underlying liquidity (#58).
+  - Multi-source SEP-40 oracle integration (`set_oracles`, `oracles`, `nav`, `nav_per_share`) with staleness and deviation checks between primary and secondary feeds (#59).
 - `oracle-adapter` contract, the first Phase 2 contract: a SEP-40 price feed for net asset values (ADR-005). It implements SEP-40's consumer interface (`base`, `assets`, `decimals`, `resolution`, `price`, `prices`, `lastprice`), so a consumer reads it the same way as any SEP-40 oracle.
   - The admin lists assets and authorizes reporters per asset.
   - History is append-only, one price per resolution tick.
