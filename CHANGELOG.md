@@ -9,11 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `contracts/vault` checkpointed historical share balances and total supply (FR-07-2, #60):
+  - `balance_at(holder, ledger)` and `total_supply_at(ledger)` snapshot reads for distribution and governance accounting.
+  - Same-ledger coalescing avoiding duplicate storage entries when multiple operations occur in a single ledger.
+  - Bounded-cost binary search over append-only checkpoint structures, returning 0 before first activity.
+  - Refusal with `LedgerNotClosed` (discriminant 26) when querying current or future ledger sequences.
+- Stateful invariant testing, cargo-fuzz harness, and adversarial scenario suite (#61):
+  - Property tests checking balance sums, vault asset backing, and shadow model parity across random sequences.
+  - Named adversarial scenarios validating defenses against lock bypass, lock griefing, donation inflation, oracle manipulation, compliance churn, and emergency pauses.
+  - Dedicated fuzzing target in `contracts/vault/fuzz/` with committed seed corpus.
+- `stellarforge-nav-reporter` CLI in `tools/nav-reporter` (#62):
+  - Offline appraisal verification using canonical JSON serialization and detached Ed25519 signatures.
+  - Pre-flight validation enforcing exact integer decimals, future timestamp rejection, and deviation bounds.
+  - Sponsored report submission with relayer fee payment and idempotent recovery on unknown outcomes or duplicate submissions.
+- Deterministic deployment and on-chain wasm provenance verification (#64):
+  - Deterministic contract address derivation using `sha256(DEPLOY_NAMESPACE || name)` salts and resumable execution in `scripts/deploy.sh`.
+  - Bytecode provenance checker `scripts/verify-deployment.sh` validating on-chain fetched wasm against build `SHA256SUMS`.
+  - Comprehensive operator and troubleshooting guide in `docs/guides/vault-operations.md`.
 - `oracle-adapter` contract, the first Phase 2 contract: a SEP-40 price feed for net asset values (ADR-005). It implements SEP-40's consumer interface (`base`, `assets`, `decimals`, `resolution`, `price`, `prices`, `lastprice`), so a consumer reads it the same way as any SEP-40 oracle.
   - The admin lists assets and authorizes reporters per asset.
   - History is append-only, one price per resolution tick.
   - A report may move the price at most the asset's `max_deviation_bps`. A larger move needs the admin's `override_price`, which publishes its own event.
-  - Not yet in `scripts/deploy.sh` (see #64). Exposed in the SDK as `OracleAdapterClient` (this release).
+  - Deployed in `scripts/deploy.sh` and exposed in the SDK as `OracleAdapterClient`.
 - `VaultClient` in `@stellarforge-protocol/sdk` for interacting with the Phase 2 Vault contract (#63):
   - Typed read and write methods matching the vault contract interface (`config`, `underlyingHeld`, `balance`, `totalSupply`, `allowance`, `decimals`, `name`, `symbol`, `lockedUntil`, `redeemable`, `paused`, `admin`, `oracles`, `nav`, `navPerShare`, `balanceAt`, `totalSupplyAt`; `deposit`, `redeem`, `transfer`, `approve`, `transferFrom`, `setPaused`, `setOracles`).
   - Sponsored write methods (`buildSponsoredDepositTx`, `buildSponsoredRedeemTx`, `buildSponsoredTransferTx`, `buildSponsoredTransferFromTx`) with recursive multi-contract auth-tree verification (`checkInvocationTree`), detecting and preventing any tampering of root invocations, nested child invocations (such as underlying token transfers), contracts, function names, or arguments.
