@@ -64,10 +64,50 @@ def parse(path):
 
 
 class Gh:
-    def __init__(self, repo, token):
-        self.repo, self.token = repo, token
+    def __init__(self, repo, token, use_cli=False):
+        self.repo, self.token, self.use_cli = repo, token, use_cli
 
     def call(self, method, path, data=None):
+        if self.use_cli:
+            return self.call_cli(method, path, data)
+        try:
+            return self.call_http(method, path, data)
+        except urllib.error.URLError as e:
+            if "CERTIFICATE_VERIFY_FAILED" not in str(e):
+                raise
+            print("  Python SSL verification failed; switching to the gh CLI")
+            self.use_cli = True
+            return self.call_cli(method, path, data)
+
+    def call_cli(self, method, path, data=None):
+        """Use the gh CLI, which trusts the OS certificate store."""
+        import subprocess
+        for attempt in range(5):
+            p = subprocess.run(["gh", "api", "-X", method, "-i", path.lstrip("/"), "--input", "-"],
+                               input=json.dumps(data) if data is not None else "",
+                               capture_output=True, text=True, encoding="utf-8")
+            raw = p.stdout.replace("\r\n", "\n")
+            head, _, body = raw.partition("\n\n")
+            m = re.match(r"HTTP/\S+ (\d+)", head)
+            if not m:
+                sys.exit(f"gh api failed: {p.stderr.strip() or raw[:300]}")
+            status = int(m.group(1))
+            if status in (403, 429) and ("rate limit" in body.lower() or "secondary" in body.lower()):
+                wait = 60 * (attempt + 1)
+                print(f"  rate limited, sleeping {wait}s")
+                time.sleep(wait)
+                continue
+            if status >= 500:
+                time.sleep(5 * (attempt + 1))
+                continue
+            try:
+                parsed = json.loads(body) if body.strip() else None
+            except json.JSONDecodeError:
+                parsed = body
+            return status, parsed, {}
+        sys.exit("giving up after repeated failures")
+
+    def call_http(self, method, path, data=None):
         req = urllib.request.Request(
             API + path, method=method,
             data=json.dumps(data).encode() if data is not None else None,
@@ -114,6 +154,8 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="stop after creating N issues")
     ap.add_argument("--skip", type=int, default=0, help="skip the first N issues in the file")
     ap.add_argument("--delay", type=float, default=2.0, help="seconds between creations (avoid abuse limits)")
+    ap.add_argument("--gh", action="store_true",
+                    help="send requests through the gh CLI (use when Python SSL verification fails)")
     args = ap.parse_args()
 
     issues = parse(Path(args.file))
@@ -129,9 +171,9 @@ def main():
         return
 
     token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        sys.exit("set GITHUB_TOKEN first")
-    gh = Gh(args.repo, token)
+    if not token and not args.gh:
+        sys.exit("set GITHUB_TOKEN first, or pass --gh to use a logged-in gh CLI")
+    gh = Gh(args.repo, token, use_cli=args.gh)
 
     existing_labels = {l["name"] for l in gh.paged(f"/repos/{args.repo}/labels")}
     needed = {l for it in issues for l in it["labels"]}

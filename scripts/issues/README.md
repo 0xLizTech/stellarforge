@@ -25,6 +25,13 @@ python scripts/issues/push_issues.py --apply --limit 5
 python scripts/issues/push_issues.py --apply
 ```
 
+If Python fails with `CERTIFICATE_VERIFY_FAILED` (common on Windows behind antivirus or a proxy),
+add `--gh` to send requests through a logged-in GitHub CLI instead (`gh auth login`; no token needed):
+
+```bash
+python scripts/issues/push_issues.py --apply --gh
+```
+
 The script creates missing labels, skips titles that already exist, sleeps between requests and
 stops on the first error. Re-running continues where it stopped. It needs only Python 3.8+.
 
