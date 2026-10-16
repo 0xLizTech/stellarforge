@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pure helpers: `tickOf`, `checkDeviation` (mirrors contract `InvalidDeviation` / `Overflow`), `isFresh`, `toDecimalString`.
   - `OracleAsset` ScVal codecs and `OracleErrorCode` discriminants 1–13.
 - `docs/audits/external-audit-handover-phase1.md`, the handover for the Phase 1 external audit. It covers scope, how to rebuild the audited wasm, the trust model, the invariants to test, the deliberate design choices, and how the PRD relates to Phase 1.
+- `docs/audits/2026-10-16-unbounded-vector-inventory.md` (#121), a Stage 2 Phase 1 hardening follow-up. Audits every `#[contracttype]` and `.set(...)` call site across all five contracts and `common` for the IR-01 pattern (an unbounded `Vec` growing inside one storage entry). Finds it does not recur: `oracle-adapter::DataKey::Assets` is the only other Vec-in-storage in the workspace, and it is capped at `MAX_ASSETS` on its one write path, already covered by a boundary test. No code change required to close this item.
 
 ### Changed
 
