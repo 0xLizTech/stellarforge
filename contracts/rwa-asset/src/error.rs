@@ -48,4 +48,7 @@ pub enum RwaError {
     /// `approve` set a non-zero allowance whose `live_until_ledger` has
     /// already passed.
     InvalidExpiration = 14,
+    /// `accept_admin` was called with no transfer pending, or after it was
+    /// cancelled or already accepted.
+    NoPendingAdminTransfer = 15,
 }

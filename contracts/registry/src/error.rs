@@ -27,4 +27,7 @@ pub enum RegistryError {
     PageTooLarge = 4,
     /// The directory index would overflow `u32`.
     Overflow = 5,
+    /// `accept_admin` was called with no transfer pending, or after it was
+    /// cancelled or already accepted.
+    NoPendingAdminTransfer = 6,
 }
