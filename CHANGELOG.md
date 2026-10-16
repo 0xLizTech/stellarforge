@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `rwa-asset.update_metadata` refuses raising a supply cap, with `InvalidSupplyCap`. The admin could already neither remove a cap nor set it below supply. Now a cap can only be tightened, which makes PRD §10.2's "not bypassable by admin" true. An uncapped asset can still be given a cap at or above its supply.
 - `docs/prd/PRODUCT_REQUIREMENTS.md` scopes three security claims to the phases that implement them. The over-minting mitigation now describes the cap rule (#54). Quorum, timelock and veto defences apply once governance can execute (Phase 3+). The only Phase 1 emergency control is `set_paused` on `rwa-asset`, since Phase 1 contracts cannot be upgraded.
 
+### Fixed
+
+- **BREAKING:** `rwa-asset.set_compliance` refuses a `min_level` above `MAX_COMPLIANCE_LEVEL` (3), with `InvalidComplianceLevel` (#139). A compliance record's own `level` is already capped at the same scale in `ComplianceContract::set_kyc`, so a higher `min_level` could never be satisfied by any verified party: every transfer would silently and permanently fail `NotCompliant` until an admin reconfigured it. A caller already passing 0-3 is unaffected.
+
 ## [0.3.0] - 2026-09-14
 
 Adds operator methods and sponsored writes to the SDK. Nothing is removed or changed incompatibly from 0.2.0, and the contract interfaces are unchanged.

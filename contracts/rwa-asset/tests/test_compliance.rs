@@ -89,6 +89,48 @@ fn test_compliance_is_configurable_and_readable() {
     assert!(h.asset.compliance_contract().is_none());
 }
 
+/// #139. A compliance record's own `level` cannot exceed `MAX_LEVEL` (3,
+/// enforced in `ComplianceContract::set_kyc`), so a `min_level` above it
+/// could never be satisfied by any verified party: every transfer would
+/// silently and permanently fail `NotCompliant` until an admin reconfigured
+/// it. `set_compliance` now refuses to reach that state in the first place.
+#[test]
+fn test_set_compliance_rejects_a_min_level_above_the_scale() {
+    let h = Harness::new(LEVEL_BASIC);
+
+    let res = h
+        .asset
+        .try_set_compliance(&h.asset.compliance_contract(), &9);
+
+    assert_eq!(res, Err(Ok(RwaError::InvalidComplianceLevel.into())));
+    // Rejected: the prior, valid configuration from Harness::new must stand.
+    assert_eq!(h.asset.min_compliance_level(), LEVEL_BASIC);
+}
+
+/// Guards the rejection above: the top of the scale itself must still work.
+#[test]
+fn test_set_compliance_accepts_the_maximum_level() {
+    let h = Harness::new(LEVEL_BASIC);
+    const LEVEL_ACCREDITED: u32 = 3;
+
+    h.asset
+        .set_compliance(&h.asset.compliance_contract(), &LEVEL_ACCREDITED);
+
+    assert_eq!(h.asset.min_compliance_level(), LEVEL_ACCREDITED);
+}
+
+/// The bound applies even when disabling compliance altogether, so a caller
+/// cannot smuggle an invalid level in behind `compliance = None`.
+#[test]
+fn test_set_compliance_rejects_an_invalid_level_even_when_disabling() {
+    let h = Harness::new(LEVEL_BASIC);
+
+    let res = h.asset.try_set_compliance(&None, &9);
+
+    assert_eq!(res, Err(Ok(RwaError::InvalidComplianceLevel.into())));
+    assert!(h.asset.compliance_contract().is_some());
+}
+
 #[test]
 fn test_transfers_are_unrestricted_when_compliance_is_unset() {
     let h = Harness::new(LEVEL_BASIC);

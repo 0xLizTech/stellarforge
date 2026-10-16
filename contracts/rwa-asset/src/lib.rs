@@ -31,6 +31,18 @@ const MIN_LEVEL_KEY: Symbol = symbol_short!("MINLVL");
 /// longer fits sensibly in `i128` alongside realistic supply figures.
 const MAX_DECIMALS: u32 = 18;
 
+/// Upper bound on `set_compliance`'s `min_level`: 0 none, 1 basic, 2 full,
+/// 3 accredited, matching `compliance::MAX_LEVEL`'s scale. Declared locally
+/// rather than imported from the `compliance` crate: this contract binds
+/// only to the minimal `ComplianceInterface` trait in `src/compliance.rs`,
+/// deliberately not to a specific compliance implementation (see that
+/// module's doc comment), so it cannot read a constant from one. A
+/// `min_level` above this ceiling could never be satisfied by any verified
+/// party, since a compliance record's own level cannot exceed it either;
+/// every transfer would then fail `NotCompliant` until an admin
+/// reconfigured it (#139).
+pub const MAX_COMPLIANCE_LEVEL: u32 = 3;
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -464,6 +476,9 @@ impl RwaAssetContract {
     /// 3 accredited.
     pub fn set_compliance(env: Env, compliance: Option<Address>, min_level: u32) {
         Self::require_admin(&env);
+        if min_level > MAX_COMPLIANCE_LEVEL {
+            panic_with_error!(&env, RwaError::InvalidComplianceLevel);
+        }
         match &compliance {
             Some(addr) => env.storage().instance().set(&COMPLIANCE_KEY, addr),
             None => env.storage().instance().remove(&COMPLIANCE_KEY),
