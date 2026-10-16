@@ -5,13 +5,13 @@ use soroban_sdk::{
         storage::{Instance as _, Persistent as _},
         Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Bytes, Env, Event, IntoVal, String,
+    token, Address, Bytes, Env, Event, IntoVal, String,
 };
 
 use governance::{
-    AdminTransferred, DataKey, GovernanceContract, GovernanceContractClient, GovernanceError,
-    ProposalCreated, ProposalFinalized, ProposalStatus, VoteCast, MAX_TITLE_BYTES,
-    MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
+    AdminTransferred, DataKey, DepositConfigured, GovernanceContract, GovernanceContractClient,
+    GovernanceError, ProposalCreated, ProposalDepositRefunded, ProposalFinalized, ProposalStatus,
+    VoteCast, MAX_TITLE_BYTES, MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -65,6 +65,29 @@ impl Harness<'_> {
         self.env
             .as_contract(&self.contract_id, || self.env.storage().max_ttl())
     }
+
+    /// Creates an active proposal on behalf of `proposer` and returns its id.
+    /// Unlike `propose`/`propose_for`, this lets a deposit test control which
+    /// address pays and later assert on their balance.
+    fn propose_as(&self, proposer: &Address) -> u64 {
+        self.client.propose(
+            proposer,
+            &String::from_str(&self.env, "Raise the protocol fee"),
+            &Bytes::from_array(&self.env, &[7u8; 32]),
+            &VOTING_PERIOD,
+        )
+    }
+}
+
+/// Deploys a Stellar Asset Contract test token (#134's deposit tests need a
+/// real SEP-41 token to transfer; governance has no other contract in this
+/// workspace to borrow a token setup convention from). Returns the token's
+/// contract address and a client that can mint new balances for test setup.
+fn setup_token(env: &Env, token_admin: &Address) -> (Address, token::StellarAssetClient<'static>) {
+    let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let address = sac.address();
+    let mint_client = token::StellarAssetClient::new(env, &address);
+    (address, mint_client)
 }
 
 fn setup() -> Harness<'static> {
@@ -463,6 +486,7 @@ fn test_propose_emits_event() {
             title,
             description_hash,
             deadline_ledger,
+            deposit_amount: 0,
         }
         .to_xdr(&h.env, &h.contract_id)],
     );
@@ -622,4 +646,283 @@ fn test_title_longer_than_the_cap_is_rejected() {
         &VOTING_PERIOD,
     );
     assert_eq!(res, Err(Ok(GovernanceError::TitleTooLong.into())));
+}
+
+// ─── Proposal deposit (#134) ───────────────────────────────────────────────
+
+#[test]
+fn test_no_deposit_is_configured_by_default() {
+    let h = setup();
+    assert_eq!(h.client.deposit_token(), None);
+    assert_eq!(h.client.deposit_amount(), 0);
+}
+
+#[test]
+fn test_admin_can_configure_a_deposit() {
+    let h = setup();
+    let (token_address, _mint) = setup_token(&h.env, &h.admin);
+
+    h.client
+        .set_proposal_deposit(&Some(token_address.clone()), &100);
+
+    assert_eq!(h.client.deposit_token(), Some(token_address));
+    assert_eq!(h.client.deposit_amount(), 100);
+}
+
+#[test]
+fn test_set_proposal_deposit_emits_event() {
+    let h = setup();
+    let (token_address, _mint) = setup_token(&h.env, &h.admin);
+
+    h.client
+        .set_proposal_deposit(&Some(token_address.clone()), &100);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![DepositConfigured {
+            token: Some(token_address),
+            amount: 100,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+/// `mock_all_auths()` (set by `setup()`) accepts any signer, so this test
+/// instead mocks auth for a specific non-admin address only, the same way
+/// `test_transfer_admin_without_the_incoming_signature_is_rejected` asserts
+/// `transfer_admin`'s dual-auth requirement: the entry point's own
+/// `require_auth` on the real admin then has nothing authorizing it, and
+/// the call must fail.
+#[test]
+fn test_non_admin_cannot_configure_a_deposit() {
+    let h = setup();
+    let (token_address, _mint) = setup_token(&h.env, &h.admin);
+    let impostor = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &impostor,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_proposal_deposit",
+            args: (Some(token_address.clone()), 100_i128).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h
+        .client
+        .try_set_proposal_deposit(&Some(token_address), &100)
+        .is_err());
+    assert_eq!(h.client.deposit_token(), None);
+}
+
+#[test]
+fn test_negative_deposit_amount_is_rejected() {
+    let h = setup();
+    let (token_address, _mint) = setup_token(&h.env, &h.admin);
+
+    let res = h.client.try_set_proposal_deposit(&Some(token_address), &-1);
+    assert_eq!(res, Err(Ok(GovernanceError::InvalidDepositAmount.into())));
+}
+
+#[test]
+fn test_disabling_the_deposit_clears_both_token_and_amount() {
+    let h = setup();
+    let (token_address, _mint) = setup_token(&h.env, &h.admin);
+    h.client.set_proposal_deposit(&Some(token_address), &100);
+
+    h.client.set_proposal_deposit(&None, &100);
+
+    assert_eq!(h.client.deposit_token(), None);
+    assert_eq!(
+        h.client.deposit_amount(),
+        0,
+        "amount must not survive disabling the deposit, even though the \
+         caller passed a non-zero amount alongside None"
+    );
+}
+
+#[test]
+fn test_propose_collects_the_configured_deposit() {
+    let h = setup();
+    let (token_address, mint) = setup_token(&h.env, &h.admin);
+    let token_client = token::Client::new(&h.env, &token_address);
+    let proposer = Address::generate(&h.env);
+    mint.mint(&proposer, &500);
+    h.client.set_proposal_deposit(&Some(token_address), &100);
+
+    h.propose_as(&proposer);
+
+    assert_eq!(token_client.balance(&proposer), 400);
+    assert_eq!(token_client.balance(&h.contract_id), 100);
+}
+
+#[test]
+fn test_propose_with_no_deposit_configured_collects_nothing() {
+    let h = setup();
+    let (token_address, mint) = setup_token(&h.env, &h.admin);
+    let token_client = token::Client::new(&h.env, &token_address);
+    let proposer = Address::generate(&h.env);
+    mint.mint(&proposer, &500);
+    // Deliberately not calling set_proposal_deposit.
+
+    h.propose_as(&proposer);
+
+    assert_eq!(token_client.balance(&proposer), 500);
+    assert_eq!(token_client.balance(&h.contract_id), 0);
+}
+
+#[test]
+fn test_propose_emits_the_collected_deposit_amount() {
+    let h = setup();
+    let (token_address, mint) = setup_token(&h.env, &h.admin);
+    let proposer = Address::generate(&h.env);
+    mint.mint(&proposer, &500);
+    h.client.set_proposal_deposit(&Some(token_address), &100);
+
+    let id = h.propose_as(&proposer);
+
+    let proposal = h.client.get_proposal(&id).unwrap();
+    assert_eq!(proposal.deposit_amount, 100);
+}
+
+#[test]
+fn test_proposer_without_enough_balance_cannot_propose() {
+    let h = setup();
+    let (token_address, mint) = setup_token(&h.env, &h.admin);
+    let proposer = Address::generate(&h.env);
+    mint.mint(&proposer, &50); // less than the configured deposit
+    h.client.set_proposal_deposit(&Some(token_address), &100);
+
+    let res = h.client.try_propose(
+        &proposer,
+        &String::from_str(&h.env, "title"),
+        &Bytes::from_array(&h.env, &[7u8; 32]),
+        &VOTING_PERIOD,
+    );
+    assert!(res.is_err(), "expected the token transfer to fail");
+}
+
+#[test]
+fn test_finalize_refunds_the_deposit_on_a_passed_proposal() {
+    let h = setup();
+    let (token_address, mint) = setup_token(&h.env, &h.admin);
+    let token_client = token::Client::new(&h.env, &token_address);
+    let proposer = Address::generate(&h.env);
+    mint.mint(&proposer, &500);
+    h.client.set_proposal_deposit(&Some(token_address), &100);
+
+    let id = h.propose_as(&proposer);
+    h.client
+        .vote(&Address::generate(&h.env), &id, &true, &10_i128);
+    h.advance_past_deadline();
+    h.client.finalize(&id);
+
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Passed
+    );
+    assert_eq!(token_client.balance(&proposer), 500);
+    assert_eq!(token_client.balance(&h.contract_id), 0);
+}
+
+#[test]
+fn test_finalize_refunds_the_deposit_on_a_rejected_proposal() {
+    let h = setup();
+    let (token_address, mint) = setup_token(&h.env, &h.admin);
+    let token_client = token::Client::new(&h.env, &token_address);
+    let proposer = Address::generate(&h.env);
+    mint.mint(&proposer, &500);
+    h.client.set_proposal_deposit(&Some(token_address), &100);
+
+    // No votes at all: an unvoted proposal is rejected (0 > 0 is false).
+    let id = h.propose_as(&proposer);
+    h.advance_past_deadline();
+    h.client.finalize(&id);
+
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Rejected
+    );
+    assert_eq!(
+        token_client.balance(&proposer),
+        500,
+        "the deposit is an anti-spam cost of proposing, not a stake on the \
+         outcome, so it is refunded even though the proposal was rejected"
+    );
+}
+
+#[test]
+fn test_finalize_emits_a_deposit_refund_event() {
+    let h = setup();
+    let (token_address, mint) = setup_token(&h.env, &h.admin);
+    let proposer = Address::generate(&h.env);
+    mint.mint(&proposer, &500);
+    h.client.set_proposal_deposit(&Some(token_address), &100);
+
+    // No votes: an unvoted proposal is rejected, exercising the refund path
+    // on the "rejected" branch rather than "passed" (covered separately by
+    // test_finalize_refunds_the_deposit_on_a_passed_proposal above).
+    let id = h.propose_as(&proposer);
+    h.advance_past_deadline();
+    h.client.finalize(&id);
+
+    // finalize's own token::Client::transfer call also publishes the SAC's
+    // own "transfer" event in the same invocation; filtered out here, since
+    // this test is about governance's own events, not the token's wire
+    // format, which filter_by_contract exists precisely to let a test ignore.
+    assert_eq!(
+        h.env.events().all().filter_by_contract(&h.contract_id),
+        std::vec![
+            ProposalDepositRefunded {
+                proposal_id: id,
+                proposer: proposer.clone(),
+                amount: 100,
+            }
+            .to_xdr(&h.env, &h.contract_id),
+            ProposalFinalized {
+                proposal_id: id,
+                status: ProposalStatus::Rejected,
+                votes_for: 0,
+                votes_against: 0,
+            }
+            .to_xdr(&h.env, &h.contract_id),
+        ],
+    );
+}
+
+#[test]
+fn test_finalize_does_not_refund_when_no_deposit_was_collected() {
+    let h = setup();
+    // No token configured at all: propose collects nothing, so finalize must
+    // not attempt a transfer (which would panic with no token configured).
+    let id = h.propose();
+    h.advance_past_deadline();
+    h.client.finalize(&id); // must not panic
+    assert_eq!(h.client.get_proposal(&id).unwrap().deposit_amount, 0);
+}
+
+#[test]
+fn test_changing_the_deposit_token_after_proposing_still_refunds_in_the_original_token() {
+    let h = setup();
+    let (first_token, first_mint) = setup_token(&h.env, &h.admin);
+    let first_token_client = token::Client::new(&h.env, &first_token);
+    let (second_token, _second_mint) = setup_token(&h.env, &h.admin);
+    let proposer = Address::generate(&h.env);
+    first_mint.mint(&proposer, &500);
+    h.client
+        .set_proposal_deposit(&Some(first_token.clone()), &100);
+
+    let id = h.propose_as(&proposer);
+    // Reconfigure to a different token before this proposal closes.
+    h.client.set_proposal_deposit(&Some(second_token), &200);
+    h.advance_past_deadline();
+    h.client.finalize(&id);
+
+    assert_eq!(
+        first_token_client.balance(&proposer),
+        500,
+        "must refund in the token this proposal actually paid in, not \
+         whatever is configured now"
+    );
 }
