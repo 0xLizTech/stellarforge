@@ -27,4 +27,6 @@ pub enum RegistryError {
     PageTooLarge = 4,
     /// The directory index would overflow `u32`.
     Overflow = 5,
+    /// The contract is paused; state-changing calls are refused.
+    ContractPaused = 6,
 }

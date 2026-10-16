@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `set_paused`/`paused` on `compliance`, `registry` and `oracle-adapter`, matching `rwa-asset`'s existing emergency pause. Each blocks only its own state-changing writes (`set_kyc`/`revoke_kyc`; `register`/`set_active`; `report`/`override_price`/`add_asset`/`set_max_deviation`/`set_reporter`); reads and `transfer_admin` stay open while paused, so a compromised admin key can always be rotated out and consumers never lose access to data already on record (#126). SDK bindings (`isPaused`/`setPaused`) added to `RegistryClient` and `OracleAdapterClient`.
+- `tools/benchmark`, a CPU/memory/ledger-read-write resource baseline for every entry point across all five Phase 1/2 contracts, regenerated with `cargo run -p stellarforge-benchmark`. Committed at `docs/benchmarks/resource-baseline.md`; see `docs/benchmarks/README.md` for what it does and does not capture (#123).
+- `docs/threat-models/compliance.md` (#129) and `docs/threat-models/registry.md` (#130), each expanding one risk the PRD or internal review named only briefly: stale KYC records, compliance admin compromise, and jurisdiction spoofing for `compliance`; fake/malicious entries, directory spam, delisting, and indexer guidance for `registry`. Linked from the external audit handover's prior-work section.
 - `oracle-adapter` contract, the first Phase 2 contract: a SEP-40 price feed for net asset values (ADR-005). It implements SEP-40's consumer interface (`base`, `assets`, `decimals`, `resolution`, `price`, `prices`, `lastprice`), so a consumer reads it the same way as any SEP-40 oracle.
   - The admin lists assets and authorizes reporters per asset.
   - History is append-only, one price per resolution tick.

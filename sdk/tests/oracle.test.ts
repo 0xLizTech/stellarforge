@@ -460,6 +460,13 @@ describe("OracleAdapterClient read-only queries", () => {
     stubSimulation(fails("HostError: Error(Contract, #4)"));
     await expect(client.lastprice(STELLAR_ASSET)).rejects.toThrow(/HostError: Error\(Contract, #4\)/);
   });
+
+  it("isPaused() queries the paused flag", async () => {
+    const spy = stubSimulation(succeeds(bool(true)));
+    const result = await client.isPaused();
+    expect(result).toBe(true);
+    expect(invocation(spy)).toEqual({ fn: "paused", args: [] });
+  });
 });
 
 describe("OracleAdapterClient write operations", () => {
@@ -538,6 +545,15 @@ describe("OracleAdapterClient write operations", () => {
       fn: "set_reporter",
       args: [assetArgs(asset), REPORTER_ADDR, true],
     });
+  });
+
+  it("setPaused() asserts full args", async () => {
+    stubWritePath();
+    const result = await client.setPaused(ADMIN, true);
+    expect(result).toEqual({ hash: SUBMITTED_HASH, ledger: 42 });
+
+    const tx = await client.buildSetPausedTx(ADMIN, true);
+    expect(builtInvocation(tx)).toEqual({ fn: "set_paused", args: [true] });
   });
 });
 

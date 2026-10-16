@@ -6,6 +6,7 @@ members = [
     "contracts/compliance",
     "contracts/governance",
     "contracts/oracle-adapter",
+    "tools/benchmark",
 ]
 resolver = "2"
 

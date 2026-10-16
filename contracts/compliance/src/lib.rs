@@ -7,7 +7,7 @@ mod error;
 mod events;
 
 pub use error::ComplianceError;
-pub use events::{AdminTransferred, KycRevoked, KycSet};
+pub use events::{AdminTransferred, KycRevoked, KycSet, Paused};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
@@ -16,6 +16,7 @@ use soroban_sdk::{
 use stellarforge_common::{extend_instance, extend_persistent};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
+const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 
 /// Highest verification level on the scale: 0 none, 1 basic, 2 full,
 /// 3 accredited.
@@ -53,6 +54,7 @@ impl ComplianceContract {
     pub fn __constructor(env: Env, admin: Address) {
         admin.require_auth();
         env.storage().instance().set(&ADMIN_KEY, &admin);
+        env.storage().instance().set(&PAUSED_KEY, &false);
 
         extend_instance(&env);
     }
@@ -60,6 +62,7 @@ impl ComplianceContract {
     /// Set or update KYC record for an address.
     pub fn set_kyc(env: Env, subject: Address, record: KycRecord) {
         Self::require_admin(&env);
+        Self::require_not_paused(&env);
         Self::validate_record(&env, &record);
         let key = DataKey::KycStatus(subject.clone());
         env.storage().persistent().set(&key, &record);
@@ -73,6 +76,7 @@ impl ComplianceContract {
     /// Revoke KYC for an address.
     pub fn revoke_kyc(env: Env, subject: Address) {
         Self::require_admin(&env);
+        Self::require_not_paused(&env);
         let key = DataKey::KycStatus(subject.clone());
         let removed: Option<KycRecord> = env.storage().persistent().get(&key);
 
@@ -142,8 +146,35 @@ impl ComplianceContract {
         }
     }
 
+    pub fn paused(env: Env) -> bool {
+        env.storage().instance().get(&PAUSED_KEY).unwrap_or(false)
+    }
+
+    /// Emergency brake on new KYC decisions (IR follow-up: only `rwa-asset`
+    /// could pause; a compromised compliance admin had no circuit breaker).
+    ///
+    /// Blocks `set_kyc`/`revoke_kyc` only. `screen`/`is_compliant` stay open
+    /// while paused: they decide nothing new, and failing them closed would
+    /// make every `rwa-asset` transfer fail the moment compliance pauses,
+    /// turning a brake on bad writes into an outage for every holder with an
+    /// already-valid record. `transfer_admin` also stays open, matching
+    /// `rwa-asset`'s own exemption, so a compromised admin key can still be
+    /// rotated out while paused.
+    pub fn set_paused(env: Env, paused: bool) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&PAUSED_KEY, &paused);
+        extend_instance(&env);
+        events::Paused { paused }.publish(&env);
+    }
+
     fn require_admin(env: &Env) {
         Self::admin(env.clone()).require_auth();
+    }
+
+    fn require_not_paused(env: &Env) {
+        if Self::paused(env.clone()) {
+            panic_with_error!(env, ComplianceError::ContractPaused);
+        }
     }
 
     /// Rejects a record that could only be an input error (IR-08).

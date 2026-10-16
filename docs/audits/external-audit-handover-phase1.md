@@ -182,6 +182,7 @@ A PRD statement not reconciled here, and found not to hold for the audited commi
 - **Internal security review:** [`2026-09-14-internal-review-phase1.md`](2026-09-14-internal-review-phase1.md). It found 17 issues (6 Medium, 8 Low, 3 Info); all are fixed, and each is recorded in [`SECURITY.md`](../SECURITY.md) as SF-2026-003 to SF-2026-019. SF-2026-001 (critical) and SF-2026-002 (high) predate it.
 - **Architecture decisions:** [`docs/architecture/`](../architecture/) — ADR-001 storage keys and TTL, ADR-002 authorization (with amendments), ADR-003 upgrade path, ADR-004 cross-contract interaction.
 - **Requirements:** [`docs/prd/PRODUCT_REQUIREMENTS.md`](../prd/PRODUCT_REQUIREMENTS.md), NFR-S-1 to NFR-S-6 in particular, read alongside §7 above.
+- **Threat models:** [`docs/threat-models/compliance.md`](../threat-models/compliance.md) (stale records, admin key compromise, jurisdiction spoofing) and [`docs/threat-models/registry.md`](../threat-models/registry.md) (fake entries, directory spam, delisting and indexer guidance), each expanding on a risk the PRD's §10.1 or the internal review named only briefly.
 
 ---
 

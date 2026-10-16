@@ -41,4 +41,6 @@ pub enum OracleError {
     InvalidDeviation = 12,
     /// An arithmetic operation overflowed.
     Overflow = 13,
+    /// The contract is paused; state-changing calls are refused.
+    ContractPaused = 14,
 }

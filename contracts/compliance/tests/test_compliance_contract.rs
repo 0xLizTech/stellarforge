@@ -10,7 +10,7 @@ use soroban_sdk::{
 
 use compliance::{
     AdminTransferred, ComplianceContract, ComplianceContractClient, ComplianceError, DataKey,
-    KycRecord, KycRevoked, KycSet, MAX_LEVEL,
+    KycRecord, KycRevoked, KycSet, Paused, MAX_LEVEL,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -475,4 +475,120 @@ fn test_set_kyc_rejects_a_malformed_jurisdiction() {
         &subject,
         &record_in(&h.env, "GB", LEVEL_BASIC, NEVER_EXPIRES),
     );
+}
+
+// ─── Emergency pause (#126) ────────────────────────────────────────────────
+
+#[test]
+fn test_initialize_not_paused() {
+    let h = setup();
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_toggles_the_flag() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+    assert!(h.client.paused());
+
+    h.client.set_paused(&false);
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_emits_event() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![Paused { paused: true }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_set_paused_requires_admin() {
+    let h = setup();
+    let stranger = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_paused",
+            args: (true,).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_paused(&true).is_err());
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_paused_blocks_set_kyc() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    let res = h
+        .client
+        .try_set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    assert_eq!(res, Err(Ok(ComplianceError::ContractPaused.into())));
+    assert!(h.client.get_kyc(&subject).is_none());
+}
+
+#[test]
+fn test_paused_blocks_revoke_kyc() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    h.client.set_paused(&true);
+
+    let res = h.client.try_revoke_kyc(&subject);
+    assert_eq!(res, Err(Ok(ComplianceError::ContractPaused.into())));
+    assert!(h.client.get_kyc(&subject).is_some());
+}
+
+/// The deliberate exemption: a paused compliance contract must not freeze
+/// every rwa-asset transfer, since screen/is_compliant decide nothing new,
+/// they only read what is already on record.
+#[test]
+fn test_paused_does_not_block_screen_or_is_compliant() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    h.client.set_paused(&true);
+
+    assert!(h.client.is_compliant(&subject, &LEVEL_BASIC));
+    assert!(h.client.screen(&subject, &LEVEL_BASIC));
+}
+
+#[test]
+fn test_unpausing_allows_set_kyc_again() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client.set_paused(&true);
+    h.client.set_paused(&false);
+
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    assert_eq!(h.client.get_kyc(&subject).unwrap().level, LEVEL_BASIC);
+}
+
+/// transfer_admin must stay callable while paused, matching rwa-asset's own
+/// exemption, so a compromised admin key can still be rotated out.
+#[test]
+fn test_paused_does_not_block_transfer_admin() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
 }

@@ -10,8 +10,8 @@ use soroban_sdk::{
 
 use oracle_adapter::{
     AdminTransferred, Asset, AssetAdded, AssetConfig, DataKey, MaxDeviationSet,
-    OracleAdapterContract, OracleAdapterContractClient, OracleError, PriceData, PriceOverridden,
-    PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS, MAX_RECORDS,
+    OracleAdapterContract, OracleAdapterContractClient, OracleError, Paused, PriceData,
+    PriceOverridden, PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS, MAX_RECORDS,
 };
 
 const DECIMALS: u32 = 14;
@@ -728,4 +728,144 @@ fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
 
     assert!(h.client.try_transfer_admin(&new_admin).is_err());
     assert_eq!(h.client.admin(), h.admin);
+}
+
+// ─── Emergency pause (#126) ────────────────────────────────────────────────
+
+#[test]
+fn test_initialize_not_paused() {
+    let h = setup();
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_toggles_the_flag() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+    assert!(h.client.paused());
+
+    h.client.set_paused(&false);
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_emits_event() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![Paused { paused: true }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_set_paused_requires_admin() {
+    let h = setup();
+    let stranger = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_paused",
+            args: (true,).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_paused(&true).is_err());
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_paused_blocks_report() {
+    let h = setup();
+    h.client.set_paused(&true);
+
+    let now = h.env.ledger().timestamp();
+    let res = h.client.try_report(&h.reporter, &h.asset, &PRICE, &now);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+    assert!(h.client.lastprice(&h.asset).is_none());
+}
+
+#[test]
+fn test_paused_blocks_override_price() {
+    let h = setup();
+    h.report_now(PRICE);
+    h.client.set_paused(&true);
+
+    let now = h.env.ledger().timestamp();
+    let res = h.client.try_override_price(&h.asset, &(PRICE * 10), &now);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+}
+
+#[test]
+fn test_paused_blocks_add_asset() {
+    let h = setup();
+    h.client.set_paused(&true);
+
+    let res = h.client.try_add_asset(&h.usd(), &500);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+}
+
+#[test]
+fn test_paused_blocks_set_max_deviation() {
+    let h = setup();
+    h.client.set_paused(&true);
+
+    let res = h.client.try_set_max_deviation(&h.asset, &500);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+}
+
+#[test]
+fn test_paused_blocks_set_reporter() {
+    let h = setup();
+    let new_reporter = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    let res = h.client.try_set_reporter(&h.asset, &new_reporter, &true);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+    assert!(!h.client.is_reporter(&h.asset, &new_reporter));
+}
+
+/// SEP-40 reads, plus is_reporter/asset_config, must stay open while paused:
+/// a consumer already holding a NAV should keep being able to read it.
+#[test]
+fn test_paused_does_not_block_reads() {
+    let h = setup();
+    h.report_now(PRICE);
+    h.client.set_paused(&true);
+
+    assert!(h.client.lastprice(&h.asset).is_some());
+    assert_eq!(h.client.base(), h.usd());
+    assert_eq!(h.client.decimals(), DECIMALS);
+    assert_eq!(h.client.resolution(), RESOLUTION);
+    assert!(h.client.is_reporter(&h.asset, &h.reporter));
+    assert!(h.client.asset_config(&h.asset).is_some());
+}
+
+#[test]
+fn test_unpausing_allows_report_again() {
+    let h = setup();
+    h.client.set_paused(&true);
+    h.client.set_paused(&false);
+
+    h.report_now(PRICE);
+    assert_eq!(h.client.lastprice(&h.asset).unwrap().price, PRICE);
+}
+
+/// transfer_admin must stay callable while paused, so a compromised admin
+/// key can still be rotated out.
+#[test]
+fn test_paused_does_not_block_transfer_admin() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
 }

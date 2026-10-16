@@ -45,7 +45,8 @@ mod math;
 
 pub use error::OracleError;
 pub use events::{
-    AdminTransferred, AssetAdded, MaxDeviationSet, PriceOverridden, PriceReported, ReporterSet,
+    AdminTransferred, AssetAdded, MaxDeviationSet, Paused, PriceOverridden, PriceReported,
+    ReporterSet,
 };
 pub use math::{check_price_deviation, tick_of, DeviationCheck};
 
@@ -58,6 +59,7 @@ const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const BASE_KEY: Symbol = symbol_short!("BASE");
 const DECIMALS_KEY: Symbol = symbol_short!("DECIMALS");
 const RESOLUTION_KEY: Symbol = symbol_short!("RES");
+const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 
 /// Most decimals the constructor accepts. At 18, an `i128` still holds prices
 /// up to about 1.7e20 whole units of the base asset, far past any real NAV.
@@ -149,6 +151,7 @@ impl OracleAdapterContract {
         instance.set(&BASE_KEY, &base);
         instance.set(&DECIMALS_KEY, &decimals);
         instance.set(&RESOLUTION_KEY, &resolution);
+        instance.set(&PAUSED_KEY, &false);
 
         extend_instance(&env);
     }
@@ -241,6 +244,7 @@ impl OracleAdapterContract {
     /// the asset's `max_deviation_bps`.
     pub fn report(env: Env, reporter: Address, asset: Asset, price: i128, timestamp: u64) {
         reporter.require_auth();
+        Self::require_not_paused(&env);
         let config = Self::load_config(&env, &asset);
 
         let reporter_key = DataKey::Reporter(asset.clone(), reporter.clone());
@@ -282,6 +286,7 @@ impl OracleAdapterContract {
     /// cannot rewrite history or record a non-positive price.
     pub fn override_price(env: Env, asset: Asset, price: i128, timestamp: u64) {
         Self::admin(env.clone()).require_auth();
+        Self::require_not_paused(&env);
         Self::load_config(&env, &asset);
 
         let (timestamp, previous_price) = Self::record(&env, &asset, price, timestamp, None);
@@ -306,6 +311,7 @@ impl OracleAdapterContract {
     /// check has to be spelled out as a very large value.
     pub fn add_asset(env: Env, asset: Asset, max_deviation_bps: u32) {
         Self::admin(env.clone()).require_auth();
+        Self::require_not_paused(&env);
         Self::validate_deviation(&env, max_deviation_bps);
 
         let config_key = DataKey::Config(asset.clone());
@@ -337,6 +343,7 @@ impl OracleAdapterContract {
     /// Changes a listed asset's deviation limit.
     pub fn set_max_deviation(env: Env, asset: Asset, max_deviation_bps: u32) {
         Self::admin(env.clone()).require_auth();
+        Self::require_not_paused(&env);
         Self::validate_deviation(&env, max_deviation_bps);
         Self::load_config(&env, &asset);
 
@@ -361,6 +368,7 @@ impl OracleAdapterContract {
     /// move the NAV of another.
     pub fn set_reporter(env: Env, asset: Asset, reporter: Address, allowed: bool) {
         Self::admin(env.clone()).require_auth();
+        Self::require_not_paused(&env);
         Self::load_config(&env, &asset);
 
         let key = DataKey::Reporter(asset.clone(), reporter.clone());
@@ -403,6 +411,30 @@ impl OracleAdapterContract {
 
     pub fn admin(env: Env) -> Address {
         Self::instance_get(&env, &ADMIN_KEY)
+    }
+
+    pub fn paused(env: Env) -> bool {
+        env.storage().instance().get(&PAUSED_KEY).unwrap_or(false)
+    }
+
+    /// Emergency brake on new price data (IR follow-up: only `rwa-asset`
+    /// could pause; a compromised oracle admin or reporter had no circuit
+    /// breaker).
+    ///
+    /// Blocks `report`, `override_price`, `add_asset`, `set_max_deviation`
+    /// and `set_reporter`. The SEP-40 read side (`base`, `assets`, `decimals`,
+    /// `resolution`, `price`, `prices`, `lastprice`) and `is_reporter`/
+    /// `asset_config` stay open while paused: a consumer already holding a
+    /// NAV should keep being able to read it, and pausing should stop new,
+    /// possibly-compromised price data from being recorded, not hide prices
+    /// already on record. `transfer_admin` also stays open, matching the
+    /// Phase 1 contracts' own exemption, so a compromised admin key can still
+    /// be rotated out while paused.
+    pub fn set_paused(env: Env, paused: bool) {
+        Self::admin(env.clone()).require_auth();
+        env.storage().instance().set(&PAUSED_KEY, &paused);
+        extend_instance(&env);
+        events::Paused { paused }.publish(&env);
     }
 
     pub fn is_reporter(env: Env, asset: Asset, reporter: Address) -> bool {
@@ -487,6 +519,12 @@ impl OracleAdapterContract {
     fn validate_deviation(env: &Env, max_deviation_bps: u32) {
         if max_deviation_bps == 0 {
             panic_with_error!(env, OracleError::InvalidDeviation);
+        }
+    }
+
+    fn require_not_paused(env: &Env) {
+        if Self::paused(env.clone()) {
+            panic_with_error!(env, OracleError::ContractPaused);
         }
     }
 
