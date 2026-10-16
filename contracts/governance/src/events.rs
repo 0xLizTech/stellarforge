@@ -57,3 +57,11 @@ pub struct AdminTransferred {
     pub previous: Address,
     pub new_admin: Address,
 }
+
+/// Published by `set_weight_source`, matching `rwa-asset`'s `ComplianceSet`
+/// (no topic, since there is only ever one weight source to watch).
+#[contractevent(topics = ["weight_source"], data_format = "map")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeightSourceSet {
+    pub weight_source: Option<Address>,
+}
