@@ -39,4 +39,11 @@ pub enum GovernanceError {
     InvalidVotingPeriod = 10,
     /// `propose` was given a title longer than `MAX_TITLE_BYTES`.
     TitleTooLong = 11,
+    /// `cancel_proposal` was called by neither the proposer nor the admin.
+    NotAuthorizedToCancel = 12,
+    /// `cancel_proposal` was called after the proposal had already received a
+    /// vote.
+    ProposalAlreadyHasVotes = 13,
+    /// `list_proposals` was given a `limit` above `MAX_PAGE_SIZE`.
+    PageTooLarge = 14,
 }

@@ -10,8 +10,8 @@ use soroban_sdk::{
 
 use governance::{
     AdminTransferred, DataKey, GovernanceContract, GovernanceContractClient, GovernanceError,
-    ProposalCreated, ProposalFinalized, ProposalStatus, VoteCast, MAX_TITLE_BYTES,
-    MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
+    ProposalCancelled, ProposalCreated, ProposalFinalized, ProposalStatus, VoteCast, MAX_PAGE_SIZE,
+    MAX_TITLE_BYTES, MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -34,8 +34,12 @@ impl Harness<'_> {
 
     fn propose_for(&self, voting_period: u32) -> u64 {
         let proposer = Address::generate(&self.env);
+        self.propose_by(&proposer, voting_period)
+    }
+
+    fn propose_by(&self, proposer: &Address, voting_period: u32) -> u64 {
         self.client.propose(
-            &proposer,
+            proposer,
             &String::from_str(&self.env, "Raise the protocol fee"),
             &Bytes::from_array(&self.env, &[7u8; 32]),
             &voting_period,
@@ -622,4 +626,209 @@ fn test_title_longer_than_the_cap_is_rejected() {
         &VOTING_PERIOD,
     );
     assert_eq!(res, Err(Ok(GovernanceError::TitleTooLong.into())));
+}
+
+// ─── Proposal cancellation (#137) ──────────────────────────────────────────
+
+#[test]
+fn test_proposer_can_cancel_their_own_proposal_before_any_vote() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+
+    h.client.cancel_proposal(&proposer, &id);
+
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Cancelled
+    );
+}
+
+#[test]
+fn test_admin_can_cancel_a_proposal_they_did_not_create() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+
+    h.client.cancel_proposal(&h.admin, &id);
+
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Cancelled
+    );
+}
+
+#[test]
+fn test_cancellation_by_neither_proposer_nor_admin_is_rejected() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+    let stranger = Address::generate(&h.env);
+
+    let res = h.client.try_cancel_proposal(&stranger, &id);
+    assert_eq!(res, Err(Ok(GovernanceError::NotAuthorizedToCancel.into())));
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Active
+    );
+}
+
+#[test]
+fn test_cancellation_after_a_vote_is_rejected() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+    h.client.vote(&Address::generate(&h.env), &id, &true, &1);
+
+    let res = h.client.try_cancel_proposal(&proposer, &id);
+    assert_eq!(
+        res,
+        Err(Ok(GovernanceError::ProposalAlreadyHasVotes.into()))
+    );
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Active
+    );
+}
+
+#[test]
+fn test_cancellation_after_a_single_against_vote_is_also_rejected() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+    h.client.vote(&Address::generate(&h.env), &id, &false, &1);
+
+    let res = h.client.try_cancel_proposal(&proposer, &id);
+    assert_eq!(
+        res,
+        Err(Ok(GovernanceError::ProposalAlreadyHasVotes.into()))
+    );
+}
+
+#[test]
+fn test_cancelling_an_already_cancelled_proposal_is_rejected() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+    h.client.cancel_proposal(&proposer, &id);
+
+    let res = h.client.try_cancel_proposal(&proposer, &id);
+    assert_eq!(res, Err(Ok(GovernanceError::ProposalNotActive.into())));
+}
+
+#[test]
+fn test_cancelling_a_finalized_proposal_is_rejected() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+    h.advance_past_deadline();
+    h.client.finalize(&id);
+
+    let res = h.client.try_cancel_proposal(&proposer, &id);
+    assert_eq!(res, Err(Ok(GovernanceError::ProposalNotActive.into())));
+}
+
+#[test]
+fn test_cancelling_an_unknown_proposal_is_rejected() {
+    let h = setup();
+    let res = h.client.try_cancel_proposal(&h.admin, &99);
+    assert_eq!(res, Err(Ok(GovernanceError::ProposalNotFound.into())));
+}
+
+#[test]
+fn test_votes_reject_a_cancelled_proposal() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+    h.client.cancel_proposal(&proposer, &id);
+
+    let res = h
+        .client
+        .try_vote(&Address::generate(&h.env), &id, &true, &100);
+    assert_eq!(res, Err(Ok(GovernanceError::ProposalNotActive.into())));
+}
+
+#[test]
+fn test_finalize_rejects_a_cancelled_proposal() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+    h.client.cancel_proposal(&proposer, &id);
+    h.advance_past_deadline();
+
+    let res = h.client.try_finalize(&id);
+    assert_eq!(res, Err(Ok(GovernanceError::ProposalNotActive.into())));
+}
+
+#[test]
+fn test_cancel_proposal_emits_event() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+
+    h.client.cancel_proposal(&proposer, &id);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![ProposalCancelled {
+            proposal_id: id,
+            cancelled_by: proposer,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+// ─── Proposal pagination (#138) ────────────────────────────────────────────
+
+#[test]
+fn test_list_proposals_returns_an_empty_page_when_there_are_none() {
+    let h = setup();
+    assert_eq!(h.client.list_proposals(&0, &MAX_PAGE_SIZE).len(), 0);
+}
+
+#[test]
+fn test_pages_partition_proposals_in_creation_order() {
+    let h = setup();
+    let ids: std::vec::Vec<u64> = (0..7).map(|_| h.propose()).collect();
+
+    let mut walked = std::vec::Vec::new();
+    let mut start = 0;
+    loop {
+        let page = h.client.list_proposals(&start, &3);
+        walked.extend(page.iter().map(|p| p.id));
+        if page.len() < 3 {
+            break;
+        }
+        start += 3;
+    }
+
+    assert_eq!(walked, ids);
+}
+
+#[test]
+fn test_a_page_past_the_end_is_empty() {
+    let h = setup();
+    h.propose();
+    h.propose();
+
+    assert_eq!(h.client.list_proposals(&2, &MAX_PAGE_SIZE).len(), 0);
+    assert_eq!(h.client.list_proposals(&u32::MAX, &MAX_PAGE_SIZE).len(), 0);
+}
+
+#[test]
+fn test_an_oversized_page_is_rejected() {
+    let h = setup();
+    let res = h.client.try_list_proposals(&0, &(MAX_PAGE_SIZE + 1));
+    assert_eq!(res, Err(Ok(GovernanceError::PageTooLarge.into())));
+}
+
+#[test]
+fn test_list_proposals_reflects_cancelled_status() {
+    let h = setup();
+    let proposer = Address::generate(&h.env);
+    let id = h.propose_by(&proposer, VOTING_PERIOD);
+    h.client.cancel_proposal(&proposer, &id);
+
+    let page = h.client.list_proposals(&0, &MAX_PAGE_SIZE);
+    assert_eq!(page.get(0).unwrap().status, ProposalStatus::Cancelled);
 }
