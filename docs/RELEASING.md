@@ -48,6 +48,11 @@ An owner of the `stellarforge-protocol` npm organization does this once.
 
 ## Every release
 
+Open a [release checklist issue](https://github.com/0xLizTech/stellarforge/issues/new?template=release_checklist.md)
+to track the source revision, changelog, hashes, signing decisions, and publication
+evidence. The checklist covers both SDK releases and optional contract artifacts;
+mark steps outside the release scope as inapplicable with a reason.
+
 1. In `sdk/`, run `npm version <x.y.z> --no-git-tag-version`, add the release to
    `CHANGELOG.md`, and merge that to `main`.
 2. Publish a GitHub Release from `main` tagged `v<x.y.z>`. The workflow refuses
