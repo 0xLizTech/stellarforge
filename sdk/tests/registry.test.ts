@@ -165,6 +165,24 @@ describe("RegistryClient.admin", () => {
   });
 });
 
+describe("RegistryClient.isPaused", () => {
+  it("decodes true", async () => {
+    stubSimulation(succeeds(bool(true)));
+    await expect(new RegistryClient(registryConfig).isPaused()).resolves.toBe(true);
+  });
+
+  it("decodes false", async () => {
+    stubSimulation(succeeds(bool(false)));
+    await expect(new RegistryClient(registryConfig).isPaused()).resolves.toBe(false);
+  });
+
+  it("invokes `paused`", async () => {
+    const spy = stubSimulation(succeeds(bool(false)));
+    await new RegistryClient(registryConfig).isPaused();
+    expect(invocation(spy)).toEqual({ fn: "paused", args: [] });
+  });
+});
+
 describe("RegistryClient read failures", () => {
   it("surfaces the simulation error message", async () => {
     stubSimulation(fails("HostError: Error(Contract, #3)"));
@@ -212,9 +230,16 @@ describe("RegistryClient write builders", () => {
     expect(builtInvocation(tx)).toEqual({ fn: "set_active", args: [RWA_ID, false] });
   });
 
+  it("invokes `set_paused` with the flag", async () => {
+    stubWritePath();
+    const tx = await new RegistryClient(registryConfig).buildSetPausedTx(ADMIN, true);
+    expect(builtInvocation(tx)).toEqual({ fn: "set_paused", args: [true] });
+  });
+
   it.each([
     { name: "register", build: (c: RegistryClient) => c.buildRegisterTx(ADMIN, SAMPLE_ENTRY) },
     { name: "setActive", build: (c: RegistryClient) => c.buildSetActiveTx(ADMIN, RWA_ID, true) },
+    { name: "setPaused", build: (c: RegistryClient) => c.buildSetPausedTx(ADMIN, true) },
   ])("$name sources the transaction from the admin", async ({ build }) => {
     const stubs = stubWritePath();
     const tx = await build(new RegistryClient(registryConfig));
@@ -244,6 +269,7 @@ describe("RegistryClient write submission", () => {
   it.each([
     { name: "register", call: (c: RegistryClient) => c.register(ADMIN, SAMPLE_ENTRY) },
     { name: "setActive", call: (c: RegistryClient) => c.setActive(ADMIN, RWA_ID, false) },
+    { name: "setPaused", call: (c: RegistryClient) => c.setPaused(ADMIN, true) },
   ])("$name reports the settled transaction", async ({ call }) => {
     stubWritePath();
     await expect(call(new RegistryClient(signerConfig))).resolves.toEqual({

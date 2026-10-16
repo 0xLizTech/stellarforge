@@ -10,7 +10,7 @@ use soroban_sdk::{
 };
 
 use registry::{
-    ActiveSet, AdminTransferred, AssetEntry, AssetRegistered, DataKey, RegistryContract,
+    ActiveSet, AdminTransferred, AssetEntry, AssetRegistered, DataKey, Paused, RegistryContract,
     RegistryContractClient, RegistryError, MAX_PAGE_SIZE,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
@@ -498,4 +498,120 @@ fn test_transfer_admin_emits_event() {
         }
         .to_xdr(&h.env, &h.contract_id)],
     );
+}
+
+// ─── Emergency pause (#126) ────────────────────────────────────────────────
+
+#[test]
+fn test_initialize_not_paused() {
+    let h = setup();
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_toggles_the_flag() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+    assert!(h.client.paused());
+
+    h.client.set_paused(&false);
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_emits_event() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![Paused { paused: true }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_set_paused_requires_admin() {
+    let h = setup();
+    let stranger = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_paused",
+            args: (true,).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_paused(&true).is_err());
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_paused_blocks_register() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    let res = h
+        .client
+        .try_register(&entry(&h.env, &asset, "real_estate", true));
+    assert_eq!(res, Err(Ok(RegistryError::ContractPaused.into())));
+    assert!(h.client.get_asset(&asset).is_none());
+}
+
+#[test]
+fn test_paused_blocks_set_active() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+    h.client.set_paused(&true);
+
+    let res = h.client.try_set_active(&asset, &false);
+    assert_eq!(res, Err(Ok(RegistryError::ContractPaused.into())));
+    assert!(h.client.get_asset(&asset).unwrap().active);
+}
+
+/// Reads must stay open while paused: a pause stops new/altered directory
+/// entries, not the ability to look up ones already on record.
+#[test]
+fn test_paused_does_not_block_reads() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+    h.client.set_paused(&true);
+
+    assert!(h.client.get_asset(&asset).is_some());
+    assert_eq!(h.client.list_assets(&0, &MAX_PAGE_SIZE).len(), 1);
+    assert_eq!(h.client.asset_count(), 1);
+}
+
+#[test]
+fn test_unpausing_allows_register_again() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client.set_paused(&true);
+    h.client.set_paused(&false);
+
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+    assert!(h.client.get_asset(&asset).is_some());
+}
+
+/// transfer_admin must stay callable while paused, so a compromised admin
+/// key can still be rotated out.
+#[test]
+fn test_paused_does_not_block_transfer_admin() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
 }
