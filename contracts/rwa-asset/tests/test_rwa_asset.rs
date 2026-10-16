@@ -555,6 +555,127 @@ fn test_admin_write_paths_extend_what_they_write() {
     assert_eq!(metadata_ttl, max_ttl);
 }
 
+// ─── Storage lifetime (#120) ────────────────────────────────────────────────
+//
+// IR-07 fixed the TTL gap in update_metadata and transfer_admin specifically.
+// This section proves every OTHER persistent key family rwa-asset writes is
+// also covered by the shared TTL policy: Balance, TotalSupply, Allowance and
+// Issuer previously had no test that would fail if their extend_persistent
+// call were removed. Each test below advances the ledger past the previous
+// write first, so the assertion is on the TTL the write path under test
+// actually restored, not one left over from an earlier call in the same
+// test (mint/set_issuer in setup already write some of these keys once).
+
+fn ttl_of(env: &Env, contract_id: &Address, key: &DataKey) -> u32 {
+    env.as_contract(contract_id, || env.storage().persistent().get_ttl(key))
+}
+
+fn max_ttl(env: &Env, contract_id: &Address) -> u32 {
+    env.as_contract(contract_id, || env.storage().max_ttl())
+}
+
+#[test]
+fn test_set_issuer_extends_what_it_writes() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.set_issuer(&issuer, &true);
+
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Issuer(issuer)),
+        max_ttl(&env, &client.address)
+    );
+}
+
+#[test]
+fn test_mint_extends_balance_and_total_supply() {
+    let (env, issuer_admin, client) = setup();
+    client.set_issuer(&issuer_admin, &true);
+    let recipient = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.mint(&issuer_admin, &recipient, &(100 * UNIT));
+
+    let max = max_ttl(&env, &client.address);
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Balance(recipient)),
+        max
+    );
+    assert_eq!(ttl_of(&env, &client.address, &DataKey::TotalSupply), max);
+}
+
+#[test]
+fn test_transfer_extends_both_balances() {
+    let (env, issuer_admin, client) = setup();
+    client.set_issuer(&issuer_admin, &true);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&issuer_admin, &alice, &(500 * UNIT));
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.transfer(&alice, &bob, &(200 * UNIT));
+
+    let max = max_ttl(&env, &client.address);
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Balance(alice)),
+        max,
+        "the sender's balance must be re-extended, not just the recipient's"
+    );
+    assert_eq!(ttl_of(&env, &client.address, &DataKey::Balance(bob)), max);
+}
+
+#[test]
+fn test_burn_extends_balance_and_total_supply() {
+    let (env, issuer_admin, client) = setup();
+    client.set_issuer(&issuer_admin, &true);
+    let alice = Address::generate(&env);
+    client.mint(&issuer_admin, &alice, &(500 * UNIT));
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.burn(&alice, &(100 * UNIT));
+
+    let max = max_ttl(&env, &client.address);
+    assert_eq!(ttl_of(&env, &client.address, &DataKey::Balance(alice)), max);
+    assert_eq!(ttl_of(&env, &client.address, &DataKey::TotalSupply), max);
+}
+
+#[test]
+fn test_approve_extends_the_allowance() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.approve(&alice, &bob, &(400 * UNIT), &(600_000 + LIVE_UNTIL));
+
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Allowance(alice, bob)),
+        max_ttl(&env, &client.address)
+    );
+}
+
+#[test]
+fn test_transfer_from_extends_the_spent_allowance() {
+    let (env, issuer_admin, client) = setup();
+    client.set_issuer(&issuer_admin, &true);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+    client.mint(&issuer_admin, &alice, &(500 * UNIT));
+    client.approve(&alice, &bob, &(400 * UNIT), &(700_000));
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.transfer_from(&bob, &alice, &carol, &(100 * UNIT));
+
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Allowance(alice, bob)),
+        max_ttl(&env, &client.address),
+        "spend_allowance's own write, shared by transfer_from and burn_from, \
+         must extend the allowance it just reduced"
+    );
+}
+
 /// The constructor must validate too, or a contract could be deployed holding
 /// metadata that `update_metadata` would refuse. Asserted as a panic because
 /// `Env::register` has no fallible form.
