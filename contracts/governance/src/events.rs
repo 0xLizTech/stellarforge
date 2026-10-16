@@ -57,3 +57,15 @@ pub struct AdminTransferred {
     pub previous: Address,
     pub new_admin: Address,
 }
+
+/// Published by `cancel_proposal`. `cancelled_by` is data rather than a
+/// topic: a topic filter on `proposal_id` already finds this alongside every
+/// other event in that proposal's history, and who cancelled it matters far
+/// less often than that it was.
+#[contractevent(topics = ["cancel_proposal"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalCancelled {
+    #[topic]
+    pub proposal_id: u64,
+    pub cancelled_by: Address,
+}

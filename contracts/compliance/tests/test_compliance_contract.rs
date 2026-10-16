@@ -5,12 +5,12 @@ use soroban_sdk::{
         storage::{Instance as _, Persistent as _},
         Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Env, Event, IntoVal, String,
+    Address, Env, Event, IntoVal, String, Vec,
 };
 
 use compliance::{
     AdminTransferred, ComplianceContract, ComplianceContractClient, ComplianceError, DataKey,
-    KycRecord, KycRevoked, KycSet, MAX_LEVEL,
+    KycRecord, KycRevoked, KycSet, MAX_BATCH_SIZE, MAX_LEVEL,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -475,4 +475,232 @@ fn test_set_kyc_rejects_a_malformed_jurisdiction() {
         &subject,
         &record_in(&h.env, "GB", LEVEL_BASIC, NEVER_EXPIRES),
     );
+}
+
+// ─── Batch KYC set/revoke (#140) ───────────────────────────────────────────
+
+#[test]
+fn test_set_kyc_batch_stores_every_record() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+
+    h.client.set_kyc_batch(&Vec::from_array(
+        &h.env,
+        [
+            (alice.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES)),
+            (bob.clone(), h.record(LEVEL_FULL, NEVER_EXPIRES)),
+        ],
+    ));
+
+    assert_eq!(h.client.get_kyc(&alice).unwrap().level, LEVEL_BASIC);
+    assert_eq!(h.client.get_kyc(&bob).unwrap().level, LEVEL_FULL);
+}
+
+#[test]
+fn test_set_kyc_batch_emits_one_event_per_record() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+    let alice_record = h.record(LEVEL_BASIC, NEVER_EXPIRES);
+    let bob_record = h.record(LEVEL_FULL, NEVER_EXPIRES);
+
+    h.client.set_kyc_batch(&Vec::from_array(
+        &h.env,
+        [
+            (alice.clone(), alice_record.clone()),
+            (bob.clone(), bob_record.clone()),
+        ],
+    ));
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![
+            KycSet {
+                subject: alice,
+                record: alice_record,
+            }
+            .to_xdr(&h.env, &h.contract_id),
+            KycSet {
+                subject: bob,
+                record: bob_record,
+            }
+            .to_xdr(&h.env, &h.contract_id),
+        ],
+    );
+}
+
+#[test]
+fn test_set_kyc_batch_requires_admin() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &subject,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_kyc_batch",
+            args: (Vec::from_array(
+                &h.env,
+                [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))],
+            ),)
+                .into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h
+        .client
+        .try_set_kyc_batch(&Vec::from_array(
+            &h.env,
+            [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))],
+        ))
+        .is_err());
+    assert!(h.client.get_kyc(&subject).is_none());
+}
+
+/// The partial-failure case the issue asks for: one bad record must not let
+/// the records before it in the batch land while the rest are silently
+/// dropped. Every record is validated before any of them are written, so a
+/// batch is all-or-nothing.
+#[test]
+fn test_set_kyc_batch_is_atomic_one_invalid_record_rejects_the_whole_batch() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+
+    let res = h.client.try_set_kyc_batch(&Vec::from_array(
+        &h.env,
+        [
+            (alice.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES)),
+            (bob.clone(), h.record(MAX_LEVEL + 1, NEVER_EXPIRES)),
+        ],
+    ));
+
+    assert_eq!(res, Err(Ok(ComplianceError::InvalidLevel.into())));
+    // Checked before any further client call, since events().all() reflects
+    // only the most recent invocation.
+    assert!(h.env.events().all().events().is_empty());
+    // Neither record landed, including alice's, which was valid and sorted
+    // before the bad one.
+    assert!(h.client.get_kyc(&alice).is_none());
+    assert!(h.client.get_kyc(&bob).is_none());
+}
+
+#[test]
+fn test_set_kyc_batch_above_the_cap_is_rejected() {
+    let h = setup();
+    let mut records = Vec::new(&h.env);
+    for _ in 0..(MAX_BATCH_SIZE + 1) {
+        records.push_back((
+            Address::generate(&h.env),
+            h.record(LEVEL_BASIC, NEVER_EXPIRES),
+        ));
+    }
+
+    let res = h.client.try_set_kyc_batch(&records);
+    assert_eq!(res, Err(Ok(ComplianceError::BatchTooLarge.into())));
+}
+
+#[test]
+fn test_set_kyc_batch_at_the_cap_is_accepted() {
+    let h = setup();
+    let mut records = Vec::new(&h.env);
+    for _ in 0..MAX_BATCH_SIZE {
+        records.push_back((
+            Address::generate(&h.env),
+            h.record(LEVEL_BASIC, NEVER_EXPIRES),
+        ));
+    }
+
+    h.client.set_kyc_batch(&records);
+    assert_eq!(h.env.events().all().events().len(), MAX_BATCH_SIZE as usize);
+}
+
+#[test]
+fn test_set_kyc_batch_extends_every_record_to_the_network_maximum() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+
+    h.client.set_kyc_batch(&Vec::from_array(
+        &h.env,
+        [
+            (alice.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES)),
+            (bob.clone(), h.record(LEVEL_FULL, NEVER_EXPIRES)),
+        ],
+    ));
+
+    assert_eq!(h.ttl_of(&alice), h.max_ttl());
+    assert_eq!(h.ttl_of(&bob), h.max_ttl());
+}
+
+#[test]
+fn test_revoke_kyc_batch_removes_every_record() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+    h.client
+        .set_kyc(&alice, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    h.client.set_kyc(&bob, &h.record(LEVEL_FULL, NEVER_EXPIRES));
+
+    h.client
+        .revoke_kyc_batch(&Vec::from_array(&h.env, [alice.clone(), bob.clone()]));
+
+    assert!(h.client.get_kyc(&alice).is_none());
+    assert!(h.client.get_kyc(&bob).is_none());
+}
+
+#[test]
+fn test_revoke_kyc_batch_skips_unknown_subjects_without_erroring() {
+    let h = setup();
+    let known = Address::generate(&h.env);
+    let unknown = Address::generate(&h.env);
+    h.client
+        .set_kyc(&known, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+
+    h.client
+        .revoke_kyc_batch(&Vec::from_array(&h.env, [known.clone(), unknown.clone()]));
+
+    // One event for the subject that actually had a record, none for the
+    // unknown one. Checked before any further client call, since
+    // events().all() reflects only the most recent invocation.
+    assert_eq!(h.env.events().all().events().len(), 1);
+    assert!(h.client.get_kyc(&known).is_none());
+}
+
+#[test]
+fn test_revoke_kyc_batch_requires_admin() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+
+    h.env.mock_auths(&[MockAuth {
+        address: &subject,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "revoke_kyc_batch",
+            args: (Vec::from_array(&h.env, [subject.clone()]),).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h
+        .client
+        .try_revoke_kyc_batch(&Vec::from_array(&h.env, [subject.clone()]))
+        .is_err());
+    assert!(h.client.get_kyc(&subject).is_some());
+}
+
+#[test]
+fn test_revoke_kyc_batch_above_the_cap_is_rejected() {
+    let h = setup();
+    let mut subjects = Vec::new(&h.env);
+    for _ in 0..(MAX_BATCH_SIZE + 1) {
+        subjects.push_back(Address::generate(&h.env));
+    }
+
+    let res = h.client.try_revoke_kyc_batch(&subjects);
+    assert_eq!(res, Err(Ok(ComplianceError::BatchTooLarge.into())));
 }
