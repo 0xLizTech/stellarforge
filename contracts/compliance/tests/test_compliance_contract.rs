@@ -345,6 +345,22 @@ fn test_transfer_admin_moves_the_role() {
     assert_eq!(h.client.admin(), new_admin);
 }
 
+/// #120. `test_set_kyc_extends_to_the_network_maximum` already checks
+/// instance TTL, but only after `set_kyc`, never after `transfer_admin`
+/// itself. `extend_instance` is one shared function, so this mostly proves
+/// the same thing twice — but it closes the one call site that otherwise had
+/// no test exercising it directly.
+#[test]
+fn test_transfer_admin_extends_the_instance() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
+}
+
 /// NFR-S-4 is dual authorization, not "the admin signs". Only the current
 /// admin's signature is supplied here, which must not be enough.
 #[test]
