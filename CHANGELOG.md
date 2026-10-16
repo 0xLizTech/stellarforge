@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `governance`: `cancel_proposal(caller, proposal_id)`, letting the proposer or the admin withdraw a mistaken proposal before it has received a single vote. Publishes `ProposalCancelled`. Restricted to pre-first-vote so a cancellation can never erase a vote a voter already committed (#137).
+- `governance`: `list_proposals(start, limit)`, paging proposals in creation order, capped at `MAX_PAGE_SIZE` (100) per call, matching `registry::list_assets`'s pagination pattern (#138).
+- `compliance`: `set_kyc_batch(records)` and `revoke_kyc_batch(subjects)`, each capped at `MAX_BATCH_SIZE` (50) per call. `set_kyc_batch` validates every record before writing any of them, so a batch lands in full or not at all; one `KycSet`/`KycRevoked` is published per record, same as the single-address entry points (#140).
 - `oracle-adapter` contract, the first Phase 2 contract: a SEP-40 price feed for net asset values (ADR-005). It implements SEP-40's consumer interface (`base`, `assets`, `decimals`, `resolution`, `price`, `prices`, `lastprice`), so a consumer reads it the same way as any SEP-40 oracle.
   - The admin lists assets and authorizes reporters per asset.
   - History is append-only, one price per resolution tick.
