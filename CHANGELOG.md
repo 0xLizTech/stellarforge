@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Rust-analyzer settings in `.vscode/settings.json` enabling the `testutils` feature and configuring clippy as the check command (#83).
+- Root `.editorconfig` specifying indentation, LF line endings, and whitespace trimming across Rust, TypeScript, JSON, YAML, and Markdown (#84).
+- Grouped `make help` target generated with `awk` displaying one-line descriptions for all targets across contracts, sdk, and release (#87).
+- `sdk-lint` and `sdk-typecheck` Makefile targets, and updated `make all` to verify both contracts and SDK (#88).
 - `oracle-adapter` contract, the first Phase 2 contract: a SEP-40 price feed for net asset values (ADR-005). It implements SEP-40's consumer interface (`base`, `assets`, `decimals`, `resolution`, `price`, `prices`, `lastprice`), so a consumer reads it the same way as any SEP-40 oracle.
   - The admin lists assets and authorizes reporters per asset.
   - History is append-only, one price per resolution tick.
