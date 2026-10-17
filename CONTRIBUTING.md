@@ -318,6 +318,45 @@ npm run test:smoke:write
 
 The **Testnet Smoke** workflow runs it on every dispatch, against a fresh deployment it configures through `SMOKE_WRITE_SETUP`.
 
+#### Step-by-Step Guide for New Contributors
+
+To run the smoke tests locally against testnet for the first time:
+
+1. **Generate and Fund Testnet Accounts with Friendbot**:
+   ```bash
+   # Generate keypairs for deployer/issuer and spender
+   stellar keys generate testnet-issuer --network testnet
+   stellar keys fund testnet-issuer --network testnet
+
+   stellar keys generate testnet-spender --network testnet
+   stellar keys fund testnet-spender --network testnet
+
+   # Generate a recipient address (needs no XLM funding)
+   stellar keys generate testnet-recipient --network testnet
+   ```
+
+2. **Friendbot Rate Limits**:
+   > **Note on Friendbot Rate Limits**: Stellar Friendbot enforces rate limits per IP address and account.
+   > - If you receive an HTTP 429 (Too Many Requests), wait 60 seconds before retrying.
+   > - Reuse existing funded testnet keypairs (`stellar keys list`) rather than generating new keys for each test run.
+   > - You can check your account balance anytime with: `stellar keys fund <account-name> --network testnet`.
+
+3. **Deploy Contracts and Run Smoke Tests**:
+   ```bash
+   # Extract secrets
+   export SMOKE_WRITE_ISSUER_SECRET=$(stellar keys secret testnet-issuer)
+   export SMOKE_WRITE_SPENDER_SECRET=$(stellar keys secret testnet-spender)
+   export SMOKE_WRITE_RECIPIENT_ADDRESS=$(stellar keys address testnet-recipient)
+
+   # Deploy contracts or use deployed-contracts.json
+   make deploy-testnet
+
+   # Run test suites
+   cd sdk
+   npm run test:smoke
+   npm run test:smoke:write
+   ```
+
 ### Coverage targets (aspirational, not enforced in CI yet)
 
 | Layer | Target |
