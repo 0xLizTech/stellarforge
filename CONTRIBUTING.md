@@ -51,6 +51,15 @@ Serious or repeated violations may result in removal from the project. Report is
 
 **Experienced contributor?** Jump straight into the [Roadmap](ROADMAP.md) and pick up a Phase 2 or 3 task that excites you, then open a discussion before building.
 
+### Issue Label Taxonomy
+
+We organize issues using structured label prefixes defined in `.github/labels.yml`:
+
+- **Type (`type/*`)**: `type/bug`, `type/feature`, `type/docs`, `type/refactor`, `type/security`
+- **Area (`area/*`)**: `area/contracts` (Soroban crates), `area/sdk` (TypeScript SDK), `area/docs` (architecture & guides), `area/ci` (workflows & release automation)
+- **Phase (`phase/*`)**: `phase/1-foundation`, `phase/2-fractionalization`, `phase/3-defi`
+- **Difficulty (`difficulty/*`)**: `difficulty/starter`, `difficulty/medium`, `difficulty/advanced`
+
 ---
 
 ## Development Setup
