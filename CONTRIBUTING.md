@@ -245,6 +245,12 @@ Keep the subject line under 72 characters. Use the body for _why_, not _what_.
 
 ### PR size guidelines
 
+PRs are automatically labeled by total lines changed:
+- `size/S`: 0–100 lines changed (ideal for fast review)
+- `size/M`: 101–500 lines changed
+- `size/L`: 501–1,000 lines changed
+- `size/XL`: >1,000 lines changed (automated warning; strongly consider splitting into smaller pull requests)
+
 - **Small PRs merge faster.** Keep each PR focused on a single concern.
 - If a feature naturally requires multiple contracts or layers, split it across linked PRs.
 - Documentation-only PRs can be larger.
