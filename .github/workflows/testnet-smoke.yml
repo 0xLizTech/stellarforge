@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # rustup installs the exact toolchain, target and components pinned in
       # rust-toolchain.toml, so CI builds what a release is reproduced from.
@@ -99,7 +99,7 @@ jobs:
           stellar contract invoke --id "$compliance" --network "$NETWORK" \
             --source "$DEPLOYER" --send=no -- admin
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: "22"
           cache: "npm"
@@ -160,7 +160,7 @@ jobs:
       # failure by hand against the same deployment.
       - name: Upload the deployment record
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf6581a12fe42986043a # v4.4.3
         with:
           name: deployed-contracts
           path: deployed-contracts.json
