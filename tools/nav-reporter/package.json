@@ -1,0 +1,28 @@
+{
+  "name": "@stellarforge-protocol/nav-reporter",
+  "version": "0.1.0",
+  "description": "Signed-appraisal NAV reporter CLI for the StellarForge oracle adapter",
+  "bin": {
+    "stellarforge-nav-reporter": "./dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts src/cli.ts --format cjs,esm --dts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^17.0.1",
+    "@stellarforge-protocol/sdk": "file:../../sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
