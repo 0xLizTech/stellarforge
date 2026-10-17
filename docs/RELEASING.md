@@ -59,3 +59,13 @@ An owner of the `stellarforge-protocol` npm organization does this once.
 Run **Actions → Publish SDK → Run workflow** and leave **dry run** ticked. It
 waits for environment approval, then runs every check and packs the tarball,
 but publishes nothing.
+
+## Verifying Provenance and Signatures for Consumers
+
+Consumers can verify that the published npm tarball was built from this exact repository and commit using:
+
+```bash
+npm audit signatures
+```
+
+Every release published with `--provenance` creates a cryptographically signed attestation on the public Sigstore ledger certifying source repository, git commit, and GitHub Actions workflow identity.
