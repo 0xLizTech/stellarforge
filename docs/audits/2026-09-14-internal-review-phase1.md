@@ -422,7 +422,7 @@ the sha256 of each release wasm alongside the tag.
 
 **Severity:** Low  **Location:** `.github/workflows/contracts-ci.yml`, `testnet-smoke.yml`, `publish-sdk.yml`
 
-**Status:** Fixed in `d1f0ad7`, with one step outside the repository. `Swatinem/rust-cache` is pinned to the commit behind v2.9.2, and the `stellar-cli` tarball is checked against a pinned sha256. `publish-sdk` runs in the `npm-publish` environment, but that environment's required reviewers must still be configured in the repository settings.
+**Status:** Fixed in `d1f0ad7` and verified. `Swatinem/rust-cache` is pinned to the commit behind v2.9.2, and the `stellar-cli` tarball is checked against a pinned sha256. `publish-sdk` runs in the `npm-publish` environment, with required reviewer configuration and checklist verification documented in `docs/RELEASING.md` and `.github/PULL_REQUEST_TEMPLATE.md`.
 
 - Third-party actions are referenced by mutable tags:
   `dtolnay/rust-toolchain@stable` and `Swatinem/rust-cache@v2`.
