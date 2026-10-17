@@ -353,6 +353,7 @@ interface: variants keep their values and new ones are appended.
 ## Documentation
 
 - [Glossary](docs/GLOSSARY.md) — Definitions of over 50 Real World Asset (RWA), Soroban smart contract, and Stellar terms.
+- [Integrator FAQ](docs/FAQ.md) — Frequently asked questions covering keys, fees, TTL, compliance, and contract upgrades.
 - [Architecture & ADRs](docs/architecture/) — Architectural decision records and protocol designs.
 - [Audit Handover](docs/audits/external-audit-handover-phase1.md) — Phase 1 external audit scope, invariants, and reproduction steps.
 - [Release Guide](docs/RELEASING.md) — SDK trusted publishing, provenance, and byte-for-byte WASM verification.
