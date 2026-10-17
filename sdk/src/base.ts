@@ -6,6 +6,7 @@ import {
   nativeToScVal,
   Operation,
   rpc,
+  scValToNative,
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
@@ -362,25 +363,61 @@ export abstract class ContractClient {
   }
 
   /**
-   * Hands this contract's admin role to `newAdmin`.
+   * Proposes `newAdmin` as this contract's next admin.
    *
-   * The contract requires the current and the incoming admin to authorize in
-   * one transaction (NFR-S-4), so this is always built sponsored. `feeSource`
-   * (by default the current admin) sources and pays. Every other authorizer
-   * signs its entry, and when the fee payer is the current admin, that leaves
-   * only `newAdmin` to sign.
+   * Two-step handover (#125, see ADR-006): unlike the single-transaction
+   * dual-auth `transfer_admin` this replaces, `proposeAdmin` and `acceptAdmin`
+   * each need only one signature, so neither needs the sponsored-transaction
+   * machinery `transfer_admin` required (#31) - a plain `buildWriteTx`
+   * suffices for both. The current admin calls this; `newAdmin` has not
+   * authorized anything yet.
    *
-   * @param admin - The current admin. The contract reads it from storage, so it
-   *   is used only as the default fee payer.
+   * @param admin - The current admin, which sources and signs this
+   *   transaction.
    */
-  async buildTransferAdminTx(
-    admin: string,
-    newAdmin: string,
-    options: { feeSource?: string } = {},
-  ): Promise<SponsoredTransaction> {
-    return this.buildSponsoredWriteTx(options.feeSource ?? admin, "transfer_admin", [
+  async buildProposeAdminTx(admin: string, newAdmin: string): Promise<Transaction> {
+    return this.buildWriteTx(admin, "propose_admin", [
       nativeToScVal(newAdmin, { type: "address" }),
     ]);
+  }
+
+  async proposeAdmin(admin: string, newAdmin: string): Promise<TxResult> {
+    return this.submit(await this.buildProposeAdminTx(admin, newAdmin), admin);
+  }
+
+  /**
+   * Completes a handover `proposeAdmin` started.
+   *
+   * @param newAdmin - The proposed admin, which sources and signs this
+   *   transaction. This is the only signature required: the current admin
+   *   already authorized the proposal.
+   */
+  async buildAcceptAdminTx(newAdmin: string): Promise<Transaction> {
+    return this.buildWriteTx(newAdmin, "accept_admin", []);
+  }
+
+  async acceptAdmin(newAdmin: string): Promise<TxResult> {
+    return this.submit(await this.buildAcceptAdminTx(newAdmin), newAdmin);
+  }
+
+  /**
+   * Withdraws a pending proposal before it is accepted.
+   *
+   * @param admin - The current admin, which sources and signs this
+   *   transaction.
+   */
+  async buildCancelAdminTransferTx(admin: string): Promise<Transaction> {
+    return this.buildWriteTx(admin, "cancel_admin_transfer", []);
+  }
+
+  async cancelAdminTransfer(admin: string): Promise<TxResult> {
+    return this.submit(await this.buildCancelAdminTransferTx(admin), admin);
+  }
+
+  /** The address `acceptAdmin` would install if called now, or `null` if none is pending. */
+  async pendingAdmin(): Promise<string | null> {
+    const result = await this.simulateReadOnly("pending_admin", []);
+    return (scValToNative(result) as string | null | undefined) ?? null;
   }
 }
 

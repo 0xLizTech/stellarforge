@@ -28,11 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pure helpers: `tickOf`, `checkDeviation` (mirrors contract `InvalidDeviation` / `Overflow`), `isFresh`, `toDecimalString`.
   - `OracleAsset` ScVal codecs and `OracleErrorCode` discriminants 1–13.
 - `docs/audits/external-audit-handover-phase1.md`, the handover for the Phase 1 external audit. It covers scope, how to rebuild the audited wasm, the trust model, the invariants to test, the deliberate design choices, and how the PRD relates to Phase 1.
+- `docs/architecture/006-admin-key-recovery.md` (ADR-006): decides a guardian + timelock recovery path for a lost (not merely wrong) admin key, separate from the two-step handover below. Implementation tracked in #583.
+- `governance.set_quorum(quorum)` and `governance.set_pass_threshold_bps(bps)`, admin-only (#135). `finalize` now rejects a proposal whose total votes (`votes_for + votes_against`) fall below the configured quorum (default 0, disabled) before evaluating whether `votes_for` clears the configured pass threshold in basis points (default 5,001, i.e. >50%, matching the prior unconditional majority rule). A proposal with zero votes is rejected unconditionally regardless of quorum.
+- `governance.propose` rejects a second active proposal whose title and description hash both match one already active, with `DuplicateActiveProposal` (#136). The check clears once the earlier proposal is finalized, so an identical resubmission after a decision is a new, distinct proposal.
+- `GovernanceClient` in the SDK gains `quorum`, `passThresholdBps` reads and `setQuorum`, `setPassThresholdBps` admin writes (#135).
 
 ### Changed
 
 - **BREAKING:** `rwa-asset.update_metadata` refuses raising a supply cap, with `InvalidSupplyCap`. The admin could already neither remove a cap nor set it below supply. Now a cap can only be tightened, which makes PRD §10.2's "not bypassable by admin" true. An uncapped asset can still be given a cap at or above its supply.
 - `docs/prd/PRODUCT_REQUIREMENTS.md` scopes three security claims to the phases that implement them. The over-minting mitigation now describes the cap rule (#54). Quorum, timelock and veto defences apply once governance can execute (Phase 3+). The only Phase 1 emergency control is `set_paused` on `rwa-asset`, since Phase 1 contracts cannot be upgraded.
+- **BREAKING:** `transfer_admin(new_admin)` is replaced by a two-step `propose_admin(new_admin)` / `accept_admin()` handover on all five contracts (`rwa-asset`, `compliance`, `registry`, `governance`, `oracle-adapter`), plus `cancel_admin_transfer()` and a `pending_admin()` query (#125, see ADR-006). ADR-002 originally rejected a two-step handover because the SDK could not build a transaction with two distinct signers (#31); #31 is closed, and this both makes handover reachable from the SDK (previously `stellar-cli`-only) and removes the need for sponsorship on this path entirely, since each step now needs only one signature. The SDK's `buildTransferAdminTx`/`transferAdmin` are replaced by `buildProposeAdminTx`/`proposeAdmin`, `buildAcceptAdminTx`/`acceptAdmin`, `buildCancelAdminTransferTx`/`cancelAdminTransfer`, and a `pendingAdmin` read, shared across every client.
+- `governance`'s `Proposal` struct gains a `content_hash` field (the sha256 of its title and description hash), used by the duplicate-proposal check above.
 
 ## [0.3.0] - 2026-09-14
 

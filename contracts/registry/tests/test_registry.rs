@@ -10,8 +10,9 @@ use soroban_sdk::{
 };
 
 use registry::{
-    ActiveSet, AdminTransferred, AssetEntry, AssetRegistered, DataKey, RegistryContract,
-    RegistryContractClient, RegistryError, MAX_PAGE_SIZE,
+    ActiveSet, AdminTransferCancelled, AdminTransferProposed, AdminTransferred, AssetEntry,
+    AssetRegistered, DataKey, RegistryContract, RegistryContractClient, RegistryError,
+    MAX_PAGE_SIZE,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -427,37 +428,148 @@ fn test_set_active_emits_event() {
     );
 }
 
-// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+// ─── Admin rotation (IR-04, two-step handover #125/ADR-006) ────────────────
 
 #[test]
-fn test_transfer_admin_moves_the_role() {
+fn test_propose_then_accept_admin_moves_the_role() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    assert_eq!(
+        h.client.admin(),
+        h.admin,
+        "role must not move on propose alone"
+    );
+
+    h.client.accept_admin();
 
     assert_eq!(h.client.admin(), new_admin);
+    assert!(h.client.pending_admin().is_none());
 }
 
-/// NFR-S-4 is dual authorization, not "the admin signs". Only the current
-/// admin's signature is supplied here, which must not be enough.
+/// Only the current admin may propose. Note NFR-S-4's dual-authorization
+/// guarantee survives the split into two steps: `accept_admin` below still
+/// requires the incoming admin's own signature, which is what makes the
+/// handover as a whole still require both sides' consent, just not in the
+/// same transaction.
 #[test]
-fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+fn test_propose_admin_requires_current_admin_auth() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
+    let not_admin = Address::generate(&h.env);
 
     h.env.mock_auths(&[MockAuth {
-        address: &h.admin,
+        address: &not_admin,
         invoke: &MockAuthInvoke {
             contract: &h.contract_id,
-            fn_name: "transfer_admin",
+            fn_name: "propose_admin",
             args: (new_admin.clone(),).into_val(&h.env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert!(h.client.try_propose_admin(&new_admin).is_err());
+    assert!(h.client.pending_admin().is_none());
+}
+
+/// The proposed admin's own signature is required to accept; the current
+/// admin cannot complete the handover on the proposed admin's behalf.
+#[test]
+fn test_accept_admin_without_the_proposed_admins_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "accept_admin",
+            args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_accept_admin().is_err());
     assert_eq!(h.client.admin(), h.admin);
+}
+
+/// `accept_admin` with nothing proposed is a defined failure, not a panic on
+/// an absent storage key.
+#[test]
+fn test_accept_admin_with_no_pending_transfer_fails() {
+    let h = setup();
+
+    let result = h.client.try_accept_admin();
+
+    assert_eq!(
+        result,
+        Err(Ok(RegistryError::NoPendingAdminTransfer.into()))
+    );
+}
+
+/// The current admin can withdraw a proposal before it is accepted.
+#[test]
+fn test_cancel_admin_transfer_clears_the_pending_proposal() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.client.cancel_admin_transfer();
+
+    assert!(h.client.pending_admin().is_none());
+    // The would-be incoming admin can no longer accept a withdrawn proposal.
+    assert!(h.client.try_accept_admin().is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+/// Only the current admin may cancel, not the proposed admin trying to back
+/// out, and not an unrelated caller.
+#[test]
+fn test_cancel_admin_transfer_requires_current_admin_auth() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &new_admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "cancel_admin_transfer",
+            args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_cancel_admin_transfer().is_err());
+    assert!(h.client.pending_admin().is_some());
+}
+
+/// Proposing again before acceptance replaces the pending proposal rather
+/// than requiring `cancel_admin_transfer` first.
+#[test]
+fn test_a_second_proposal_replaces_the_first() {
+    let h = setup();
+    let first_candidate = Address::generate(&h.env);
+    let second_candidate = Address::generate(&h.env);
+
+    h.client.propose_admin(&first_candidate);
+    h.client.propose_admin(&second_candidate);
+
+    // Replaced, not queued: only the second candidate is pending.
+    assert_eq!(h.client.pending_admin(), Some(second_candidate.clone()));
+
+    // Only the current pending candidate's signature is accepted; the
+    // superseded first candidate's own signature authority test is covered
+    // by test_accept_admin_without_the_proposed_admins_signature_is_rejected.
+    h.client.accept_admin();
+    assert_eq!(
+        h.client.admin(),
+        second_candidate,
+        "the surviving (second) proposal must be the one accept_admin installs"
+    );
+    assert_ne!(h.client.admin(), first_candidate);
 }
 
 /// The point of rotation: once handed over, the outgoing key must be unable
@@ -465,7 +577,9 @@ fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
 #[test]
 fn test_a_rotated_out_admin_can_no_longer_register() {
     let h = setup();
-    h.client.transfer_admin(&Address::generate(&h.env));
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.client.accept_admin();
 
     let asset = Address::generate(&h.env);
     let listed = entry(&h.env, &asset, "real_estate", true);
@@ -484,17 +598,54 @@ fn test_a_rotated_out_admin_can_no_longer_register() {
 }
 
 #[test]
-fn test_transfer_admin_emits_event() {
+fn test_propose_admin_emits_event() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferProposed {
+            current: h.admin.clone(),
+            proposed_admin: new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_accept_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event before asserting on accept's
+
+    h.client.accept_admin();
 
     assert_eq!(
         h.env.events().all(),
         std::vec![AdminTransferred {
             previous: h.admin.clone(),
             new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_cancel_admin_transfer_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.cancel_admin_transfer();
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferCancelled {
+            cancelled_proposed_admin: new_admin,
         }
         .to_xdr(&h.env, &h.contract_id)],
     );

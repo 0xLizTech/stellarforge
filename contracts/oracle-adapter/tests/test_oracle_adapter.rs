@@ -9,9 +9,10 @@ use soroban_sdk::{
 };
 
 use oracle_adapter::{
-    AdminTransferred, Asset, AssetAdded, AssetConfig, DataKey, MaxDeviationSet,
-    OracleAdapterContract, OracleAdapterContractClient, OracleError, PriceData, PriceOverridden,
-    PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS, MAX_RECORDS,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Asset, AssetAdded,
+    AssetConfig, DataKey, MaxDeviationSet, OracleAdapterContract, OracleAdapterContractClient,
+    OracleError, PriceData, PriceOverridden, PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS,
+    MAX_RECORDS,
 };
 
 const DECIMALS: u32 = 14;
@@ -691,41 +692,138 @@ fn test_report_extends_the_entries_it_writes_to_the_network_maximum() {
     assert_eq!(h.ttl_of(&DataKey::Config(h.asset.clone())), max);
 }
 
-// ─── Admin handover ─────────────────────────────────────────────────────────
+// ─── Admin handover (two-step #125/ADR-006) ────────────────────────────────
 
 #[test]
-fn test_transfer_admin_moves_the_role() {
+fn test_propose_then_accept_admin_moves_the_role() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
-
+    h.client.propose_admin(&new_admin);
     assert_eq!(
-        h.env.events().all(),
-        std::vec![AdminTransferred {
-            previous: h.admin.clone(),
-            new_admin: new_admin.clone(),
-        }
-        .to_xdr(&h.env, &h.contract_id)],
+        h.client.admin(),
+        h.admin,
+        "role must not move on propose alone"
     );
+
+    h.client.accept_admin();
+
     assert_eq!(h.client.admin(), new_admin);
+    assert!(h.client.pending_admin().is_none());
 }
 
 #[test]
-fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+fn test_propose_admin_requires_current_admin_auth() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
+    let not_admin = Address::generate(&h.env);
 
     h.env.mock_auths(&[MockAuth {
-        address: &h.admin,
+        address: &not_admin,
         invoke: &MockAuthInvoke {
             contract: &h.contract_id,
-            fn_name: "transfer_admin",
+            fn_name: "propose_admin",
             args: (new_admin.clone(),).into_val(&h.env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert!(h.client.try_propose_admin(&new_admin).is_err());
+    assert!(h.client.pending_admin().is_none());
+}
+
+#[test]
+fn test_accept_admin_without_the_proposed_admins_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "accept_admin",
+            args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_accept_admin().is_err());
     assert_eq!(h.client.admin(), h.admin);
+}
+
+#[test]
+fn test_accept_admin_with_no_pending_transfer_fails() {
+    let h = setup();
+
+    let result = h.client.try_accept_admin();
+
+    assert_eq!(result, Err(Ok(OracleError::NoPendingAdminTransfer.into())));
+}
+
+#[test]
+fn test_cancel_admin_transfer_clears_the_pending_proposal() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.client.cancel_admin_transfer();
+
+    assert!(h.client.pending_admin().is_none());
+    assert!(h.client.try_accept_admin().is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+#[test]
+fn test_propose_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.propose_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferProposed {
+            current: h.admin.clone(),
+            proposed_admin: new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_accept_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.accept_admin();
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferred {
+            previous: h.admin.clone(),
+            new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_cancel_admin_transfer_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.cancel_admin_transfer();
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferCancelled {
+            cancelled_proposed_admin: new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
 }
