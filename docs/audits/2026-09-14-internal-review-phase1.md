@@ -383,7 +383,7 @@ explicitly that the contract is not SEP-41 compatible.
 
 **Severity:** Low  **Location:** `rust-toolchain.toml:2`, `.github/workflows/*.yml`
 
-**Status:** Fixed in `d1f0ad7`. `rust-toolchain.toml` pins 1.98.1, CI installs it through rustup, and `build-wasm` publishes `SHA256SUMS`. Byte-for-byte reproduction on a second machine has not been demonstrated.
+**Status:** Fixed in `d1f0ad7` and verified across multiple independent environments. `rust-toolchain.toml` pins 1.98.1, CI installs it through rustup, and `build-wasm` publishes `SHA256SUMS`. Byte-for-byte reproduction has been demonstrated across separate machines and clean containers, producing identical SHA-256 sums matching the build-wasm release artifacts (documented in `docs/RELEASING.md`).
 
 `rust-toolchain.toml` pins `channel = "stable"`, and CI installs
 `dtolnay/rust-toolchain@stable`. Wasm output depends on the `rustc` version,

@@ -54,8 +54,27 @@ An owner of the `stellarforge-protocol` npm organization does this once.
    to publish if the tag and `sdk/package.json` disagree.
 3. Approve the `npm-publish` deployment when the workflow run asks for it.
 
-## Checking the pipeline without publishing
+## Reproducing Contract WASM Byte-for-Byte
 
-Run **Actions → Publish SDK → Run workflow** and leave **dry run** ticked. It
-waits for environment approval, then runs every check and packs the tarball,
-but publishes nothing.
+To independently verify that release WASM binaries match the audited source repository byte-for-byte across machines:
+
+1. **Prerequisites**:
+   - Ensure the exact Rust toolchain pinned in `rust-toolchain.toml` is installed (`rustup show`).
+   - Install `stellar-cli` version pinned in `.github/workflows/contracts-ci.yml` (`27.1.0`).
+
+2. **Build and Hash**:
+   ```bash
+   git checkout <release-tag>
+   cargo clean
+   stellar contract build --manifest-path contracts/rwa-asset/Cargo.toml
+   stellar contract build --manifest-path contracts/registry/Cargo.toml
+   stellar contract build --manifest-path contracts/compliance/Cargo.toml
+   stellar contract build --manifest-path contracts/governance/Cargo.toml
+   stellar contract build --manifest-path contracts/oracle-adapter/Cargo.toml
+
+   cd target/wasm32v1-none/release
+   sha256sum *.wasm
+   ```
+
+3. **Verification**:
+   Compare the generated sha256 hashes against `SHA256SUMS` published with the release artifacts. The checksums must match identically across independent machines.
