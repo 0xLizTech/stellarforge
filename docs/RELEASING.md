@@ -37,7 +37,14 @@ An owner of the `stellarforge-protocol` npm organization does this once.
    **Require two-factor authentication and disallow tokens**. Trusted publishing
    keeps working; a leaked token no longer can.
 
-4. **Tag the published commit** so the version traces back to its source:
+4. **Configure required reviewers on the GitHub environment.** In GitHub repository
+   **Settings → Environments → npm-publish**:
+   - Enable **Required reviewers**.
+   - Add maintainers / release leads (`0xLizTech/maintainers`).
+   - Every `publish-sdk.yml` execution running in this environment will pause
+     until approved by an authorized reviewer.
+
+5. **Tag the published commit** so the version traces back to its source:
 
    ```bash
    git tag v0.1.0 <commit> && git push origin v0.1.0
