@@ -247,10 +247,10 @@ Keep the subject line under 72 characters. Use the body for _why_, not _what_.
 1. **Open a draft PR early** if you want design feedback before finishing.
 2. **Fill in the PR template** — describe what changed, why, and how to test it.
 3. **Ensure CI is green** — all checks must pass before review.
-4. **Request a review** from a maintainer (listed in [CODEOWNERS](.github/CODEOWNERS) once it exists).
+4. **Request a review** from the appropriate area maintainer as defined in [CODEOWNERS](.github/CODEOWNERS) (reviews are routed specifically for `contracts/`, `sdk/`, `docs/`, and `.github/workflows/`).
 5. **Address review comments** — update the branch; do not open a new PR.
 6. **Squash or rebase** messy commit history before final merge if asked.
-7. A maintainer will merge once at least **one approval** is received and all checks pass.
+7. A maintainer will merge once at least **one approval** is received and all checks pass. PRs modifying workflows require a security reviewer approval.
 
 ### PR size guidelines
 
