@@ -13,7 +13,6 @@ import {
 import type { MockInstance } from "vitest";
 
 import { RwaAssetClient } from "../src/client.js";
-import { RegistryClient } from "../src/registry.js";
 import {
   DEFAULT_AUTH_VALIDITY_LEDGERS,
   MAX_AUTH_VALIDITY_LEDGERS,
@@ -25,7 +24,6 @@ import {
 } from "../src/sponsored.js";
 import {
   RWA_ID,
-  REGISTRY_ID,
   SIGNER as FEE_PAYER,
   SIGNER_SECRET as FEE_PAYER_SECRET,
   SUBMITTED_HASH,
@@ -66,7 +64,7 @@ function unsignedEntry(address: string, fn = "transfer", nonce = 7n): xdr.Soroba
 
 /** An entry the transaction source's own signature covers. */
 function sourceAccountEntry(): xdr.SorobanAuthorizationEntry {
-  const base = unsignedEntry(FEE_PAYER, "transfer_admin");
+  const base = unsignedEntry(FEE_PAYER, "mint");
   return new xdr.SorobanAuthorizationEntry({
     credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
     rootInvocation: base.rootInvocation,
@@ -177,16 +175,18 @@ describe("building a sponsored write", () => {
   });
 
   it("marks entries the fee payer's signature covers as having no authorizer", async () => {
-    stubNetwork([simulationWith([sourceAccountEntry(), unsignedEntry(NEW_ADMIN.publicKey(), "transfer_admin")])]);
-    const sponsored = await new RegistryClient(configWith({ registry: REGISTRY_ID })).buildTransferAdminTx(
-      FEE_PAYER,
+    stubNetwork([simulationWith([sourceAccountEntry(), unsignedEntry(NEW_ADMIN.publicKey(), "mint")])]);
+    const sponsored = await new RwaAssetClient(rwaConfig).buildSponsoredMintTx(
       NEW_ADMIN.publicKey(),
+      RECIPIENT,
+      5n,
+      { feeSource: FEE_PAYER },
     );
 
     expect(sponsored.transaction.source).toBe(FEE_PAYER);
     expect(builtInvocation(sponsored.transaction)).toEqual({
-      fn: "transfer_admin",
-      args: [NEW_ADMIN.publicKey()],
+      fn: "mint",
+      args: [NEW_ADMIN.publicKey(), RECIPIENT, 5n],
     });
     expect(sponsored.authorizers).toEqual([null, NEW_ADMIN.publicKey()]);
   });
@@ -254,11 +254,13 @@ describe("finalizing a sponsored write", () => {
 
   it("keeps entries the fee payer covers alongside the signed ones", async () => {
     const stubs = stubNetwork([
-      simulationWith([sourceAccountEntry(), unsignedEntry(NEW_ADMIN.publicKey(), "transfer_admin")]),
+      simulationWith([sourceAccountEntry(), unsignedEntry(NEW_ADMIN.publicKey(), "mint")]),
       simulationWith([]),
     ]);
-    const client = new RegistryClient(configWith({ registry: REGISTRY_ID }));
-    const sponsored = await client.buildTransferAdminTx(FEE_PAYER, NEW_ADMIN.publicKey());
+    const client = new RwaAssetClient(rwaConfig);
+    const sponsored = await client.buildSponsoredMintTx(NEW_ADMIN.publicKey(), RECIPIENT, 5n, {
+      feeSource: FEE_PAYER,
+    });
     const signed = await sign(sponsored.authEntries, NEW_ADMIN);
 
     const tx = await client.finalizeSponsoredTx(sponsored, signed);

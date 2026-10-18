@@ -17,9 +17,11 @@ import type {
  * # Results here are advisory
  *
  * The Phase 1 contract does not weigh votes against anything. `vote` accepts
- * whatever weight its caller declares and verifies it against no balance, and
- * `finalize` applies no quorum — a proposal passes on a simple majority of
- * declared weight. **Any address can therefore carry any proposal.**
+ * whatever weight its caller declares and verifies it against no balance.
+ * `finalize` does apply quorum and a pass threshold now (#135, both
+ * admin-configurable via `setQuorum`/`setPassThresholdBps`), but against that
+ * same unverified weight. **Any address can therefore still carry any
+ * proposal** by declaring enough weight.
  *
  * Weight is deliberately unverified rather than read from a live token
  * balance, which would be worse: a holder could vote, transfer the same tokens
@@ -85,7 +87,39 @@ export class GovernanceClient extends ContractClient {
     return scValToNative(result) as string;
   }
 
+  /** Minimum total votes (`votesFor + votesAgainst`) a proposal needs before `finalize` evaluates it (#135). */
+  async quorum(): Promise<bigint> {
+    const result = await this.simulateReadOnly("quorum", []);
+    return scValToNative(result) as bigint;
+  }
+
+  /** Fraction of cast votes, in basis points, that must be `votesFor` for a proposal to pass (#135). */
+  async passThresholdBps(): Promise<number> {
+    const result = await this.simulateReadOnly("pass_threshold_bps", []);
+    return scValToNative(result) as number;
+  }
+
   // ── Write path ───────────────────────────────────────────────────────────
+
+  /** Sets the quorum (#135). `admin` sources and signs this transaction. */
+  async buildSetQuorumTx(admin: string, quorum: bigint): Promise<Transaction> {
+    return this.buildWriteTx(admin, "set_quorum", [nativeToScVal(quorum, { type: "i128" })]);
+  }
+
+  async setQuorum(admin: string, quorum: bigint): Promise<TxResult> {
+    return this.submit(await this.buildSetQuorumTx(admin, quorum), admin);
+  }
+
+  /** Sets the pass threshold in basis points (#135). `admin` sources and signs this transaction. */
+  async buildSetPassThresholdBpsTx(admin: string, passThresholdBps: number): Promise<Transaction> {
+    return this.buildWriteTx(admin, "set_pass_threshold_bps", [
+      nativeToScVal(passThresholdBps, { type: "u32" }),
+    ]);
+  }
+
+  async setPassThresholdBps(admin: string, passThresholdBps: number): Promise<TxResult> {
+    return this.submit(await this.buildSetPassThresholdBpsTx(admin, passThresholdBps), admin);
+  }
 
   /**
    * Opens a proposal, authorized and paid for by `proposer`.

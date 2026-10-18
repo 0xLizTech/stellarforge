@@ -109,6 +109,12 @@ export class RegistryClient extends ContractClient {
     return scValToNative(result) as string;
   }
 
+  /** Whether the registry is currently paused. See {@link setPaused}. */
+  async isPaused(): Promise<boolean> {
+    const result = await this.simulateReadOnly("paused", []);
+    return scValToNative(result) as boolean;
+  }
+
   // ── Write path ───────────────────────────────────────────────────────────
 
   /**
@@ -144,5 +150,18 @@ export class RegistryClient extends ContractClient {
 
   async setActive(admin: string, contractAddress: string, active: boolean): Promise<TxResult> {
     return this.submit(await this.buildSetActiveTx(admin, contractAddress, active), admin);
+  }
+
+  /**
+   * Pause (`true`) or unpause the registry. While it is paused, `register`
+   * and `setActive` both fail; reads keep working, and so does
+   * `transferAdmin`, so a compromised admin key can still be rotated out.
+   */
+  async buildSetPausedTx(admin: string, paused: boolean): Promise<Transaction> {
+    return this.buildWriteTx(admin, "set_paused", [nativeToScVal(paused)]);
+  }
+
+  async setPaused(admin: string, paused: boolean): Promise<TxResult> {
+    return this.submit(await this.buildSetPausedTx(admin, paused), admin);
   }
 }

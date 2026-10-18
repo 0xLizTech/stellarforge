@@ -5,12 +5,15 @@ use soroban_sdk::{
         storage::{Instance as _, Persistent as _},
         Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Env, Event, IntoVal, String,
+    Address, Env, Event, IntoVal, String, Vec,
 };
 
 use compliance::{
     AdminTransferred, ComplianceContract, ComplianceContractClient, ComplianceError, DataKey,
-    KycRecord, KycRevoked, KycSet, MAX_LEVEL,
+    KycRecord, KycRevoked, KycSet, Paused, MAX_LEVEL,
+    KycRecord, KycRevoked, KycSet, MAX_BATCH_SIZE, MAX_LEVEL,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, ComplianceContract,
+    ComplianceContractClient, ComplianceError, DataKey, KycRecord, KycRevoked, KycSet, MAX_LEVEL,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -333,36 +336,113 @@ fn test_revoking_an_unknown_subject_emits_nothing() {
     );
 }
 
-// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+// ─── Admin rotation (IR-04, two-step handover #125/ADR-006) ────────────────
 
 #[test]
-fn test_transfer_admin_moves_the_role() {
+fn test_propose_then_accept_admin_moves_the_role() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    assert_eq!(
+        h.client.admin(),
+        h.admin,
+        "role must not move on propose alone"
+    );
+
+    h.client.accept_admin();
 
     assert_eq!(h.client.admin(), new_admin);
+    assert!(h.client.pending_admin().is_none());
+}
+
+/// #120. `test_set_kyc_extends_to_the_network_maximum` already checks
+/// instance TTL, but only after `set_kyc`, never after `transfer_admin`
+/// itself. `extend_instance` is one shared function, so this mostly proves
+/// the same thing twice — but it closes the one call site that otherwise had
+/// no test exercising it directly.
+#[test]
+fn test_transfer_admin_extends_the_instance() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
 
 /// NFR-S-4 is dual authorization, not "the admin signs". Only the current
 /// admin's signature is supplied here, which must not be enough.
+/// Only the current admin may propose.
 #[test]
-fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+fn test_propose_admin_requires_current_admin_auth() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
+    let not_admin = Address::generate(&h.env);
 
     h.env.mock_auths(&[MockAuth {
-        address: &h.admin,
+        address: &not_admin,
         invoke: &MockAuthInvoke {
             contract: &h.contract_id,
-            fn_name: "transfer_admin",
+            fn_name: "propose_admin",
             args: (new_admin.clone(),).into_val(&h.env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert!(h.client.try_propose_admin(&new_admin).is_err());
+    assert!(h.client.pending_admin().is_none());
+}
+
+/// NFR-S-4's dual-authorization guarantee survives the split into two
+/// steps: the proposed admin's own signature is required to accept, and the
+/// current admin cannot complete the handover on its behalf.
+#[test]
+fn test_accept_admin_without_the_proposed_admins_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "accept_admin",
+            args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_accept_admin().is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+/// `accept_admin` with nothing proposed is a defined failure, not a panic on
+/// an absent storage key.
+#[test]
+fn test_accept_admin_with_no_pending_transfer_fails() {
+    let h = setup();
+
+    let result = h.client.try_accept_admin();
+
+    assert_eq!(
+        result,
+        Err(Ok(ComplianceError::NoPendingAdminTransfer.into()))
+    );
+}
+
+/// The current admin can withdraw a proposal before it is accepted.
+#[test]
+fn test_cancel_admin_transfer_clears_the_pending_proposal() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.client.cancel_admin_transfer();
+
+    assert!(h.client.pending_admin().is_none());
+    assert!(h.client.try_accept_admin().is_err());
     assert_eq!(h.client.admin(), h.admin);
 }
 
@@ -371,7 +451,9 @@ fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
 #[test]
 fn test_a_rotated_out_admin_can_no_longer_set_kyc() {
     let h = setup();
-    h.client.transfer_admin(&Address::generate(&h.env));
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.client.accept_admin();
 
     let subject = Address::generate(&h.env);
     let record = h.record(LEVEL_ACCREDITED, NEVER_EXPIRES);
@@ -390,17 +472,54 @@ fn test_a_rotated_out_admin_can_no_longer_set_kyc() {
 }
 
 #[test]
-fn test_transfer_admin_emits_event() {
+fn test_propose_admin_emits_event() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferProposed {
+            current: h.admin.clone(),
+            proposed_admin: new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_accept_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.accept_admin();
 
     assert_eq!(
         h.env.events().all(),
         std::vec![AdminTransferred {
             previous: h.admin.clone(),
             new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_cancel_admin_transfer_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.cancel_admin_transfer();
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferCancelled {
+            cancelled_proposed_admin: new_admin,
         }
         .to_xdr(&h.env, &h.contract_id)],
     );
@@ -475,4 +594,338 @@ fn test_set_kyc_rejects_a_malformed_jurisdiction() {
         &subject,
         &record_in(&h.env, "GB", LEVEL_BASIC, NEVER_EXPIRES),
     );
+}
+
+// ─── Emergency pause (#126) ────────────────────────────────────────────────
+
+#[test]
+fn test_initialize_not_paused() {
+    let h = setup();
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_toggles_the_flag() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+    assert!(h.client.paused());
+
+    h.client.set_paused(&false);
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_emits_event() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![Paused { paused: true }.to_xdr(&h.env, &h.contract_id)],
+// ─── Batch KYC set/revoke (#140) ───────────────────────────────────────────
+
+#[test]
+fn test_set_kyc_batch_stores_every_record() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+
+    h.client.set_kyc_batch(&Vec::from_array(
+        &h.env,
+        [
+            (alice.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES)),
+            (bob.clone(), h.record(LEVEL_FULL, NEVER_EXPIRES)),
+        ],
+    ));
+
+    assert_eq!(h.client.get_kyc(&alice).unwrap().level, LEVEL_BASIC);
+    assert_eq!(h.client.get_kyc(&bob).unwrap().level, LEVEL_FULL);
+}
+
+#[test]
+fn test_set_kyc_batch_emits_one_event_per_record() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+    let alice_record = h.record(LEVEL_BASIC, NEVER_EXPIRES);
+    let bob_record = h.record(LEVEL_FULL, NEVER_EXPIRES);
+
+    h.client.set_kyc_batch(&Vec::from_array(
+        &h.env,
+        [
+            (alice.clone(), alice_record.clone()),
+            (bob.clone(), bob_record.clone()),
+        ],
+    ));
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![
+            KycSet {
+                subject: alice,
+                record: alice_record,
+            }
+            .to_xdr(&h.env, &h.contract_id),
+            KycSet {
+                subject: bob,
+                record: bob_record,
+            }
+            .to_xdr(&h.env, &h.contract_id),
+        ],
+    );
+}
+
+#[test]
+fn test_set_paused_requires_admin() {
+    let h = setup();
+    let stranger = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_paused",
+            args: (true,).into_val(&h.env),
+fn test_set_kyc_batch_requires_admin() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &subject,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_kyc_batch",
+            args: (Vec::from_array(
+                &h.env,
+                [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))],
+            ),)
+                .into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_paused(&true).is_err());
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_paused_blocks_set_kyc() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    let res = h
+        .client
+        .try_set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    assert_eq!(res, Err(Ok(ComplianceError::ContractPaused.into())));
+    assert!(h.client.get_kyc(&subject).is_none());
+}
+
+#[test]
+fn test_paused_blocks_revoke_kyc() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    h.client.set_paused(&true);
+
+    let res = h.client.try_revoke_kyc(&subject);
+    assert_eq!(res, Err(Ok(ComplianceError::ContractPaused.into())));
+    assert!(h.client.get_kyc(&subject).is_some());
+}
+
+/// The deliberate exemption: a paused compliance contract must not freeze
+/// every rwa-asset transfer, since screen/is_compliant decide nothing new,
+/// they only read what is already on record.
+#[test]
+fn test_paused_does_not_block_screen_or_is_compliant() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    h.client.set_paused(&true);
+
+    assert!(h.client.is_compliant(&subject, &LEVEL_BASIC));
+    assert!(h.client.screen(&subject, &LEVEL_BASIC));
+}
+
+#[test]
+fn test_unpausing_allows_set_kyc_again() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client.set_paused(&true);
+    h.client.set_paused(&false);
+
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    assert_eq!(h.client.get_kyc(&subject).unwrap().level, LEVEL_BASIC);
+}
+
+/// transfer_admin must stay callable while paused, matching rwa-asset's own
+/// exemption, so a compromised admin key can still be rotated out.
+#[test]
+fn test_paused_does_not_block_transfer_admin() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
+    assert!(h
+        .client
+        .try_set_kyc_batch(&Vec::from_array(
+            &h.env,
+            [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))],
+        ))
+        .is_err());
+    assert!(h.client.get_kyc(&subject).is_none());
+}
+
+/// The partial-failure case the issue asks for: one bad record must not let
+/// the records before it in the batch land while the rest are silently
+/// dropped. Every record is validated before any of them are written, so a
+/// batch is all-or-nothing.
+#[test]
+fn test_set_kyc_batch_is_atomic_one_invalid_record_rejects_the_whole_batch() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+
+    let res = h.client.try_set_kyc_batch(&Vec::from_array(
+        &h.env,
+        [
+            (alice.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES)),
+            (bob.clone(), h.record(MAX_LEVEL + 1, NEVER_EXPIRES)),
+        ],
+    ));
+
+    assert_eq!(res, Err(Ok(ComplianceError::InvalidLevel.into())));
+    // Checked before any further client call, since events().all() reflects
+    // only the most recent invocation.
+    assert!(h.env.events().all().events().is_empty());
+    // Neither record landed, including alice's, which was valid and sorted
+    // before the bad one.
+    assert!(h.client.get_kyc(&alice).is_none());
+    assert!(h.client.get_kyc(&bob).is_none());
+}
+
+#[test]
+fn test_set_kyc_batch_above_the_cap_is_rejected() {
+    let h = setup();
+    let mut records = Vec::new(&h.env);
+    for _ in 0..(MAX_BATCH_SIZE + 1) {
+        records.push_back((
+            Address::generate(&h.env),
+            h.record(LEVEL_BASIC, NEVER_EXPIRES),
+        ));
+    }
+
+    let res = h.client.try_set_kyc_batch(&records);
+    assert_eq!(res, Err(Ok(ComplianceError::BatchTooLarge.into())));
+}
+
+#[test]
+fn test_set_kyc_batch_at_the_cap_is_accepted() {
+    let h = setup();
+    let mut records = Vec::new(&h.env);
+    for _ in 0..MAX_BATCH_SIZE {
+        records.push_back((
+            Address::generate(&h.env),
+            h.record(LEVEL_BASIC, NEVER_EXPIRES),
+        ));
+    }
+
+    h.client.set_kyc_batch(&records);
+    assert_eq!(h.env.events().all().events().len(), MAX_BATCH_SIZE as usize);
+}
+
+#[test]
+fn test_set_kyc_batch_extends_every_record_to_the_network_maximum() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+
+    h.client.set_kyc_batch(&Vec::from_array(
+        &h.env,
+        [
+            (alice.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES)),
+            (bob.clone(), h.record(LEVEL_FULL, NEVER_EXPIRES)),
+        ],
+    ));
+
+    assert_eq!(h.ttl_of(&alice), h.max_ttl());
+    assert_eq!(h.ttl_of(&bob), h.max_ttl());
+}
+
+#[test]
+fn test_revoke_kyc_batch_removes_every_record() {
+    let h = setup();
+    let alice = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+    h.client
+        .set_kyc(&alice, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+    h.client.set_kyc(&bob, &h.record(LEVEL_FULL, NEVER_EXPIRES));
+
+    h.client
+        .revoke_kyc_batch(&Vec::from_array(&h.env, [alice.clone(), bob.clone()]));
+
+    assert!(h.client.get_kyc(&alice).is_none());
+    assert!(h.client.get_kyc(&bob).is_none());
+}
+
+#[test]
+fn test_revoke_kyc_batch_skips_unknown_subjects_without_erroring() {
+    let h = setup();
+    let known = Address::generate(&h.env);
+    let unknown = Address::generate(&h.env);
+    h.client
+        .set_kyc(&known, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+
+    h.client
+        .revoke_kyc_batch(&Vec::from_array(&h.env, [known.clone(), unknown.clone()]));
+
+    // One event for the subject that actually had a record, none for the
+    // unknown one. Checked before any further client call, since
+    // events().all() reflects only the most recent invocation.
+    assert_eq!(h.env.events().all().events().len(), 1);
+    assert!(h.client.get_kyc(&known).is_none());
+}
+
+#[test]
+fn test_revoke_kyc_batch_requires_admin() {
+    let h = setup();
+    let subject = Address::generate(&h.env);
+    h.client
+        .set_kyc(&subject, &h.record(LEVEL_BASIC, NEVER_EXPIRES));
+
+    h.env.mock_auths(&[MockAuth {
+        address: &subject,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "revoke_kyc_batch",
+            args: (Vec::from_array(&h.env, [subject.clone()]),).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h
+        .client
+        .try_revoke_kyc_batch(&Vec::from_array(&h.env, [subject.clone()]))
+        .is_err());
+    assert!(h.client.get_kyc(&subject).is_some());
+}
+
+#[test]
+fn test_revoke_kyc_batch_above_the_cap_is_rejected() {
+    let h = setup();
+    let mut subjects = Vec::new(&h.env);
+    for _ in 0..(MAX_BATCH_SIZE + 1) {
+        subjects.push_back(Address::generate(&h.env));
+    }
+
+    let res = h.client.try_revoke_kyc_batch(&subjects);
+    assert_eq!(res, Err(Ok(ComplianceError::BatchTooLarge.into())));
 }

@@ -45,7 +45,10 @@ mod math;
 
 pub use error::OracleError;
 pub use events::{
-    AdminTransferred, AssetAdded, MaxDeviationSet, PriceOverridden, PriceReported, ReporterSet,
+    AdminTransferred, AssetAdded, MaxDeviationSet, Paused, PriceOverridden, PriceReported,
+    ReporterSet,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, AssetAdded, MaxDeviationSet,
+    PriceOverridden, PriceReported, ReporterSet,
 };
 pub use math::{check_price_deviation, tick_of, DeviationCheck};
 
@@ -55,9 +58,11 @@ use soroban_sdk::{
 use stellarforge_common::{extend_instance, extend_persistent};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
+const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
 const BASE_KEY: Symbol = symbol_short!("BASE");
 const DECIMALS_KEY: Symbol = symbol_short!("DECIMALS");
 const RESOLUTION_KEY: Symbol = symbol_short!("RES");
+const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 
 /// Most decimals the constructor accepts. At 18, an `i128` still holds prices
 /// up to about 1.7e20 whole units of the base asset, far past any real NAV.
@@ -149,6 +154,7 @@ impl OracleAdapterContract {
         instance.set(&BASE_KEY, &base);
         instance.set(&DECIMALS_KEY, &decimals);
         instance.set(&RESOLUTION_KEY, &resolution);
+        instance.set(&PAUSED_KEY, &false);
 
         extend_instance(&env);
     }
@@ -241,6 +247,7 @@ impl OracleAdapterContract {
     /// the asset's `max_deviation_bps`.
     pub fn report(env: Env, reporter: Address, asset: Asset, price: i128, timestamp: u64) {
         reporter.require_auth();
+        Self::require_not_paused(&env);
         let config = Self::load_config(&env, &asset);
 
         let reporter_key = DataKey::Reporter(asset.clone(), reporter.clone());
@@ -282,6 +289,7 @@ impl OracleAdapterContract {
     /// cannot rewrite history or record a non-positive price.
     pub fn override_price(env: Env, asset: Asset, price: i128, timestamp: u64) {
         Self::admin(env.clone()).require_auth();
+        Self::require_not_paused(&env);
         Self::load_config(&env, &asset);
 
         let (timestamp, previous_price) = Self::record(&env, &asset, price, timestamp, None);
@@ -306,6 +314,7 @@ impl OracleAdapterContract {
     /// check has to be spelled out as a very large value.
     pub fn add_asset(env: Env, asset: Asset, max_deviation_bps: u32) {
         Self::admin(env.clone()).require_auth();
+        Self::require_not_paused(&env);
         Self::validate_deviation(&env, max_deviation_bps);
 
         let config_key = DataKey::Config(asset.clone());
@@ -337,6 +346,7 @@ impl OracleAdapterContract {
     /// Changes a listed asset's deviation limit.
     pub fn set_max_deviation(env: Env, asset: Asset, max_deviation_bps: u32) {
         Self::admin(env.clone()).require_auth();
+        Self::require_not_paused(&env);
         Self::validate_deviation(&env, max_deviation_bps);
         Self::load_config(&env, &asset);
 
@@ -361,6 +371,7 @@ impl OracleAdapterContract {
     /// move the NAV of another.
     pub fn set_reporter(env: Env, asset: Asset, reporter: Address, allowed: bool) {
         Self::admin(env.clone()).require_auth();
+        Self::require_not_paused(&env);
         Self::load_config(&env, &asset);
 
         let key = DataKey::Reporter(asset.clone(), reporter.clone());
@@ -380,29 +391,110 @@ impl OracleAdapterContract {
         .publish(&env);
     }
 
-    /// Hands the admin role to `new_admin`.
+    /// Proposes `new_admin` as the next admin. Only the current admin may
+    /// call this; `new_admin` has not authorized anything yet.
     ///
-    /// Both the current and the incoming admin must authorize, in the same
-    /// transaction (NFR-S-4), for the reason ADR-002 gives: a handover to a key
-    /// nobody controls cannot be undone.
-    pub fn transfer_admin(env: Env, new_admin: Address) {
+    /// Two-step handover (#125), replacing the single-transaction dual-auth
+    /// `transfer_admin` ADR-002 originally specified. ADR-002 rejected this
+    /// shape for Phase 1 only because the SDK could not build a transaction
+    /// carrying two distinct signers (#31); #31 is closed, and ADR-006
+    /// revisits the tradeoff now that it no longer applies. The underlying
+    /// guarantee is unchanged: a handover to a key nobody controls still
+    /// cannot complete, because `accept_admin` still requires that key's own
+    /// signature.
+    ///
+    /// Calling this again before `accept_admin` replaces the pending
+    /// proposal rather than requiring `cancel_admin_transfer` first.
+    pub fn propose_admin(env: Env, new_admin: Address) {
+        let current = Self::admin(env.clone());
+        current.require_auth();
+        env.storage().instance().set(&PENDING_ADMIN_KEY, &new_admin);
+        extend_instance(&env);
+
+        events::AdminTransferProposed {
+            current,
+            proposed_admin: new_admin,
+        }
+        .publish(&env);
+    }
+
+    /// Completes a handover `propose_admin` started. Only the proposed admin
+    /// may call this, and only its own signature is required: the current
+    /// admin already authorized the proposal, which is where the "both
+    /// sides consented" guarantee comes from now.
+    pub fn accept_admin(env: Env) {
+        let pending: Address = match env.storage().instance().get(&PENDING_ADMIN_KEY) {
+            Some(a) => a,
+            None => panic_with_error!(&env, OracleError::NoPendingAdminTransfer),
+        };
+        pending.require_auth();
+
         let previous = Self::admin(env.clone());
-        previous.require_auth();
-        new_admin.require_auth();
-        env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        env.storage().instance().set(&ADMIN_KEY, &pending);
+        env.storage().instance().remove(&PENDING_ADMIN_KEY);
         extend_instance(&env);
 
         events::AdminTransferred {
             previous,
-            new_admin,
+            new_admin: pending,
         }
         .publish(&env);
+    }
+
+    /// Withdraws a pending proposal before it is accepted. Only the current
+    /// admin may call this, which is what makes a mistaken or no-longer-wanted
+    /// proposal reversible without waiting for the proposed admin to act (or
+    /// refuse to).
+    pub fn cancel_admin_transfer(env: Env) {
+        let current = Self::admin(env.clone());
+        current.require_auth();
+        let pending: Address = match env.storage().instance().get(&PENDING_ADMIN_KEY) {
+            Some(a) => a,
+            None => panic_with_error!(&env, OracleError::NoPendingAdminTransfer),
+        };
+        env.storage().instance().remove(&PENDING_ADMIN_KEY);
+        extend_instance(&env);
+
+        events::AdminTransferCancelled {
+            cancelled_proposed_admin: pending,
+        }
+        .publish(&env);
+    }
+
+    /// The address `accept_admin` would install if called now, or `None` if
+    /// no transfer is pending.
+    pub fn pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&PENDING_ADMIN_KEY)
     }
 
     // ─── Queries ────────────────────────────────────────────────────────────
 
     pub fn admin(env: Env) -> Address {
         Self::instance_get(&env, &ADMIN_KEY)
+    }
+
+    pub fn paused(env: Env) -> bool {
+        env.storage().instance().get(&PAUSED_KEY).unwrap_or(false)
+    }
+
+    /// Emergency brake on new price data (IR follow-up: only `rwa-asset`
+    /// could pause; a compromised oracle admin or reporter had no circuit
+    /// breaker).
+    ///
+    /// Blocks `report`, `override_price`, `add_asset`, `set_max_deviation`
+    /// and `set_reporter`. The SEP-40 read side (`base`, `assets`, `decimals`,
+    /// `resolution`, `price`, `prices`, `lastprice`) and `is_reporter`/
+    /// `asset_config` stay open while paused: a consumer already holding a
+    /// NAV should keep being able to read it, and pausing should stop new,
+    /// possibly-compromised price data from being recorded, not hide prices
+    /// already on record. `transfer_admin` also stays open, matching the
+    /// Phase 1 contracts' own exemption, so a compromised admin key can still
+    /// be rotated out while paused.
+    pub fn set_paused(env: Env, paused: bool) {
+        Self::admin(env.clone()).require_auth();
+        env.storage().instance().set(&PAUSED_KEY, &paused);
+        extend_instance(&env);
+        events::Paused { paused }.publish(&env);
     }
 
     pub fn is_reporter(env: Env, asset: Asset, reporter: Address) -> bool {
@@ -487,6 +579,12 @@ impl OracleAdapterContract {
     fn validate_deviation(env: &Env, max_deviation_bps: u32) {
         if max_deviation_bps == 0 {
             panic_with_error!(env, OracleError::InvalidDeviation);
+        }
+    }
+
+    fn require_not_paused(env: &Env) {
+        if Self::paused(env.clone()) {
+            panic_with_error!(env, OracleError::ContractPaused);
         }
     }
 
