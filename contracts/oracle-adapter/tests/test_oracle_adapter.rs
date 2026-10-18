@@ -2,8 +2,9 @@
 
 use soroban_sdk::{
     testutils::{
-        cost_estimate::NetworkInvocationResourceLimits, storage::Persistent as _, Address as _,
-        Events, Ledger, MockAuth, MockAuthInvoke,
+        cost_estimate::NetworkInvocationResourceLimits,
+        storage::{Instance as _, Persistent as _},
+        Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
     Address, Env, Event, IntoVal, Symbol, Vec,
 };
@@ -14,6 +15,7 @@ use oracle_adapter::{
     OracleError, PriceData, PriceOverridden, PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS,
     MAX_RECORDS,
 };
+use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 const DECIMALS: u32 = 14;
 const RESOLUTION: u32 = 300;
@@ -63,6 +65,12 @@ impl Harness<'_> {
     fn max_ttl(&self) -> u32 {
         self.env
             .as_contract(&self.contract_id, || self.env.storage().max_ttl())
+    }
+
+    fn instance_ttl(&self) -> u32 {
+        self.env.as_contract(&self.contract_id, || {
+            self.env.storage().instance().get_ttl()
+        })
     }
 }
 
@@ -692,6 +700,57 @@ fn test_report_extends_the_entries_it_writes_to_the_network_maximum() {
     assert_eq!(h.ttl_of(&DataKey::Config(h.asset.clone())), max);
 }
 
+/// #120. `report`'s own extension of `Config` and `Reporter` (asserted
+/// above) happens to mask whether `add_asset` and `set_reporter` extend what
+/// THEY write, since `setup()` already calls both before any test body runs
+/// and `report_now` re-extends the same keys regardless. This test isolates
+/// `add_asset`/`set_reporter`/`set_max_deviation`'s own writes on a second
+/// asset that no `report` call ever touches, so only their own extension (or
+/// its absence) can explain the result.
+#[test]
+fn test_add_asset_set_reporter_and_set_max_deviation_extend_what_they_write() {
+    let h = setup();
+    env_advance_ledger(&h.env, 600_000);
+
+    let second_asset = Asset::Stellar(Address::generate(&h.env));
+    h.client.add_asset(&second_asset, &MAX_DEVIATION_BPS);
+
+    let max = h.max_ttl();
+    assert_eq!(
+        h.ttl_of(&DataKey::Assets),
+        max,
+        "add_asset must extend the Assets list it just appended to"
+    );
+    assert_eq!(
+        h.ttl_of(&DataKey::Config(second_asset.clone())),
+        max,
+        "add_asset must extend the Config entry it just created"
+    );
+
+    env_advance_ledger(&h.env, 600_000);
+    let second_reporter = Address::generate(&h.env);
+    h.client
+        .set_reporter(&second_asset, &second_reporter, &true);
+    assert_eq!(
+        h.ttl_of(&DataKey::Reporter(second_asset.clone(), second_reporter)),
+        h.max_ttl(),
+        "set_reporter must extend the grant it just wrote"
+    );
+
+    env_advance_ledger(&h.env, 600_000);
+    h.client.set_max_deviation(&second_asset, &2_000);
+    assert_eq!(
+        h.ttl_of(&DataKey::Config(second_asset)),
+        h.max_ttl(),
+        "set_max_deviation must extend the Config entry it just rewrote"
+    );
+}
+
+fn env_advance_ledger(env: &Env, ledgers: u32) {
+    env.ledger().with_mut(|li| li.sequence_number += ledgers);
+}
+
+// ─── Admin handover ─────────────────────────────────────────────────────────
 // ─── Admin handover (two-step #125/ADR-006) ────────────────────────────────
 
 #[test]
@@ -710,6 +769,21 @@ fn test_propose_then_accept_admin_moves_the_role() {
 
     assert_eq!(h.client.admin(), new_admin);
     assert!(h.client.pending_admin().is_none());
+}
+
+/// #120. No other test checks instance TTL after `transfer_admin` in
+/// isolation; `extend_instance` is one shared function already exercised by
+/// other write paths, but this closes the one call site that otherwise had
+/// nothing asserting it directly.
+#[test]
+fn test_transfer_admin_extends_the_instance() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    env_advance_ledger(&h.env, 600_000);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
 
 #[test]
