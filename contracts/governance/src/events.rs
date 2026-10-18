@@ -92,6 +92,16 @@ pub struct AdminTransferred {
     pub new_admin: Address,
 }
 
+/// Published by `cancel_proposal`. `cancelled_by` is data rather than a
+/// topic: a topic filter on `proposal_id` already finds this alongside every
+/// other event in that proposal's history, and who cancelled it matters far
+/// less often than that it was.
+#[contractevent(topics = ["cancel_proposal"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalCancelled {
+    #[topic]
+    pub proposal_id: u64,
+    pub cancelled_by: Address,
 /// Published by `set_proposal_deposit` (#134). `token` is `None` when the
 /// admin has disabled the deposit requirement, matching how `rwa-asset`
 /// reports `compliance: None` in `ComplianceSet` for the same "disabled"

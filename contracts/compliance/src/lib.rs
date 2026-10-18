@@ -13,7 +13,7 @@ pub use events::{
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
-    Symbol,
+    Symbol, Vec,
 };
 use stellarforge_common::{extend_instance, extend_persistent};
 
@@ -23,6 +23,13 @@ const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
 /// Highest verification level on the scale: 0 none, 1 basic, 2 full,
 /// 3 accredited.
 pub const MAX_LEVEL: u32 = 3;
+
+/// Largest batch `set_kyc_batch`/`revoke_kyc_batch` will accept in one call.
+///
+/// Each record is its own ledger write, and a transaction is held to the
+/// network's per-invocation resource limits, so a batch has to stay well
+/// inside them.
+pub const MAX_BATCH_SIZE: u32 = 50;
 
 #[contracttype]
 #[derive(Clone)]
@@ -71,6 +78,65 @@ impl ComplianceContract {
         extend_persistent(&env, &key);
 
         events::KycSet { subject, record }.publish(&env);
+    }
+
+    /// Set or update KYC records for up to [`MAX_BATCH_SIZE`] addresses in one
+    /// call.
+    ///
+    /// Onboarding many holders one `set_kyc` per transaction does not scale
+    /// past a handful of addresses; this amortises the admin's signature and
+    /// the transaction's base fee across the whole batch.
+    ///
+    /// Every record is validated before any of them are written: a batch
+    /// either lands in full or not at all, so operators never have to
+    /// reconcile which prefix of a partially-applied batch actually took
+    /// effect. One [`events::KycSet`] is published per record, exactly as if
+    /// [`ComplianceContract::set_kyc`] had been called once per entry, so a
+    /// listener watching for individual decisions sees the same events either
+    /// way.
+    pub fn set_kyc_batch(env: Env, records: Vec<(Address, KycRecord)>) {
+        Self::require_admin(&env);
+
+        if records.len() > MAX_BATCH_SIZE {
+            panic_with_error!(&env, ComplianceError::BatchTooLarge);
+        }
+        for (_, record) in records.iter() {
+            Self::validate_record(&env, &record);
+        }
+
+        extend_instance(&env);
+
+        for (subject, record) in records.iter() {
+            let key = DataKey::KycStatus(subject.clone());
+            env.storage().persistent().set(&key, &record);
+            extend_persistent(&env, &key);
+
+            events::KycSet { subject, record }.publish(&env);
+        }
+    }
+
+    /// Revoke KYC for up to [`MAX_BATCH_SIZE`] addresses in one call.
+    ///
+    /// A subject with no existing record is silently skipped, matching
+    /// [`ComplianceContract::revoke_kyc`]'s own behavior: revoking an unknown
+    /// subject changes nothing, so it publishes nothing.
+    pub fn revoke_kyc_batch(env: Env, subjects: Vec<Address>) {
+        Self::require_admin(&env);
+
+        if subjects.len() > MAX_BATCH_SIZE {
+            panic_with_error!(&env, ComplianceError::BatchTooLarge);
+        }
+
+        extend_instance(&env);
+
+        for subject in subjects.iter() {
+            let key = DataKey::KycStatus(subject.clone());
+            let removed: Option<KycRecord> = env.storage().persistent().get(&key);
+            if let Some(record) = removed {
+                env.storage().persistent().remove(&key);
+                events::KycRevoked { subject, record }.publish(&env);
+            }
+        }
     }
 
     /// Revoke KYC for an address.

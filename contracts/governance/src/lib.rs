@@ -21,6 +21,12 @@ mod events;
 
 pub use error::GovernanceError;
 pub use events::{
+    AdminTransferred, ProposalCancelled, ProposalCreated, ProposalFinalized, VoteCast,
+};
+
+use soroban_sdk::{
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
+    Symbol, Vec,
     AdminTransferred, DepositConfigured, ProposalCreated, ProposalDepositRefunded,
     ProposalFinalized, VoteCast,
 };
@@ -60,6 +66,12 @@ pub const MAX_VOTING_PERIOD_LEDGERS: u32 = 90 * DAY_IN_LEDGERS;
 /// document `description_hash` points to.
 pub const MAX_TITLE_BYTES: u32 = 256;
 
+/// Largest page `list_proposals` will return.
+///
+/// Each listed proposal is its own ledger read, and a read-only simulation is
+/// held to the same per-invocation read limits as a transaction, so a page
+/// has to stay well inside them. Matches `registry::MAX_PAGE_SIZE`.
+pub const MAX_PAGE_SIZE: u32 = 100;
 /// `pass_threshold_bps` is a fraction of 10,000 (100.00%).
 pub const MAX_PASS_THRESHOLD_BPS: u32 = 10_000;
 /// A zero threshold would let a proposal pass with no support at all, which
@@ -92,6 +104,7 @@ pub enum ProposalStatus {
     Passed,
     Rejected,
     Executed,
+    Cancelled,
 }
 
 #[contracttype]
@@ -405,6 +418,48 @@ impl GovernanceContract {
         .publish(&env);
     }
 
+    /// Withdraws a mistaken proposal before anyone has voted on it.
+    ///
+    /// Restricted to before the first vote rather than before the deadline: a
+    /// voter commits weight to an outcome the moment they vote, and letting a
+    /// later cancellation erase that vote (with no way for the voter to react)
+    /// would make every "yes" or "no" provisional for as long as the proposer
+    /// or admin cared to withdraw it. A proposal with zero votes has no such
+    /// voter to protect.
+    ///
+    /// Either the proposer or the admin may call this: the proposer owns a
+    /// genuine mistake, and the admin covers a proposer who is unreachable or
+    /// no longer holds the key that created it.
+    pub fn cancel_proposal(env: Env, caller: Address, proposal_id: u64) {
+        caller.require_auth();
+
+        let mut proposal = Self::load_proposal(&env, proposal_id);
+
+        if caller != proposal.proposer && caller != Self::admin(env.clone()) {
+            panic_with_error!(&env, GovernanceError::NotAuthorizedToCancel);
+        }
+        if proposal.status != ProposalStatus::Active {
+            panic_with_error!(&env, GovernanceError::ProposalNotActive);
+        }
+        if proposal.votes_for > 0 || proposal.votes_against > 0 {
+            panic_with_error!(&env, GovernanceError::ProposalAlreadyHasVotes);
+        }
+
+        proposal.status = ProposalStatus::Cancelled;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Proposal(proposal_id), &proposal);
+
+        extend_persistent(&env, &DataKey::Proposal(proposal_id));
+
+        events::ProposalCancelled {
+            proposal_id,
+            cancelled_by: caller,
+        }
+        .publish(&env);
+    }
+
     /// A pure query. Proposals must stay readable long after their deadline,
     /// which the network-maximum extension on the write paths provides without
     /// charging every reader for it.
@@ -412,6 +467,38 @@ impl GovernanceContract {
         env.storage()
             .persistent()
             .get(&DataKey::Proposal(proposal_id))
+    }
+
+    /// Proposals in creation order, `limit` of them starting at index `start`.
+    ///
+    /// `start` is a zero-based index into the directory, not a proposal id:
+    /// index 0 is proposal id 1, since ids are assigned starting at 1 and
+    /// never reused. A page shorter than `limit` means the end of the
+    /// directory was reached; a `start` at or past [`GovernanceContract::proposal_count`]
+    /// returns an empty page. `limit` above [`MAX_PAGE_SIZE`] is rejected
+    /// rather than quietly truncated, so a caller cannot mistake a clipped
+    /// page for the whole directory.
+    pub fn list_proposals(env: Env, start: u32, limit: u32) -> Vec<Proposal> {
+        if limit > MAX_PAGE_SIZE {
+            panic_with_error!(&env, GovernanceError::PageTooLarge);
+        }
+
+        let count: u64 = env.storage().instance().get(&PROP_COUNT).unwrap_or(0);
+        let count = u32::try_from(count).unwrap_or(u32::MAX);
+        let end = start.saturating_add(limit).min(count);
+
+        let mut page = Vec::new(&env);
+        for index in start..end {
+            // Every index below the count was written by `propose` and
+            // nothing removes one (cancellation changes status, not
+            // existence), so this is always present. Proposal ids start at
+            // 1, one past the zero-based `index`.
+            let id = u64::from(index) + 1;
+            if let Some(proposal) = env.storage().persistent().get(&DataKey::Proposal(id)) {
+                page.push_back(proposal);
+            }
+        }
+        page
     }
 
     pub fn has_voted(env: Env, proposal_id: u64, voter: Address) -> bool {
