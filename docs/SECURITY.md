@@ -51,6 +51,58 @@ All completed audit reports are published in [`docs/audits/`](audits/) as they b
 
 The handover for the Phase 1 external audit (scope, build reproduction, trust model, invariants and deliberate design choices) is [`docs/audits/external-audit-handover-phase1.md`](audits/external-audit-handover-phase1.md).
 
+## Trust Assumptions and Privileged Roles
+
+A Stage 2 Phase 1 Hardening and Audit Follow-up (#127). Roles such as
+issuer, reporter and admin were each documented where they are declared,
+scattered across five contracts and their ADRs. This section gathers every
+privileged role in one place: what it can do, what it is trusted not to do,
+and which test proves the limit holds. It does not introduce any new
+behavior; every power and limit listed here already exists in code, cited
+by file and line.
+
+All five contracts share one default deployment assumption, recorded here
+once rather than in every row below: the same key is typically the admin of
+all four non-governance contracts at deploy time (ADR-002), so compromising
+that one key compromises every role it holds simultaneously. Production
+deployments should use distinct admins, or a multisig, per contract.
+
+### `rwa-asset`
+
+| Role | Granted by | Powers | Limits |
+|---|---|---|---|
+| **Admin** | Constructor (`admin: Address`, `contracts/rwa-asset/src/lib.rs:100`); rotated by `transfer_admin` (`:455-466`) | `set_issuer` (`:121`), `set_paused` (`:433`), `update_metadata` (`:440`), `set_compliance` (`:477`), `transfer_admin` | Cannot mint, burn, or move any holder's balance directly. Cannot lower `max_supply` below circulating supply, raise or remove a cap once set, or change `decimals` after issuance (`InvalidSupplyCap`/`DecimalsImmutable`, `:440-454`; tests `test_update_metadata_cannot_*`). Cannot set a compliance `min_level` above `MAX_COMPLIANCE_LEVEL` (`InvalidComplianceLevel`, #139; test `test_set_compliance_rejects_a_min_level_above_the_scale`). `transfer_admin` requires both the outgoing and incoming admin's signature (dual auth, NFR-S-4); test `test_transfer_admin_without_the_incoming_signature_is_rejected`. |
+| **Issuer** | Granted or revoked by the admin via `set_issuer` (`:121-131`); any number of issuers may hold the role at once | `mint` (`:142`, with its own `issuer.require_auth()`) | Cannot approve itself: `set_issuer` is admin-only. Minting still must pass compliance screening on the recipient when configured (`require_compliant`, `:530+`), and respects `max_supply`. |
+| **Holder** | Implicit; anyone the issuer mints to | `transfer`, `approve`, `burn`, `transfer_from`/`burn_from` as the authorizing party | Every transfer requires both parties to satisfy the configured compliance `min_level` when one is set (`require_compliant`); a holder's own `burn` is explicitly allowed to work even after their compliance status lapses, so an exit never depends on remaining verified (test `test_burn_is_allowed_after_verification_lapses`, `compliance` contract). |
+
+### `compliance`
+
+| Role | Granted by | Powers | Limits |
+|---|---|---|---|
+| **Admin** | Constructor; rotated by dual-auth `transfer_admin` (`contracts/compliance/src/lib.rs:124-137`) | `set_kyc` (`:61`), `revoke_kyc` (`:74`), `transfer_admin` | Cannot set a KYC record's `level` above `MAX_LEVEL` (3), an `expires_at` already in the past, or a `jurisdiction` that is not two ASCII uppercase letters (`InvalidLevel`/`AlreadyExpired`/`InvalidJurisdiction`, IR-08/SF-2026-010). This is the highest-risk role in the protocol by design: a compromised compliance admin can mark any address compliant on every asset that points at this engine, and (before IR-04's fix) could not be rotated out at all; dual-auth `transfer_admin` is the mitigation now in place. |
+| **Asset admin (external, per asset)** | Any `rwa-asset` deployment that calls `set_compliance(Some(this_engine), min_level)` | Decides whether and at what level this engine's records gate transfers on their asset | Cannot alter the engine's own KYC records; only reads `screen`/`is_compliant`. Can disable screening entirely for their asset by calling `set_compliance(None, _)` (their own admin power, not this engine's). |
+
+### `registry`
+
+| Role | Granted by | Powers | Limits |
+|---|---|---|---|
+| **Admin** | Constructor; rotated by dual-auth `transfer_admin` (`contracts/registry/src/lib.rs:184-197`) | `register` (`:79`), `set_active` (`:159`), `transfer_admin` | `register` does not verify that the registered address is a deployed `rwa-asset` or that `asset_class` matches that asset's real metadata (IR-16/SF-2026-018): a registry entry is an assertion by the admin, not independent verification, and the README says so explicitly. `active` is a label only; nothing in the protocol enforces it (same finding). `list_assets` pages at most `MAX_PAGE_SIZE` (100) addresses per call regardless of admin input (`PageTooLarge`). |
+
+### `governance`
+
+| Role | Granted by | Powers | Limits |
+|---|---|---|---|
+| **Admin** | Constructor; rotated by dual-auth `transfer_admin` (`contracts/governance/src/lib.rs`) | `transfer_admin` | Holds no power over `propose`/`vote`/`finalize` themselves in Phase 1: governance is advisory and executes nothing (see the contract's own doc comment), so there is no privileged action for this admin to gate yet. |
+| **Proposer** | Implicit; any address, no grant needed | `propose` | Bounded `voting_period_ledgers` (one day to 90 days, IR-14) and a `title` capped at `MAX_TITLE_BYTES`. A proposer declares their own vote `weight` with nothing checking it against a balance in Phase 1, by design: reading a live balance at vote time would let a holder vote, transfer the same tokens onward, and vote again from the recipient. Correct weighting needs balances snapshotted at proposal creation, deferred to the phase that introduces `SFORGE`. |
+| **Voter** | Implicit; any address | `vote`, once per proposal (`AlreadyVoted`) | No quorum floor exists yet: a single vote can pass a proposal with no minimum participation, since Phase 1 governance gates nothing. The PRD names minimum quorum requirements and an optimistic timelock as the mitigation once execution hooks exist (Phase 3+). |
+
+### `oracle-adapter`
+
+| Role | Granted by | Powers | Limits |
+|---|---|---|---|
+| **Admin** | Constructor; rotated by dual-auth `transfer_admin` | `add_asset` (capped at `MAX_ASSETS`, test `test_add_asset_stops_at_max_assets`), `set_max_deviation`, `set_reporter`, `override_price`, `transfer_admin` | `override_price` skips only the per-report deviation check; positivity, the future-timestamp check, and append-only history still apply (ADR-005). This is the widest admin power of any Phase 1-2 contract: unlike every other admin role above, this one can directly move a live price with no deviation bound at all, more than any single reporter can. ADR-005 names the mitigation directly: "the admin of a NAV feed has the same power over a vault's share price as the issuer has over supply, so it should be a multisig and, from Phase 3, governance." |
+| **Reporter (per asset)** | Granted or revoked by the admin via `set_reporter`, one grant per asset | `report` for that one asset only | Each report is bounded by that asset's configured `max_deviation_bps`; a reporter authorized for one asset cannot move any other asset's price (`NotReporter` otherwise). The deviation limit bounds each report individually, not cumulative drift over many reports: ADR-005 notes a compromised reporter can still compound this over several ticks within the limit each time. |
+
 ## Resolved Issues
 
 Findings are recorded here once fixed. Every entry below was found during

@@ -8,19 +8,30 @@ mod events;
 
 pub use error::ComplianceError;
 pub use events::{AdminTransferred, KycRevoked, KycSet, Paused};
+pub use events::{
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, KycRevoked, KycSet,
+};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
-    Symbol,
+    Symbol, Vec,
 };
 use stellarforge_common::{extend_instance, extend_persistent};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
+const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
 
 /// Highest verification level on the scale: 0 none, 1 basic, 2 full,
 /// 3 accredited.
 pub const MAX_LEVEL: u32 = 3;
+
+/// Largest batch `set_kyc_batch`/`revoke_kyc_batch` will accept in one call.
+///
+/// Each record is its own ledger write, and a transaction is held to the
+/// network's per-invocation resource limits, so a batch has to stay well
+/// inside them.
+pub const MAX_BATCH_SIZE: u32 = 50;
 
 #[contracttype]
 #[derive(Clone)]
@@ -73,6 +84,65 @@ impl ComplianceContract {
         events::KycSet { subject, record }.publish(&env);
     }
 
+    /// Set or update KYC records for up to [`MAX_BATCH_SIZE`] addresses in one
+    /// call.
+    ///
+    /// Onboarding many holders one `set_kyc` per transaction does not scale
+    /// past a handful of addresses; this amortises the admin's signature and
+    /// the transaction's base fee across the whole batch.
+    ///
+    /// Every record is validated before any of them are written: a batch
+    /// either lands in full or not at all, so operators never have to
+    /// reconcile which prefix of a partially-applied batch actually took
+    /// effect. One [`events::KycSet`] is published per record, exactly as if
+    /// [`ComplianceContract::set_kyc`] had been called once per entry, so a
+    /// listener watching for individual decisions sees the same events either
+    /// way.
+    pub fn set_kyc_batch(env: Env, records: Vec<(Address, KycRecord)>) {
+        Self::require_admin(&env);
+
+        if records.len() > MAX_BATCH_SIZE {
+            panic_with_error!(&env, ComplianceError::BatchTooLarge);
+        }
+        for (_, record) in records.iter() {
+            Self::validate_record(&env, &record);
+        }
+
+        extend_instance(&env);
+
+        for (subject, record) in records.iter() {
+            let key = DataKey::KycStatus(subject.clone());
+            env.storage().persistent().set(&key, &record);
+            extend_persistent(&env, &key);
+
+            events::KycSet { subject, record }.publish(&env);
+        }
+    }
+
+    /// Revoke KYC for up to [`MAX_BATCH_SIZE`] addresses in one call.
+    ///
+    /// A subject with no existing record is silently skipped, matching
+    /// [`ComplianceContract::revoke_kyc`]'s own behavior: revoking an unknown
+    /// subject changes nothing, so it publishes nothing.
+    pub fn revoke_kyc_batch(env: Env, subjects: Vec<Address>) {
+        Self::require_admin(&env);
+
+        if subjects.len() > MAX_BATCH_SIZE {
+            panic_with_error!(&env, ComplianceError::BatchTooLarge);
+        }
+
+        extend_instance(&env);
+
+        for subject in subjects.iter() {
+            let key = DataKey::KycStatus(subject.clone());
+            let removed: Option<KycRecord> = env.storage().persistent().get(&key);
+            if let Some(record) = removed {
+                env.storage().persistent().remove(&key);
+                events::KycRevoked { subject, record }.publish(&env);
+            }
+        }
+    }
+
     /// Revoke KYC for an address.
     pub fn revoke_kyc(env: Env, subject: Address) {
         Self::require_admin(&env);
@@ -114,29 +184,82 @@ impl ComplianceContract {
         env.storage().persistent().get(&DataKey::KycStatus(subject))
     }
 
-    /// Hands the admin role to `new_admin`.
+    /// Proposes `new_admin` as the next admin. Only the current admin may
+    /// call this; `new_admin` has not authorized anything yet.
     ///
-    /// Both the current and the incoming admin must authorize, in the same
-    /// transaction (NFR-S-4), for the reason ADR-002 gives for `rwa-asset`: a
-    /// handover to a key nobody controls cannot be undone.
+    /// Two-step handover (#125), replacing the single-transaction dual-auth
+    /// `transfer_admin` ADR-002 originally specified. ADR-002 rejected this
+    /// shape for Phase 1 only because the SDK could not build a transaction
+    /// carrying two distinct signers (#31); #31 is closed, and ADR-006
+    /// revisits the tradeoff now that it no longer applies. The underlying
+    /// guarantee is unchanged: a handover to a key nobody controls still
+    /// cannot complete, because `accept_admin` still requires that key's own
+    /// signature. For this contract that guarantee matters most: a
+    /// compromised key can mark any address permanently compliant on every
+    /// asset screening against it, and a lost one leaves records unrenewable
+    /// until every dependent asset's transfers fail (IR-04).
     ///
-    /// Without this the constructor's admin held the role for the contract's
-    /// whole life (IR-04). For this contract that is the widest blast radius in
-    /// the protocol: a compromised key can mark any address permanently
-    /// compliant on every asset screening against it, and a lost one leaves
-    /// records unrenewable until every dependent asset's transfers fail.
-    pub fn transfer_admin(env: Env, new_admin: Address) {
+    /// Calling this again before `accept_admin` replaces the pending
+    /// proposal rather than requiring `cancel_admin_transfer` first.
+    pub fn propose_admin(env: Env, new_admin: Address) {
         Self::require_admin(&env);
+        let current = Self::admin(env.clone());
+        env.storage().instance().set(&PENDING_ADMIN_KEY, &new_admin);
+        extend_instance(&env);
+
+        events::AdminTransferProposed {
+            current,
+            proposed_admin: new_admin,
+        }
+        .publish(&env);
+    }
+
+    /// Completes a handover `propose_admin` started. Only the proposed admin
+    /// may call this, and only its own signature is required: the current
+    /// admin already authorized the proposal, which is where the "both
+    /// sides consented" guarantee comes from now.
+    pub fn accept_admin(env: Env) {
+        let pending: Address = match env.storage().instance().get(&PENDING_ADMIN_KEY) {
+            Some(a) => a,
+            None => panic_with_error!(&env, ComplianceError::NoPendingAdminTransfer),
+        };
+        pending.require_auth();
+
         let previous = Self::admin(env.clone());
-        new_admin.require_auth();
-        env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        env.storage().instance().set(&ADMIN_KEY, &pending);
+        env.storage().instance().remove(&PENDING_ADMIN_KEY);
         extend_instance(&env);
 
         events::AdminTransferred {
             previous,
-            new_admin,
+            new_admin: pending,
         }
         .publish(&env);
+    }
+
+    /// Withdraws a pending proposal before it is accepted. Only the current
+    /// admin may call this, which is what makes a mistaken or no-longer-wanted
+    /// proposal reversible without waiting for the proposed admin to act (or
+    /// refuse to).
+    pub fn cancel_admin_transfer(env: Env) {
+        Self::require_admin(&env);
+        let pending: Address = match env.storage().instance().get(&PENDING_ADMIN_KEY) {
+            Some(a) => a,
+            None => panic_with_error!(&env, ComplianceError::NoPendingAdminTransfer),
+        };
+        env.storage().instance().remove(&PENDING_ADMIN_KEY);
+        extend_instance(&env);
+
+        events::AdminTransferCancelled {
+            cancelled_proposed_admin: pending,
+        }
+        .publish(&env);
+    }
+
+    /// The address `accept_admin` would install if called now, or `None` if
+    /// no transfer is pending.
+    pub fn pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&PENDING_ADMIN_KEY)
     }
 
     pub fn admin(env: Env) -> Address {

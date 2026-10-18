@@ -8,6 +8,9 @@ mod events;
 
 pub use error::RegistryError;
 pub use events::{ActiveSet, AdminTransferred, AssetRegistered, Paused};
+pub use events::{
+    ActiveSet, AdminTransferCancelled, AdminTransferProposed, AdminTransferred, AssetRegistered,
+};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol, Vec,
@@ -16,6 +19,7 @@ use stellarforge_common::{extend_instance, extend_persistent};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
+const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
 
 /// Largest page `list_assets` will return.
 ///
@@ -176,27 +180,81 @@ impl RegistryContract {
         events::ActiveSet { contract, active }.publish(&env);
     }
 
-    /// Hands the admin role to `new_admin`.
+    /// Proposes `new_admin` as the next admin. Only the current admin may
+    /// call this; `new_admin` has not authorized anything yet.
     ///
-    /// Both the current and the incoming admin must authorize, in the same
-    /// transaction (NFR-S-4), for the reason ADR-002 gives for `rwa-asset`: a
-    /// handover to a key nobody controls cannot be undone.
+    /// Two-step handover (#125), replacing the single-transaction dual-auth
+    /// `transfer_admin` ADR-002 originally specified. ADR-002 rejected this
+    /// shape for Phase 1 only because the SDK could not build a transaction
+    /// carrying two distinct signers (#31); #31 is closed, and ADR-006
+    /// revisits the tradeoff now that it no longer applies. The underlying
+    /// guarantee is unchanged: a handover to a key nobody controls still
+    /// cannot complete, because `accept_admin` still requires that key's own
+    /// signature. What changes is that the two signatures no longer need to
+    /// land in the same transaction, which is what makes this reachable from
+    /// the SDK at all, rather than `stellar-cli` only.
     ///
-    /// Without this the constructor's admin held the role for the contract's
-    /// whole life, so a compromised key could never be rotated out of control
-    /// of what the directory advertises (IR-04).
-    pub fn transfer_admin(env: Env, new_admin: Address) {
+    /// Calling this again before `accept_admin` replaces the pending
+    /// proposal rather than requiring `cancel_admin_transfer` first.
+    pub fn propose_admin(env: Env, new_admin: Address) {
         Self::require_admin(&env);
+        let current = Self::admin(env.clone());
+        env.storage().instance().set(&PENDING_ADMIN_KEY, &new_admin);
+        extend_instance(&env);
+
+        events::AdminTransferProposed {
+            current,
+            proposed_admin: new_admin,
+        }
+        .publish(&env);
+    }
+
+    /// Completes a handover `propose_admin` started. Only the proposed admin
+    /// may call this, and only its own signature is required: the current
+    /// admin already authorized the proposal, which is where the "both
+    /// sides consented" guarantee comes from now.
+    pub fn accept_admin(env: Env) {
+        let pending: Address = match env.storage().instance().get(&PENDING_ADMIN_KEY) {
+            Some(a) => a,
+            None => panic_with_error!(&env, RegistryError::NoPendingAdminTransfer),
+        };
+        pending.require_auth();
+
         let previous = Self::admin(env.clone());
-        new_admin.require_auth();
-        env.storage().instance().set(&ADMIN_KEY, &new_admin);
+        env.storage().instance().set(&ADMIN_KEY, &pending);
+        env.storage().instance().remove(&PENDING_ADMIN_KEY);
         extend_instance(&env);
 
         events::AdminTransferred {
             previous,
-            new_admin,
+            new_admin: pending,
         }
         .publish(&env);
+    }
+
+    /// Withdraws a pending proposal before it is accepted. Only the current
+    /// admin may call this, which is what makes a mistaken or no-longer-wanted
+    /// proposal reversible without waiting for the proposed admin to act (or
+    /// refuse to).
+    pub fn cancel_admin_transfer(env: Env) {
+        Self::require_admin(&env);
+        let pending: Address = match env.storage().instance().get(&PENDING_ADMIN_KEY) {
+            Some(a) => a,
+            None => panic_with_error!(&env, RegistryError::NoPendingAdminTransfer),
+        };
+        env.storage().instance().remove(&PENDING_ADMIN_KEY);
+        extend_instance(&env);
+
+        events::AdminTransferCancelled {
+            cancelled_proposed_admin: pending,
+        }
+        .publish(&env);
+    }
+
+    /// The address `accept_admin` would install if called now, or `None` if
+    /// no transfer is pending.
+    pub fn pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&PENDING_ADMIN_KEY)
     }
 
     pub fn admin(env: Env) -> Address {
