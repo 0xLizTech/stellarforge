@@ -39,6 +39,8 @@ pub enum GovernanceError {
     InvalidVotingPeriod = 10,
     /// `propose` was given a title longer than `MAX_TITLE_BYTES`.
     TitleTooLong = 11,
+    /// `set_proposal_deposit` was given a negative amount.
+    InvalidDepositAmount = 12,
     /// `accept_admin` was called with no transfer pending, or after it was
     /// cancelled or already accepted.
     NoPendingAdminTransfer = 12,

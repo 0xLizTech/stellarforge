@@ -21,6 +21,13 @@ mod events;
 
 pub use error::GovernanceError;
 pub use events::{
+    AdminTransferred, DepositConfigured, ProposalCreated, ProposalDepositRefunded,
+    ProposalFinalized, VoteCast,
+};
+
+use soroban_sdk::{
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env,
+    String, Symbol,
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, PassThresholdSet,
     ProposalCreated, ProposalFinalized, QuorumSet, VoteCast,
 };
@@ -34,6 +41,8 @@ use stellarforge_common::{extend_instance, extend_persistent, storage::DAY_IN_LE
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
 const PROP_COUNT: Symbol = symbol_short!("PCOUNT");
+const DEPOSIT_TOKEN_KEY: Symbol = symbol_short!("DEP_TOKEN");
+const DEPOSIT_AMOUNT_KEY: Symbol = symbol_short!("DEP_AMT");
 const QUORUM_KEY: Symbol = symbol_short!("QUORUM");
 const PASS_BPS_KEY: Symbol = symbol_short!("PASSBPS");
 
@@ -96,6 +105,18 @@ pub struct Proposal {
     pub votes_against: i128,
     pub deadline_ledger: u32,
     pub status: ProposalStatus,
+    /// The token `propose` collected a deposit in, or `None` if no deposit
+    /// was configured when this proposal was created. Carried on the
+    /// proposal itself, rather than read from `deposit_token()` at refund
+    /// time, so `finalize` refunds in the same token this proposal actually
+    /// paid in, even if `set_proposal_deposit` later changes or clears the
+    /// configured token (#134).
+    pub deposit_token: Option<Address>,
+    /// The amount collected in `deposit_token`, alongside it for the same
+    /// reason; always `0` when `deposit_token` is `None`. The deposit is an
+    /// anti-spam cost of proposing, not a stake on the result, so `finalize`
+    /// refunds it regardless of outcome.
+    pub deposit_amount: i128,
     /// sha256(title ++ description_hash), stored so `finalize` can clear this
     /// proposal's `DataKey::ActiveProposalHash` entry without recomputing it
     /// from a (title, description_hash) that may no longer be in scope.
@@ -181,6 +202,26 @@ impl GovernanceContract {
             None => panic_with_error!(&env, GovernanceError::Overflow),
         };
 
+        // IR-14's remaining follow-up (#134): an optional admin-configured
+        // deposit, so spam proposals cost the proposer rather than only fees
+        // and rent. Collected here in whatever token and amount are
+        // configured right now, and that same token/amount pair travels with
+        // the proposal so `finalize` refunds correctly even if the admin
+        // reconfigures or clears the deposit before this proposal closes.
+        let configured_token = Self::deposit_token(env.clone());
+        let configured_amount = Self::deposit_amount(env.clone());
+        let (deposit_token, deposit_amount) = match &configured_token {
+            Some(token_address) if configured_amount > 0 => {
+                token::Client::new(&env, token_address).transfer(
+                    &proposer,
+                    env.current_contract_address(),
+                    &configured_amount,
+                );
+                (configured_token, configured_amount)
+            }
+            _ => (None, 0),
+        };
+
         let proposal = Proposal {
             id,
             proposer,
@@ -190,6 +231,8 @@ impl GovernanceContract {
             votes_against: 0,
             deadline_ledger,
             status: ProposalStatus::Active,
+            deposit_token,
+            deposit_amount,
             content_hash: content_hash.clone(),
         };
 
@@ -211,6 +254,7 @@ impl GovernanceContract {
             title: proposal.title,
             description_hash: proposal.description_hash,
             deadline_ledger,
+            deposit_amount: proposal.deposit_amount,
         }
         .publish(&env);
 
@@ -331,6 +375,27 @@ impl GovernanceContract {
 
         extend_persistent(&env, &DataKey::Proposal(proposal_id));
 
+        // Refunded regardless of status (#134): the deposit is a cost of
+        // spamming the proposal list, not a stake on the outcome, so it is
+        // returned whether the proposal passed or was rejected, in the same
+        // token it was paid in. `finalize` runs at most once per proposal
+        // (the `ProposalNotActive` check above), so this cannot
+        // double-refund.
+        if let Some(token_address) = &proposal.deposit_token {
+            token::Client::new(&env, token_address).transfer(
+                &env.current_contract_address(),
+                &proposal.proposer,
+                &proposal.deposit_amount,
+            );
+
+            events::ProposalDepositRefunded {
+                proposal_id,
+                proposer: proposal.proposer.clone(),
+                amount: proposal.deposit_amount,
+            }
+            .publish(&env);
+        }
+
         events::ProposalFinalized {
             proposal_id,
             status: proposal.status,
@@ -445,6 +510,35 @@ impl GovernanceContract {
         }
     }
 
+    // ── Proposal Deposit Configuration (#134) ───────────────────────────────
+
+    /// Configures the proposal deposit, or pass `token = None` to disable it.
+    ///
+    /// `amount` is ignored (and stored as `0`) whenever `token` is `None`, so
+    /// a disabled deposit cannot be re-enabled by accident through a stale
+    /// `amount` left over from an earlier configuration. Mirrors
+    /// `rwa-asset::set_compliance`'s `Option<Address>` shape (ADR-004):
+    /// unconfigured means the feature is off, not that it defaults to some
+    /// token address.
+    pub fn set_proposal_deposit(env: Env, token: Option<Address>, amount: i128) {
+        Self::require_admin(&env);
+        if amount < 0 {
+            panic_with_error!(&env, GovernanceError::InvalidDepositAmount);
+        }
+
+        let stored_amount = if token.is_some() { amount } else { 0 };
+        match &token {
+            Some(addr) => env.storage().instance().set(&DEPOSIT_TOKEN_KEY, addr),
+            None => env.storage().instance().remove(&DEPOSIT_TOKEN_KEY),
+        }
+        env.storage()
+            .instance()
+            .set(&DEPOSIT_AMOUNT_KEY, &stored_amount);
+        extend_instance(&env);
+
+        events::DepositConfigured {
+            token,
+            amount: stored_amount,
     /// Sets the minimum total votes (`votes_for + votes_against`) a proposal
     /// needs before `finalize` will even evaluate its threshold (#135). Zero
     /// disables the check, matching `finalize`'s pre-#135 behavior.
@@ -489,6 +583,21 @@ impl GovernanceContract {
         .publish(&env);
     }
 
+    pub fn deposit_token(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DEPOSIT_TOKEN_KEY)
+    }
+
+    /// The amount `propose` currently collects, in `deposit_token()`'s token.
+    /// Always `0` when no deposit token is configured.
+    pub fn deposit_amount(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DEPOSIT_AMOUNT_KEY)
+            .unwrap_or(0)
+    }
+
+    fn require_admin(env: &Env) {
+        Self::admin(env.clone()).require_auth();
     pub fn pass_threshold_bps(env: Env) -> u32 {
         env.storage()
             .instance()
