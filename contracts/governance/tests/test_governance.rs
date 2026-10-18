@@ -12,6 +12,10 @@ use governance::{
     AdminTransferred, DataKey, DepositConfigured, GovernanceContract, GovernanceContractClient,
     GovernanceError, ProposalCreated, ProposalDepositRefunded, ProposalFinalized, ProposalStatus,
     VoteCast, MAX_TITLE_BYTES, MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, DataKey, GovernanceContract,
+    GovernanceContractClient, GovernanceError, PassThresholdSet, ProposalCreated,
+    ProposalFinalized, ProposalStatus, QuorumSet, VoteCast, DEFAULT_PASS_THRESHOLD_BPS,
+    MAX_PASS_THRESHOLD_BPS, MAX_TITLE_BYTES, MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -39,6 +43,23 @@ impl Harness<'_> {
             &String::from_str(&self.env, "Raise the protocol fee"),
             &Bytes::from_array(&self.env, &[7u8; 32]),
             &voting_period,
+        )
+    }
+
+    /// Like `propose`, but with a distinct title so it does not collide with
+    /// (or with another call to this helper using a different `suffix`)
+    /// #136's duplicate-active-proposal check. Tests that need several
+    /// simultaneously-active proposals for reasons unrelated to #136 use
+    /// this instead of `propose`.
+    fn propose_distinct(&self, suffix: &str) -> u64 {
+        let proposer = Address::generate(&self.env);
+        let mut title = std::string::String::from("Raise the protocol fee ");
+        title.push_str(suffix);
+        self.client.propose(
+            &proposer,
+            &String::from_str(&self.env, &title),
+            &Bytes::from_array(&self.env, &[7u8; 32]),
+            &VOTING_PERIOD,
         )
     }
 
@@ -174,9 +195,9 @@ fn test_propose_stores_the_proposal() {
 #[test]
 fn test_proposal_ids_are_sequential() {
     let h = setup();
-    assert_eq!(h.propose(), 1);
-    assert_eq!(h.propose(), 2);
-    assert_eq!(h.propose(), 3);
+    assert_eq!(h.propose_distinct("A"), 1);
+    assert_eq!(h.propose_distinct("B"), 2);
+    assert_eq!(h.propose_distinct("C"), 3);
     assert_eq!(h.client.proposal_count(), 3);
 }
 
@@ -230,8 +251,8 @@ fn test_double_voting_is_rejected() {
 #[test]
 fn test_a_voter_is_only_blocked_on_the_proposal_they_voted_on() {
     let h = setup();
-    let first = h.propose();
-    let second = h.propose();
+    let first = h.propose_distinct("A");
+    let second = h.propose_distinct("B");
     let voter = Address::generate(&h.env);
 
     h.client.vote(&voter, &first, &true, &100);
@@ -409,6 +430,254 @@ fn test_finalize_unknown_proposal_is_rejected() {
     );
 }
 
+// ─── Quorum and pass threshold (#135) ──────────────────────────────────────
+
+#[test]
+fn test_quorum_and_pass_threshold_default_to_the_pre_135_behavior() {
+    let h = setup();
+    assert_eq!(h.client.quorum(), 0);
+    assert_eq!(h.client.pass_threshold_bps(), DEFAULT_PASS_THRESHOLD_BPS);
+}
+
+#[test]
+fn test_a_proposal_below_quorum_fails_even_with_unanimous_support() {
+    let h = setup();
+    h.client.set_quorum(&1_000);
+
+    let id = h.propose();
+    // Unanimous, but total turnout (100) is below the 1,000 quorum.
+    h.client.vote(&Address::generate(&h.env), &id, &true, &100);
+    h.advance_past_deadline();
+
+    h.client.finalize(&id);
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Rejected
+    );
+}
+
+#[test]
+fn test_a_proposal_exactly_at_quorum_is_evaluated_on_threshold() {
+    let h = setup();
+    h.client.set_quorum(&100);
+
+    let id = h.propose();
+    h.client.vote(&Address::generate(&h.env), &id, &true, &100);
+    h.advance_past_deadline();
+
+    h.client.finalize(&id);
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Passed,
+        "turnout exactly at quorum must be evaluated, not rejected as 'below'"
+    );
+}
+
+#[test]
+fn test_a_proposal_one_below_quorum_fails() {
+    let h = setup();
+    h.client.set_quorum(&101);
+
+    let id = h.propose();
+    h.client.vote(&Address::generate(&h.env), &id, &true, &100);
+    h.advance_past_deadline();
+
+    h.client.finalize(&id);
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Rejected
+    );
+}
+
+#[test]
+fn test_raising_the_pass_threshold_requires_a_wider_margin() {
+    let h = setup();
+    // 60% required: 60 for vs 40 against is exactly the boundary.
+    h.client.set_pass_threshold_bps(&6_000);
+
+    let id = h.propose();
+    h.client.vote(&Address::generate(&h.env), &id, &true, &60);
+    h.client.vote(&Address::generate(&h.env), &id, &false, &41);
+    h.advance_past_deadline();
+
+    h.client.finalize(&id);
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Rejected,
+        "60 for vs 41 against is 59.4%, short of the 60% threshold"
+    );
+}
+
+#[test]
+fn test_exactly_meeting_the_pass_threshold_passes() {
+    let h = setup();
+    h.client.set_pass_threshold_bps(&6_000);
+
+    let id = h.propose();
+    h.client.vote(&Address::generate(&h.env), &id, &true, &60);
+    h.client.vote(&Address::generate(&h.env), &id, &false, &40);
+    h.advance_past_deadline();
+
+    h.client.finalize(&id);
+    assert_eq!(
+        h.client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Passed,
+        "60 for vs 40 against is exactly 60%, which must be enough"
+    );
+}
+
+#[test]
+fn test_set_quorum_rejects_negative_values() {
+    let h = setup();
+    assert_eq!(
+        h.client.try_set_quorum(&-1),
+        Err(Ok(GovernanceError::InvalidQuorum.into()))
+    );
+}
+
+#[test]
+fn test_set_pass_threshold_bps_rejects_zero() {
+    let h = setup();
+    assert_eq!(
+        h.client.try_set_pass_threshold_bps(&0),
+        Err(Ok(GovernanceError::InvalidPassThresholdBps.into()))
+    );
+}
+
+#[test]
+fn test_set_pass_threshold_bps_rejects_above_max() {
+    let h = setup();
+    assert_eq!(
+        h.client
+            .try_set_pass_threshold_bps(&(MAX_PASS_THRESHOLD_BPS + 1)),
+        Err(Ok(GovernanceError::InvalidPassThresholdBps.into()))
+    );
+}
+
+#[test]
+fn test_set_pass_threshold_bps_accepts_the_max() {
+    let h = setup();
+    h.client.set_pass_threshold_bps(&MAX_PASS_THRESHOLD_BPS);
+    assert_eq!(h.client.pass_threshold_bps(), MAX_PASS_THRESHOLD_BPS);
+}
+
+#[test]
+fn test_set_quorum_requires_admin_auth() {
+    let h = setup();
+    let not_admin = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &not_admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_quorum",
+            args: (1_000_i128,).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_quorum(&1_000).is_err());
+    assert_eq!(h.client.quorum(), 0);
+}
+
+#[test]
+fn test_set_quorum_emits_event() {
+    let h = setup();
+    h.client.set_quorum(&1_000);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![QuorumSet {
+            admin: h.admin.clone(),
+            quorum: 1_000,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_set_pass_threshold_bps_emits_event() {
+    let h = setup();
+    h.client.set_pass_threshold_bps(&6_000);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![PassThresholdSet {
+            admin: h.admin.clone(),
+            pass_threshold_bps: 6_000,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+// ─── Duplicate proposal rejection (#136) ───────────────────────────────────
+
+#[test]
+fn test_try_propose_returns_duplicate_error_not_a_panic() {
+    let h = setup();
+    h.propose();
+
+    let proposer = Address::generate(&h.env);
+    let result = h.client.try_propose(
+        &proposer,
+        &String::from_str(&h.env, "Raise the protocol fee"),
+        &Bytes::from_array(&h.env, &[7u8; 32]),
+        &VOTING_PERIOD,
+    );
+
+    assert_eq!(
+        result,
+        Err(Ok(GovernanceError::DuplicateActiveProposal.into()))
+    );
+}
+
+#[test]
+fn test_a_different_title_is_not_a_duplicate_even_with_the_same_description_hash() {
+    let h = setup();
+    h.propose();
+
+    let proposer = Address::generate(&h.env);
+    let id = h.client.propose(
+        &proposer,
+        &String::from_str(&h.env, "A completely different title"),
+        &Bytes::from_array(&h.env, &[7u8; 32]),
+        &VOTING_PERIOD,
+    );
+
+    assert!(id > 0);
+}
+
+#[test]
+fn test_a_different_description_hash_is_not_a_duplicate_even_with_the_same_title() {
+    let h = setup();
+    h.propose();
+
+    let proposer = Address::generate(&h.env);
+    let id = h.client.propose(
+        &proposer,
+        &String::from_str(&h.env, "Raise the protocol fee"),
+        &Bytes::from_array(&h.env, &[9u8; 32]),
+        &VOTING_PERIOD,
+    );
+
+    assert!(id > 0);
+}
+
+#[test]
+fn test_a_resubmission_after_the_first_is_finalized_is_allowed() {
+    let h = setup();
+    let first = h.propose();
+    h.client
+        .vote(&Address::generate(&h.env), &first, &true, &100);
+    h.advance_past_deadline();
+    h.client.finalize(&first);
+
+    // #136 only bars a *concurrent* duplicate; once the first proposal is
+    // decided, an identical resubmission is a new, distinct decision.
+    let second = h.propose();
+    assert_ne!(first, second);
+}
+
 // ─── Storage lifetime ──────────────────────────────────────────────────────
 
 // Since protocol 23 the test environment auto-restores archived entries, so
@@ -536,51 +805,147 @@ fn test_finalize_emits_the_outcome_and_tally() {
     );
 }
 
-// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+// ─── Admin rotation (IR-04, two-step handover #125/ADR-006) ────────────────
 
 #[test]
-fn test_transfer_admin_moves_the_role() {
+fn test_propose_then_accept_admin_moves_the_role() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    assert_eq!(
+        h.client.admin(),
+        h.admin,
+        "role must not move on propose alone"
+    );
+
+    h.client.accept_admin();
 
     assert_eq!(h.client.admin(), new_admin);
+    assert!(h.client.pending_admin().is_none());
 }
 
-/// NFR-S-4 is dual authorization, not "the admin signs". Only the current
-/// admin's signature is supplied here, which must not be enough.
+/// Only the current admin may propose.
 #[test]
-fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+fn test_propose_admin_requires_current_admin_auth() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
+    let not_admin = Address::generate(&h.env);
 
     h.env.mock_auths(&[MockAuth {
-        address: &h.admin,
+        address: &not_admin,
         invoke: &MockAuthInvoke {
             contract: &h.contract_id,
-            fn_name: "transfer_admin",
+            fn_name: "propose_admin",
             args: (new_admin.clone(),).into_val(&h.env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert!(h.client.try_propose_admin(&new_admin).is_err());
+    assert!(h.client.pending_admin().is_none());
+}
+
+/// NFR-S-4's dual-authorization guarantee survives the split into two
+/// steps: the proposed admin's own signature is required to accept, and the
+/// current admin cannot complete the handover on its behalf.
+#[test]
+fn test_accept_admin_without_the_proposed_admins_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "accept_admin",
+            args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_accept_admin().is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+/// `accept_admin` with nothing proposed is a defined failure, not a panic on
+/// an absent storage key.
+#[test]
+fn test_accept_admin_with_no_pending_transfer_fails() {
+    let h = setup();
+
+    let result = h.client.try_accept_admin();
+
+    assert_eq!(
+        result,
+        Err(Ok(GovernanceError::NoPendingAdminTransfer.into()))
+    );
+}
+
+/// The current admin can withdraw a proposal before it is accepted.
+#[test]
+fn test_cancel_admin_transfer_clears_the_pending_proposal() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.client.cancel_admin_transfer();
+
+    assert!(h.client.pending_admin().is_none());
+    assert!(h.client.try_accept_admin().is_err());
     assert_eq!(h.client.admin(), h.admin);
 }
 
 #[test]
-fn test_transfer_admin_emits_event() {
+fn test_propose_admin_emits_event() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferProposed {
+            current: h.admin.clone(),
+            proposed_admin: new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_accept_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.accept_admin();
 
     assert_eq!(
         h.env.events().all(),
         std::vec![AdminTransferred {
             previous: h.admin.clone(),
             new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_cancel_admin_transfer_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.cancel_admin_transfer();
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferCancelled {
+            cancelled_proposed_admin: new_admin,
         }
         .to_xdr(&h.env, &h.contract_id)],
     );

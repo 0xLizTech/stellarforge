@@ -616,25 +616,39 @@ describe("OracleAdapterClient sponsored writes", () => {
     expect(auth[0]?.equals(signed[0] as xdr.SorobanAuthorizationEntry)).toBe(true);
   });
 
-  it("buildTransferAdminTx lists both authorizers for dual auth", async () => {
+  it("proposeAdmin() asserts full args", async () => {
     const newAdmin = NEW_ADMIN_KP.publicKey();
-    const args = [nativeToScVal(newAdmin, { type: "address" })];
-    stubSponsoredNetwork([
-      simulationWith([
-        sourceAccountEntry("transfer_admin", args),
-        unsignedEntry(newAdmin, "transfer_admin", args),
-      ]),
-    ]);
+    stubWritePath();
+    const result = await client.proposeAdmin(ADMIN, newAdmin);
+    expect(result).toEqual({ hash: SUBMITTED_HASH, ledger: 42 });
 
-    const sponsored = await client.buildTransferAdminTx(ADMIN, newAdmin);
-    expect(sponsored.transaction.source).toBe(ADMIN);
-    expect(builtInvocation(sponsored.transaction)).toEqual({
-      fn: "transfer_admin",
-      args: [newAdmin],
-    });
-    // Current admin is covered by the fee-payer source signature (null);
-    // incoming admin must sign its own entry.
-    expect(sponsored.authorizers).toEqual([null, newAdmin]);
+    const tx = await client.buildProposeAdminTx(ADMIN, newAdmin);
+    expect(builtInvocation(tx)).toEqual({ fn: "propose_admin", args: [newAdmin] });
+  });
+
+  it("acceptAdmin() takes no args beyond the proposed admin's own signature", async () => {
+    const newAdmin = NEW_ADMIN_KP.publicKey();
+    // acceptAdmin must be submitted by the proposed admin itself, not the
+    // current admin's client used by the rest of this describe block.
+    const newAdminClient = new OracleAdapterClient(
+      configWith({ oracleAdapter: ORACLE_ID }, NEW_ADMIN_KP.secret()),
+    );
+    stubWritePath();
+    const result = await newAdminClient.acceptAdmin(newAdmin);
+    expect(result).toEqual({ hash: SUBMITTED_HASH, ledger: 42 });
+
+    const tx = await newAdminClient.buildAcceptAdminTx(newAdmin);
+    expect(tx.source).toBe(newAdmin);
+    expect(builtInvocation(tx)).toEqual({ fn: "accept_admin", args: [] });
+  });
+
+  it("cancelAdminTransfer() asserts full args", async () => {
+    stubWritePath();
+    const result = await client.cancelAdminTransfer(ADMIN);
+    expect(result).toEqual({ hash: SUBMITTED_HASH, ledger: 42 });
+
+    const tx = await client.buildCancelAdminTransferTx(ADMIN);
+    expect(builtInvocation(tx)).toEqual({ fn: "cancel_admin_transfer", args: [] });
   });
 });
 

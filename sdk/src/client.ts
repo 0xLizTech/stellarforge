@@ -339,8 +339,8 @@ export class RwaAssetClient extends ContractClient {
   //
   // Authorized by the asset's admin, who also sources and pays for the
   // transaction, exactly as the writes above do. `admin()` returns the address.
-  // Handing the role over is `buildTransferAdminTx`, shared by every client,
-  // because it needs two authorizers.
+  // Handing the role over is the two-step `buildProposeAdminTx` /
+  // `buildAcceptAdminTx` pair, shared by every client.
 
   /** Grant (`approved` true) or revoke the issuer role for `issuer`. */
   async buildSetIssuerTx(admin: string, issuer: string, approved: boolean): Promise<Transaction> {
@@ -417,7 +417,8 @@ export class RwaAssetClient extends ContractClient {
  * `rwa-asset` screens transfers against.
  *
  * Writes are admin-only and follow the same build-or-submit split as
- * {@link RwaAssetClient}. Handing the admin role over is `buildTransferAdminTx`.
+ * {@link RwaAssetClient}. Handing the admin role over is the two-step
+ * `buildProposeAdminTx` / `buildAcceptAdminTx` pair.
  */
 export class ComplianceClient extends ContractClient {
   constructor(config: StellarForgeConfig) {

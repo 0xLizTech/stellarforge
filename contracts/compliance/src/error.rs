@@ -27,4 +27,7 @@ pub enum ComplianceError {
     AlreadyExpired = 4,
     /// `set_kyc` was given a jurisdiction that is not an ISO 3166-1 alpha-2 code.
     InvalidJurisdiction = 5,
+    /// `accept_admin` was called with no transfer pending, or after it was
+    /// cancelled or already accepted.
+    NoPendingAdminTransfer = 6,
 }
