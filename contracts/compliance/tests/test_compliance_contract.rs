@@ -9,8 +9,8 @@ use soroban_sdk::{
 };
 
 use compliance::{
-    AdminTransferred, ComplianceContract, ComplianceContractClient, ComplianceError, DataKey,
-    KycRecord, KycRevoked, KycSet, MAX_LEVEL,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, ComplianceContract,
+    ComplianceContractClient, ComplianceError, DataKey, KycRecord, KycRevoked, KycSet, MAX_LEVEL,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -333,16 +333,24 @@ fn test_revoking_an_unknown_subject_emits_nothing() {
     );
 }
 
-// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+// ─── Admin rotation (IR-04, two-step handover #125/ADR-006) ────────────────
 
 #[test]
-fn test_transfer_admin_moves_the_role() {
+fn test_propose_then_accept_admin_moves_the_role() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    assert_eq!(
+        h.client.admin(),
+        h.admin,
+        "role must not move on propose alone"
+    );
+
+    h.client.accept_admin();
 
     assert_eq!(h.client.admin(), new_admin);
+    assert!(h.client.pending_admin().is_none());
 }
 
 /// #120. `test_set_kyc_extends_to_the_network_maximum` already checks
@@ -363,22 +371,75 @@ fn test_transfer_admin_extends_the_instance() {
 
 /// NFR-S-4 is dual authorization, not "the admin signs". Only the current
 /// admin's signature is supplied here, which must not be enough.
+/// Only the current admin may propose.
 #[test]
-fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+fn test_propose_admin_requires_current_admin_auth() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
+    let not_admin = Address::generate(&h.env);
 
     h.env.mock_auths(&[MockAuth {
-        address: &h.admin,
+        address: &not_admin,
         invoke: &MockAuthInvoke {
             contract: &h.contract_id,
-            fn_name: "transfer_admin",
+            fn_name: "propose_admin",
             args: (new_admin.clone(),).into_val(&h.env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert!(h.client.try_propose_admin(&new_admin).is_err());
+    assert!(h.client.pending_admin().is_none());
+}
+
+/// NFR-S-4's dual-authorization guarantee survives the split into two
+/// steps: the proposed admin's own signature is required to accept, and the
+/// current admin cannot complete the handover on its behalf.
+#[test]
+fn test_accept_admin_without_the_proposed_admins_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "accept_admin",
+            args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_accept_admin().is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+/// `accept_admin` with nothing proposed is a defined failure, not a panic on
+/// an absent storage key.
+#[test]
+fn test_accept_admin_with_no_pending_transfer_fails() {
+    let h = setup();
+
+    let result = h.client.try_accept_admin();
+
+    assert_eq!(
+        result,
+        Err(Ok(ComplianceError::NoPendingAdminTransfer.into()))
+    );
+}
+
+/// The current admin can withdraw a proposal before it is accepted.
+#[test]
+fn test_cancel_admin_transfer_clears_the_pending_proposal() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.client.cancel_admin_transfer();
+
+    assert!(h.client.pending_admin().is_none());
+    assert!(h.client.try_accept_admin().is_err());
     assert_eq!(h.client.admin(), h.admin);
 }
 
@@ -387,7 +448,9 @@ fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
 #[test]
 fn test_a_rotated_out_admin_can_no_longer_set_kyc() {
     let h = setup();
-    h.client.transfer_admin(&Address::generate(&h.env));
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.client.accept_admin();
 
     let subject = Address::generate(&h.env);
     let record = h.record(LEVEL_ACCREDITED, NEVER_EXPIRES);
@@ -406,17 +469,54 @@ fn test_a_rotated_out_admin_can_no_longer_set_kyc() {
 }
 
 #[test]
-fn test_transfer_admin_emits_event() {
+fn test_propose_admin_emits_event() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferProposed {
+            current: h.admin.clone(),
+            proposed_admin: new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_accept_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.accept_admin();
 
     assert_eq!(
         h.env.events().all(),
         std::vec![AdminTransferred {
             previous: h.admin.clone(),
             new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_cancel_admin_transfer_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.cancel_admin_transfer();
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferCancelled {
+            cancelled_proposed_admin: new_admin,
         }
         .to_xdr(&h.env, &h.contract_id)],
     );

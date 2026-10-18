@@ -541,7 +541,7 @@ fn test_admin_write_paths_extend_what_they_write() {
     let (env, _, client) = setup();
     env.ledger().with_mut(|li| li.sequence_number += 600_000);
 
-    client.transfer_admin(&Address::generate(&env));
+    client.propose_admin(&Address::generate(&env));
     let instance_ttl = env.as_contract(&client.address, || env.storage().instance().get_ttl());
     assert_eq!(instance_ttl, INSTANCE_BUMP_AMOUNT);
 
@@ -702,36 +702,61 @@ fn test_self_transfer_still_validates_balance() {
     assert_eq!(res, Err(Ok(RwaError::InsufficientBalance.into())));
 }
 
-// ─── Admin handover (NFR-S-4) ──────────────────────────────────────────────
+// ─── Admin handover (NFR-S-4, two-step #125/ADR-006) ───────────────────────
 
-// `transfer_admin` has required both signatures since it was written, but no
-// test asserted it: every call ran under `mock_all_auths`. IR-04 added the
-// same entry point to the other three contracts with this coverage, so the
-// original gets it too.
+// `transfer_admin` required both signatures in one transaction since it was
+// written. #125 replaces it with propose_admin/accept_admin: the current
+// admin's signature authorizes the proposal, the proposed admin's own
+// signature is required to accept it, and both are still required overall,
+// just not in the same transaction (see ADR-006 for why this is safe now
+// that #31 is closed).
 
 #[test]
-fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
-    let (env, admin, client) = setup();
+fn test_propose_admin_requires_current_admin_auth() {
+    let (env, _admin, client) = setup();
     let new_admin = Address::generate(&env);
+    let not_admin = Address::generate(&env);
 
     env.mock_auths(&[MockAuth {
-        address: &admin,
+        address: &not_admin,
         invoke: &MockAuthInvoke {
             contract: &client.address,
-            fn_name: "transfer_admin",
+            fn_name: "propose_admin",
             args: (new_admin.clone(),).into_val(&env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(client.try_transfer_admin(&new_admin).is_err());
+    assert!(client.try_propose_admin(&new_admin).is_err());
+    assert!(client.pending_admin().is_none());
+}
+
+#[test]
+fn test_accept_admin_without_the_proposed_admins_signature_is_rejected() {
+    let (env, admin, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.propose_admin(&new_admin);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "accept_admin",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(client.try_accept_admin().is_err());
     assert_eq!(client.admin(), admin);
 }
 
 #[test]
 fn test_a_rotated_out_admin_can_no_longer_pause() {
     let (env, admin, client) = setup();
-    client.transfer_admin(&Address::generate(&env));
+    let new_admin = Address::generate(&env);
+    client.propose_admin(&new_admin);
+    client.accept_admin();
 
     env.mock_auths(&[MockAuth {
         address: &admin,

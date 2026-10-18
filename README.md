@@ -203,7 +203,9 @@ authorization entries to sign; the SDK README shows the flow.
 | `set_issuer(issuer, approved)` | admin | Grant/revoke issuer role |
 | `set_paused(paused)` | admin | Emergency circuit breaker |
 | `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can only be tightened: never raised, removed or set below supply |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `propose_admin(new_admin)` | admin | Propose the next admin |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `set_compliance(compliance, min_level)` | admin | Point at a compliance contract, or `None` to disable screening |
 | `balance(owner)` | — | Query balance |
 | `allowance(owner, spender)` | — | Query allowance |
@@ -211,6 +213,7 @@ authorization entries to sign; the SDK README shows the flow.
 | `metadata()` | — | Query metadata |
 | `decimals()`, `name()`, `symbol()` | — | SEP-41 metadata getters |
 | `admin()` | — | Query admin address |
+| `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
 | `is_issuer(address)` | — | Query issuer status |
 | `paused()` | — | Query pause state |
 | `compliance_contract()` | — | Query the configured compliance contract |
@@ -229,11 +232,14 @@ no compliance contract is configured.
 |---|---|---|
 | `set_kyc(subject, record)` | admin | Set KYC record; requires level 0–3, an expiry not yet past, and a two-letter ISO 3166-1 jurisdiction |
 | `revoke_kyc(subject)` | admin | Remove KYC record |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `propose_admin(new_admin)` | admin | Propose the next admin |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `is_compliant(subject, min_level)` | — | Check compliance; pure query, no ledger write |
 | `screen(subject, min_level)` | — | As above, but refreshes the record's TTL; bound by `RwaAsset` |
 | `get_kyc(subject)` | — | Read KYC record |
 | `admin()` | — | Query admin address |
+| `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
 
 A compliance contract plugged into `RwaAsset` must implement `screen`, not just
 `is_compliant`. The two return identical answers and differ only in that
@@ -248,10 +254,13 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 | `register(entry)` | admin | Register a new asset contract, or update a registered one |
 | `set_active(contract, active)` | admin | Activate/deactivate asset |
 | `get_asset(contract)` | — | Look up asset entry |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `propose_admin(new_admin)` | admin | Propose the next admin |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `list_assets(start, limit)` | — | Page through registered contracts in registration order, at most 100 per call, each exactly once |
 | `asset_count()` | — | Count registered contracts |
 | `admin()` | — | Query admin address |
+| `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
 
 **An entry is an assertion, not a verification.** `register` does not check
 that the address is a deployed `rwa-asset` or that `asset_class` matches its
@@ -262,20 +271,28 @@ the admin's directory, not as proof that an asset is genuine or current.
 
 | Function | Auth | Description |
 |---|---|---|
-| `propose(proposer, title, hash, period)` | proposer | Create proposal; the period must be 1–90 days in ledgers and the title at most 256 bytes |
+| `propose(proposer, title, hash, period)` | proposer | Create proposal; the period must be 1–90 days in ledgers and the title at most 256 bytes; rejected if an active proposal already has the same title and description hash |
 | `vote(voter, id, support, weight)` | voter | Cast vote |
-| `finalize(id)` | — | Tally and finalize; a tie is rejected |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role; no other admin powers in Phase 1 |
+| `finalize(id)` | — | Tally and finalize against quorum and the pass threshold; a tie, or turnout below quorum, is rejected |
+| `set_quorum(quorum)` | admin | Minimum total votes a proposal needs before `finalize` evaluates it; 0 disables the check |
+| `set_pass_threshold_bps(bps)` | admin | Fraction of cast votes, in basis points, that must be `votes_for` for a proposal to pass; defaults to 5,001 (>50%) |
+| `propose_admin(new_admin)` | admin | Propose the next admin; no other admin powers in Phase 1 |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `get_proposal(id)` | — | Read proposal |
 | `has_voted(id, voter)` | — | Whether an address has voted on a proposal |
 | `proposal_count()` | — | Count proposals |
+| `quorum()` | — | Query the configured quorum |
+| `pass_threshold_bps()` | — | Query the configured pass threshold |
 | `admin()` | — | Query admin address |
+| `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
 
 > **Phase 1 caveat.** `vote` accepts a caller-supplied `weight` and does not
-> check it against any token balance or voting-power source, and `finalize`
-> applies no quorum. Governance is a skeleton until the `SFORGE` token and
-> execution hooks land in Phase 3 — do not treat a passed proposal as a
-> trustworthy signal before then.
+> check it against any token balance or voting-power source. `finalize` does
+> now apply quorum and a pass threshold (both admin-configurable), but against
+> that unverified weight: any address can still carry a vote, so the result is
+> advisory, not binding, until the `SFORGE` token and execution hooks land in
+> Phase 3 — do not treat a passed proposal as a trustworthy signal before then.
 
 ### Oracle Adapter (Phase 2)
 
@@ -291,12 +308,14 @@ rounded down to `resolution()`. See [ADR-005](docs/architecture/005-oracle-adapt
 | `add_asset(asset, max_deviation_bps)` | admin | List an asset, up to 100 |
 | `set_max_deviation(asset, max_deviation_bps)` | admin | Change an asset's deviation limit |
 | `set_reporter(asset, reporter, allowed)` | admin | Grant or revoke a reporter for one asset |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `propose_admin(new_admin)` | admin | Propose the next admin |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `lastprice(asset)` | — | Most recent price (SEP-40) |
 | `price(asset, timestamp)` | — | Price in the tick containing `timestamp` (SEP-40) |
 | `prices(asset, records)` | — | Up to 20 most recent prices, newest first (SEP-40) |
 | `base()`, `assets()`, `decimals()`, `resolution()` | — | Feed configuration (SEP-40) |
-| `admin()`, `is_reporter(asset, reporter)`, `asset_config(asset)` | — | Roles and limits |
+| `admin()`, `pending_admin()`, `is_reporter(asset, reporter)`, `asset_config(asset)` | — | Roles and limits |
 
 > **Freshness is the consumer's check.** The feed never refuses to return an
 > old price. Compare `timestamp` against the ledger time before relying on it.
@@ -320,7 +339,7 @@ StellarForge is pre-audit software. **Do not use on mainnet with real funds unti
 
 - All sensitive operations require Soroban `require_auth()` — no permission can be spoofed at the contract level.
 - The `set_paused` circuit breaker allows emergency halts without upgrading contracts.
-- Admin transfer requires both current and new admin to authenticate.
+- Admin transfer is a two-step handover: the current admin proposes, and only the proposed admin's own signature can accept it (see ADR-006).
 - See [SECURITY.md](docs/SECURITY.md) for the responsible disclosure policy.
 
 ---

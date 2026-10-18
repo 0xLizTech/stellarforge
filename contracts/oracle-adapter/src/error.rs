@@ -41,4 +41,7 @@ pub enum OracleError {
     InvalidDeviation = 12,
     /// An arithmetic operation overflowed.
     Overflow = 13,
+    /// `accept_admin` was called with no transfer pending, or after it was
+    /// cancelled or already accepted.
+    NoPendingAdminTransfer = 14,
 }
