@@ -1,0 +1,17 @@
+[package]
+name = "stellarforge-benchmark"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "stellarforge-benchmark"
+path = "src/main.rs"
+
+[dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+rwa-asset = { path = "../../contracts/rwa-asset", features = ["testutils"] }
+compliance = { path = "../../contracts/compliance", features = ["testutils"] }
+registry = { path = "../../contracts/registry", features = ["testutils"] }
+oracle-adapter = { path = "../../contracts/oracle-adapter", features = ["testutils"] }
+governance = { path = "../../contracts/governance", features = ["testutils"] }

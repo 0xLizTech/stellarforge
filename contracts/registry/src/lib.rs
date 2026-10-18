@@ -7,6 +7,7 @@ mod error;
 mod events;
 
 pub use error::RegistryError;
+pub use events::{ActiveSet, AdminTransferred, AssetRegistered, Paused};
 pub use events::{
     ActiveSet, AdminTransferCancelled, AdminTransferProposed, AdminTransferred, AssetRegistered,
 };
@@ -17,6 +18,7 @@ use soroban_sdk::{
 use stellarforge_common::{extend_instance, extend_persistent};
 
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
+const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
 
 /// Largest page `list_assets` will return.
@@ -61,6 +63,7 @@ impl RegistryContract {
     pub fn __constructor(env: Env, admin: Address) {
         admin.require_auth();
         env.storage().instance().set(&ADMIN_KEY, &admin);
+        env.storage().instance().set(&PAUSED_KEY, &false);
         env.storage().persistent().set(&DataKey::AssetCount, &0_u32);
 
         extend_instance(&env);
@@ -81,6 +84,7 @@ impl RegistryContract {
     /// (IR-01), and each registration rewrote the whole list on the way there.
     pub fn register(env: Env, entry: AssetEntry) {
         Self::require_admin(&env);
+        Self::require_not_paused(&env);
         let key = DataKey::Asset(entry.contract.clone());
 
         // The directory index is appended to only for a genuinely new asset.
@@ -161,6 +165,7 @@ impl RegistryContract {
 
     pub fn set_active(env: Env, contract: Address, active: bool) {
         Self::require_admin(&env);
+        Self::require_not_paused(&env);
         let key = DataKey::Asset(contract.clone());
         let mut entry: AssetEntry = match env.storage().persistent().get(&key) {
             Some(e) => e,
@@ -259,7 +264,32 @@ impl RegistryContract {
         }
     }
 
+    pub fn paused(env: Env) -> bool {
+        env.storage().instance().get(&PAUSED_KEY).unwrap_or(false)
+    }
+
+    /// Emergency brake on directory changes (IR follow-up: only `rwa-asset`
+    /// could pause; a compromised registry admin had no circuit breaker).
+    ///
+    /// Blocks `register`/`set_active` only. Read paths (`get_asset`,
+    /// `list_assets`, `asset_count`) stay open while paused, matching
+    /// `rwa-asset`'s own pause, which likewise never blocks a read.
+    /// `transfer_admin` also stays open, so a compromised admin key can still
+    /// be rotated out while paused.
+    pub fn set_paused(env: Env, paused: bool) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&PAUSED_KEY, &paused);
+        extend_instance(&env);
+        events::Paused { paused }.publish(&env);
+    }
+
     fn require_admin(env: &Env) {
         Self::admin(env.clone()).require_auth();
+    }
+
+    fn require_not_paused(env: &Env) {
+        if Self::paused(env.clone()) {
+            panic_with_error!(env, RegistryError::ContractPaused);
+        }
     }
 }

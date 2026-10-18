@@ -27,6 +27,8 @@ pub enum ComplianceError {
     AlreadyExpired = 4,
     /// `set_kyc` was given a jurisdiction that is not an ISO 3166-1 alpha-2 code.
     InvalidJurisdiction = 5,
+    /// The contract is paused; state-changing calls are refused.
+    ContractPaused = 6,
     /// `set_kyc_batch`/`revoke_kyc_batch` was given more records/subjects than
     /// `MAX_BATCH_SIZE`.
     BatchTooLarge = 6,

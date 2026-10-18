@@ -52,6 +52,11 @@ pub struct AdminTransferred {
     pub new_admin: Address,
 }
 
+/// Published by `set_paused`, matching `rwa-asset::events::Paused`.
+#[contractevent(topics = ["paused"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Paused {
+    pub paused: bool,
 /// Published by `cancel_admin_transfer`.
 #[contractevent(topics = ["cancel_admin_transfer"], data_format = "single-value")]
 #[derive(Clone, Debug, Eq, PartialEq)]
