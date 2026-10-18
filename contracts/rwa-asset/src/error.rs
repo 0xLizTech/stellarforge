@@ -48,4 +48,13 @@ pub enum RwaError {
     /// `approve` set a non-zero allowance whose `live_until_ledger` has
     /// already passed.
     InvalidExpiration = 14,
+    /// `set_compliance` was given a `min_level` above `MAX_COMPLIANCE_LEVEL`.
+    /// A compliance record's own level is capped at the same scale
+    /// (`compliance::MAX_LEVEL`), so a `min_level` above it could never be
+    /// satisfied by any verified party: every transfer would silently and
+    /// permanently fail `NotCompliant` until an admin reconfigured it.
+    InvalidComplianceLevel = 15,
+    /// `accept_admin` was called with no transfer pending, or after it was
+    /// cancelled or already accepted.
+    NoPendingAdminTransfer = 15,
 }

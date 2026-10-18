@@ -30,4 +30,7 @@ pub enum ComplianceError {
     /// `set_kyc_batch`/`revoke_kyc_batch` was given more records/subjects than
     /// `MAX_BATCH_SIZE`.
     BatchTooLarge = 6,
+    /// `accept_admin` was called with no transfer pending, or after it was
+    /// cancelled or already accepted.
+    NoPendingAdminTransfer = 6,
 }
