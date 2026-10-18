@@ -331,6 +331,7 @@ The **Testnet Smoke** workflow runs it on every dispatch, against a fresh deploy
 ## Documentation Standards
 
 - **ADRs (Architecture Decision Records):** For any significant architectural decision, create a new ADR in `docs/architecture/` using the template at `docs/architecture/000-template.md`. ADRs are immutable once merged; superseded ADRs are marked as such.
+- **RFCs (protocol changes):** For significant protocol-level changes, write an RFC in `docs/rfcs/` using the template at `docs/rfcs/0000-template.md`. When an RFC is required and how it is reviewed is described in `docs/rfcs/README.md`.
 - **Contract changes:** Update the relevant section in `README.md`'s Contract Reference table.
 - **New modules:** Add a brief description to the README architecture diagram.
 - **Breaking changes:** Document in `CHANGELOG.md` and flag `BREAKING CHANGE:` in the commit footer.
