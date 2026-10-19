@@ -3,12 +3,14 @@
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Ledger, MockAuth, MockAuthInvoke,
+        Address as _, Events as _, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Bytes, Env, IntoVal, String,
+    Address, Bytes, Env, Event, IntoVal, String,
 };
 
-use rwa_asset::{AssetMetadata, DataKey, RwaAssetContract, RwaAssetContractClient, RwaError};
+use rwa_asset::{
+    AssetMetadata, DataKey, ForcedTransfer, RwaAssetContract, RwaAssetContractClient, RwaError,
+};
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 /// One whole token in base units. The asset uses 7 decimals, matching the
@@ -1097,6 +1099,119 @@ fn test_burn_from_spends_the_allowance_and_reduces_supply() {
         client.try_burn_from(&bob, &alice, &101),
         Err(Ok(RwaError::InsufficientAllowance.into()))
     );
+}
+
+// ─── Forced transfer (court-ordered recovery, #144) ────────────────────────
+
+/// A dedicated role, separate from the issuer, authorizes forced transfers.
+/// Only an address holding it may move another holder's tokens without
+/// their signature.
+fn setup_with_forced_transfer_role() -> (Env, Address, Address, RwaAssetContractClient<'static>) {
+    let (env, admin, client) = setup();
+    let officer = Address::generate(&env);
+    client.set_forced_transfer_role(&officer, &true);
+    (env, admin, officer, client)
+}
+
+#[test]
+fn test_forced_transfer_moves_balance() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    let reason = Bytes::from_array(&env, &[0xAB; 32]);
+    client.forced_transfer(&officer, &alice, &bob, &400, &reason);
+
+    assert_eq!(client.balance(&alice), 600);
+    assert_eq!(client.balance(&bob), 400);
+    assert_eq!(client.total_supply(), 1_000);
+}
+
+#[test]
+fn test_forced_transfer_requires_the_forced_transfer_role() {
+    let (env, _, _officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let not_officer = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    let reason = Bytes::from_array(&env, &[0xCD; 32]);
+    assert_eq!(
+        client.try_forced_transfer(&not_officer, &alice, &bob, &100, &reason),
+        Err(Ok(RwaError::NotForcedTransferRole.into()))
+    );
+    assert_eq!(client.balance(&alice), 1_000);
+    assert_eq!(client.balance(&bob), 0);
+}
+
+#[test]
+fn test_forced_transfer_emits_event_with_reason_hash() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    let reason = Bytes::from_array(&env, &[0xEF; 32]);
+    client.forced_transfer(&officer, &alice, &bob, &250, &reason);
+
+    assert_eq!(
+        env.events().all(),
+        std::vec![ForcedTransfer {
+            operator: officer,
+            from: alice,
+            to: bob,
+            amount: 250,
+            reason_hash: reason,
+        }
+        .to_xdr(&env, &client.address)],
+    );
+}
+
+#[test]
+fn test_forced_transfer_still_validates_balance() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 100);
+
+    let reason = Bytes::from_array(&env, &[0x11; 32]);
+    assert_eq!(
+        client.try_forced_transfer(&officer, &alice, &bob, &101, &reason),
+        Err(Ok(RwaError::InsufficientBalance.into()))
+    );
+}
+
+#[test]
+fn test_forced_transfer_rejects_zero_amount() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 100);
+
+    let reason = Bytes::from_array(&env, &[0x22; 32]);
+    assert_eq!(
+        client.try_forced_transfer(&officer, &alice, &bob, &0, &reason),
+        Err(Ok(RwaError::InvalidAmount.into()))
+    );
+}
+
+/// The reason hash is the only record of why tokens moved without their
+/// owner's signature, so an empty one is refused rather than silently
+/// accepted.
+#[test]
+fn test_forced_transfer_rejects_an_empty_reason_hash() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 100);
+
+    let empty_reason = Bytes::new(&env);
+    assert_eq!(
+        client.try_forced_transfer(&officer, &alice, &bob, &50, &empty_reason),
+        Err(Ok(RwaError::InvalidReasonHash.into()))
+    );
+    assert_eq!(client.balance(&alice), 100);
 }
 
 #[test]

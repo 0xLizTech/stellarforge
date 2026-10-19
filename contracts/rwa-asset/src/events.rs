@@ -6,7 +6,7 @@
 //! existing tooling can consume them unmodified: the operation name first,
 //! then the addresses involved, with the amount as the payload.
 
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{contractevent, Address, Bytes};
 
 use crate::AssetMetadata;
 
@@ -163,4 +163,26 @@ pub struct CapIncreaseProposed {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapIncreaseCancelled {
     pub cancelled_proposed_max_supply: i128,
+}
+
+// ─── Forced transfer (#144) ──────────────────────────────────────────────────
+
+/// Published by `forced_transfer`, a court-ordered recovery executed by the
+/// dedicated forced-transfer role. Distinct from `Transfer` so indexers and
+/// monitors can isolate legally compelled movements from ordinary ones. The
+/// `reason_hash` commits to the off-chain legal order without publishing it.
+/// `Bytes`, not a fixed-size hash type, matching `forced_transfer`'s
+/// parameter: `InvalidReasonHash` rejects it empty, but does not require any
+/// particular length.
+#[contractevent(topics = ["forced_transfer"], data_format = "map")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForcedTransfer {
+    #[topic]
+    pub operator: Address,
+    #[topic]
+    pub from: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+    pub reason_hash: Bytes,
 }

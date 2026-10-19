@@ -31,7 +31,9 @@ patterns) and [ADR-007](../../docs/architecture/007-governance-controlled-supply
 | `propose_cap_increase(new_max_supply)` | admin | Propose raising (or removing) the supply cap |
 | `approve_cap_increase()` | governance | Finalize a pending cap increase; applies it through the same path as `update_metadata` |
 | `cancel_cap_increase()` | admin | Withdraw a pending cap increase before it is approved |
-| `balance(owner)`, `allowance(owner, spender)`, `total_supply()`, `metadata()`, `metadata_version()`, `decimals()`, `name()`, `symbol()`, `admin()`, `pending_admin()`, `is_issuer(address)`, `paused()`, `compliance_contract()`, `min_compliance_level()`, `governance()`, `pending_cap_increase()` | — | Read-only queries |
+| `set_forced_transfer_role(account, approved)` | admin | Grant/revoke the forced-transfer role (#144) |
+| `forced_transfer(operator, from, to, amount, reason_hash)` | forced-transfer role | Move tokens without `from`'s authorization, for court-ordered recovery; not blocked by `set_paused` |
+| `balance(owner)`, `allowance(owner, spender)`, `total_supply()`, `metadata()`, `metadata_version()`, `decimals()`, `name()`, `symbol()`, `admin()`, `pending_admin()`, `is_issuer(address)`, `paused()`, `compliance_contract()`, `min_compliance_level()`, `governance()`, `pending_cap_increase()`, `is_forced_transfer_role(address)` | — | Read-only queries |
 
 ## Errors (`RwaError`)
 
@@ -56,6 +58,9 @@ patterns) and [ADR-007](../../docs/architecture/007-governance-controlled-supply
 | 17 | `GovernanceNotConfigured` | `approve_cap_increase`, when `set_governance` was never called |
 | 18 | `NoPendingCapIncrease` | `approve_cap_increase`/`cancel_cap_increase`, with nothing proposed |
 | 19 | `NoPendingAdminTransfer` | `accept_admin`/`cancel_admin_transfer`, with nothing proposed |
+| 20 | `NotForcedTransferRole` | `forced_transfer`, when the caller does not hold the forced-transfer role |
+| 21 | `InvalidReasonHash` | `forced_transfer`, on an empty `reason_hash` |
+| 22 | `InvalidForcedTransferParty` | Reserved; not currently raised (`forced_transfer` treats a same-address call as a no-op, like `transfer`) |
 
 Discriminants are frozen once a contract using them is deployed (ADR-003):
 existing values never change meaning, and new ones are only ever appended.
@@ -75,6 +80,7 @@ existing values never change meaning, and new ones are only ever appended.
 | `GovernanceSet` | `set_governance` (#148) |
 | `CapIncreaseProposed` | `propose_cap_increase` (#148) |
 | `CapIncreaseCancelled` | `cancel_cap_increase` (#148) |
+| `ForcedTransfer` | `forced_transfer`; carries `reason_hash` so a court-ordered move is auditable against the order that justified it (#144) |
 
 ## Legal document hash
 

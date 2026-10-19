@@ -70,4 +70,13 @@ pub enum RwaError {
     /// old value, so ADR-003's discriminant freeze (which protects a
     /// *deployed* contract's clients) does not apply yet.
     NoPendingAdminTransfer = 19,
+    /// Caller is not the dedicated forced-transfer role (#144).
+    NotForcedTransferRole = 20,
+    /// `forced_transfer` was called with an empty reason hash.
+    InvalidReasonHash = 21,
+    /// Reserved. Not currently raised: `forced_transfer` treats a
+    /// same-address call as a no-op that still publishes its event, the same
+    /// way `transfer`/`transfer_from` treat a self-transfer elsewhere in this
+    /// contract, rather than rejecting it.
+    InvalidForcedTransferParty = 22,
 }
