@@ -63,7 +63,7 @@ StellarForge is an open-source, permissionless protocol for **Real World Asset (
 ```
 stellarforge/
 ├── contracts/
-│   ├── common/             # Shared storage/TTL policy (library, not deployed)
+│   ├── common/             # Shared storage/TTL policy (library, not deployed; see contracts/common/README.md)
 │   ├── rwa-asset/          # Core tokenization contract (Soroban/Rust)
 │   ├── registry/           # Global asset registry
 │   ├── compliance/         # KYC/AML compliance engine
@@ -191,6 +191,8 @@ authorization entries to sign; the SDK README shows the flow.
 
 ### RwaAsset
 
+Full reference, including errors and events: [contracts/rwa-asset/README.md](contracts/rwa-asset/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
 | `__constructor(admin, metadata)` | admin | Runs at deploy; not callable afterwards |
@@ -202,15 +204,20 @@ authorization entries to sign; the SDK README shows the flow.
 | `transfer_from(spender, from, to, amount)` | spender | Spend allowance |
 | `set_issuer(issuer, approved)` | admin | Grant/revoke issuer role |
 | `set_paused(paused)` | admin | Emergency circuit breaker |
-| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can only be tightened: never raised, removed or set below supply |
+| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can only be tightened here, never raised, removed or set below supply — raising one needs `propose_cap_increase`/`approve_cap_increase` |
 | `propose_admin(new_admin)` | admin | Propose the next admin |
 | `accept_admin()` | new_admin | Complete a proposed handover |
 | `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `set_compliance(compliance, min_level)` | admin | Point at a compliance contract, or `None` to disable screening |
+| `set_governance(governance)` | admin | Name the address that may approve loosening a supply cap, or `None` to disable loosening |
+| `propose_cap_increase(new_max_supply)` | admin | Propose raising (or removing) the supply cap |
+| `approve_cap_increase()` | governance | Finalize a pending cap increase; applies it through the same path `update_metadata` uses |
+| `cancel_cap_increase()` | admin | Withdraw a pending cap increase before it is approved |
 | `balance(owner)` | — | Query balance |
 | `allowance(owner, spender)` | — | Query allowance |
 | `total_supply()` | — | Query supply |
 | `metadata()` | — | Query metadata |
+| `metadata_version()` | — | Query how many times metadata has been written; 1 at construction, incremented on every change |
 | `decimals()`, `name()`, `symbol()` | — | SEP-41 metadata getters |
 | `admin()` | — | Query admin address |
 | `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
@@ -218,6 +225,8 @@ authorization entries to sign; the SDK README shows the flow.
 | `paused()` | — | Query pause state |
 | `compliance_contract()` | — | Query the configured compliance contract |
 | `min_compliance_level()` | — | Query the required verification level |
+| `governance()` | — | Query the address that may approve loosening a supply cap, if any |
+| `pending_cap_increase()` | — | Query the proposed-but-not-yet-approved supply cap, if any |
 
 **Transfer screening.** When `set_compliance` names a contract, `mint`,
 `transfer` and `transfer_from` require every counterparty to hold a valid
@@ -227,6 +236,8 @@ has lapsed can still exit their position. Screening is skipped entirely while
 no compliance contract is configured.
 
 ### Compliance
+
+Full reference, including errors and events: [contracts/compliance/README.md](contracts/compliance/README.md).
 
 | Function | Auth | Description |
 |---|---|---|
@@ -249,6 +260,8 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 
 ### Registry
 
+Full reference, including errors and events: [contracts/registry/README.md](contracts/registry/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
 | `register(entry)` | admin | Register a new asset contract, or update a registered one |
@@ -268,6 +281,8 @@ metadata, and nothing in the protocol reads `active`. Treat the registry as
 the admin's directory, not as proof that an asset is genuine or current.
 
 ### Governance
+
+Full reference, including errors and events: [contracts/governance/README.md](contracts/governance/README.md).
 
 | Function | Auth | Description |
 |---|---|---|
@@ -300,6 +315,8 @@ A SEP-40 price feed for net asset values, which market oracles don't publish.
 The read functions are SEP-40's, so anything that reads a SEP-40 oracle reads
 this one. Prices are scaled by `10^decimals()` and timestamped in Unix seconds,
 rounded down to `resolution()`. See [ADR-005](docs/architecture/005-oracle-adapter.md).
+
+Full reference, including errors and events: [contracts/oracle-adapter/README.md](contracts/oracle-adapter/README.md).
 
 | Function | Auth | Description |
 |---|---|---|

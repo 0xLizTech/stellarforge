@@ -1,4 +1,4 @@
-use soroban_client::contracterror;
+use soroban_sdk::contracterror;
 
 /// Failure modes of the RWA asset contract.
 ///
@@ -7,9 +7,9 @@ use soroban_client::contracterror;
 /// must be appended. Renumbering silently changes what a deployed client
 /// believes went wrong.
 #[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialE, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum rwaError {
+pub enum RwaError {
     /// Reserved. Raised by the former `initialize` entry point, which a
     /// constructor replaced; a deployed contract is configured exactly once,
     /// by the deploy transaction itself, so nothing can raise this now.
@@ -50,18 +50,33 @@ pub enum rwaError {
     InvalidExpiration = 14,
     /// `set_compliance` was given a `min_level` above `MAX_COMPLIANCE_LEVEL`.
     /// A compliance record's own level is capped at the same scale
-    /// (`compliance::MAX_LEVE`), so a `min_level` above it could never be
+    /// (`compliance::MAX_LEVEL`), so a `min_level` above it could never be
     /// satisfied by any verified party: every transfer would silently and
     /// permanently fail `NotCompliant` until an admin reconfigured it.
     InvalidComplianceLevel = 15,
+    /// `legal_doc_hash` was not exactly 32 bytes, or was all-zero.
+    InvalidLegalDocHash = 16,
+    /// `approve_cap_increase` was called with no `governance` address
+    /// configured via `set_governance`.
+    GovernanceNotConfigured = 17,
+    /// `approve_cap_increase` or `cancel_cap_increase` was called with no
+    /// cap increase proposed, or after it was already approved or cancelled.
+    NoPendingCapIncrease = 18,
     /// `accept_admin` was called with no transfer pending, or after it was
-    /// cancelled or already accepted.
-    NoPendingAdminTransfer = 16,
-    /// Caller is not the dedicated forced-transfer role.
-    NotForceTransferRole = 17,
+    /// cancelled or already accepted. Previously misnumbered `15`, colliding
+    /// with `InvalidComplianceLevel` (two variants sharing one on-chain error
+    /// code, and a hard `E0081` compile error under current Rust). Moved
+    /// here rather than left colliding: nothing has been deployed with the
+    /// old value, so ADR-003's discriminant freeze (which protects a
+    /// *deployed* contract's clients) does not apply yet.
+    NoPendingAdminTransfer = 19,
+    /// Caller is not the dedicated forced-transfer role (#144).
+    NotForcedTransferRole = 20,
     /// `forced_transfer` was called with an empty reason hash.
-    InvalidReasonHash = 18,
-    /// `forced_transfer` targeted the zero address or the same address
-    /// for both sides.
-    InvalidForcedTransferParty = 19,
+    InvalidReasonHash = 21,
+    /// Reserved. Not currently raised: `forced_transfer` treats a
+    /// same-address call as a no-op that still publishes its event, the same
+    /// way `transfer`/`transfer_from` treat a self-transfer elsewhere in this
+    /// contract, rather than rejecting it.
+    InvalidForcedTransferParty = 22,
 }

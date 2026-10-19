@@ -6,7 +6,7 @@
 //! existing tooling can consume them unmodified: the operation name first,
 //! then the addresses involved, with the amount as the payload.
 
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{contractevent, Address, Bytes};
 
 use crate::AssetMetadata;
 
@@ -86,13 +86,18 @@ pub struct IssuerSet {
     pub approved: bool,
 }
 
-/// Carries both versions, so the legal document hash an asset used to point
-/// at stays recoverable from the event stream alone.
+/// Carries both the previous and new metadata in full, so the legal document
+/// hash an asset used to point at stays recoverable from the event stream
+/// alone, and `version`, so an integrator can tell two reads of `metadata()`
+/// apart (or confirm nothing changed) without diffing every field (#149).
+/// `version` is `metadata()`'s version *after* this change: 2 the first time
+/// this event fires, since construction itself counts as version 1.
 #[contractevent(topics = ["update_metadata"], data_format = "map")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetadataUpdated {
     pub previous: AssetMetadata,
     pub metadata: AssetMetadata,
+    pub version: u32,
 }
 
 /// Published by `propose_admin`. Distinct from `AdminTransferred`: the role
@@ -132,10 +137,43 @@ pub struct ComplianceSet {
     pub min_level: u32,
 }
 
+// ─── Supply cap governance (#148) ────────────────────────────────────────────
+
+/// Published by `set_governance`. `governance` is `None` when loosening a
+/// supply cap was disabled, which — like `ComplianceSet`'s `None` — is worth
+/// a monitor's attention: it is a privileged capability turning on or off.
+#[contractevent(topics = ["set_governance"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceSet {
+    pub governance: Option<Address>,
+}
+
+/// Published by `propose_cap_increase`. Approval, once it happens, is visible
+/// as an ordinary `MetadataUpdated` (with the new `max_supply` in `metadata`)
+/// rather than a second event type, so a monitor only has to watch one event
+/// for every way metadata can change.
+#[contractevent(topics = ["propose_cap_increase"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapIncreaseProposed {
+    pub proposed_max_supply: i128,
+}
+
+/// Published by `cancel_cap_increase`.
+#[contractevent(topics = ["cancel_cap_increase"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapIncreaseCancelled {
+    pub cancelled_proposed_max_supply: i128,
+}
+
+// ─── Forced transfer (#144) ──────────────────────────────────────────────────
+
 /// Published by `forced_transfer`, a court-ordered recovery executed by the
 /// dedicated forced-transfer role. Distinct from `Transfer` so indexers and
 /// monitors can isolate legally compelled movements from ordinary ones. The
 /// `reason_hash` commits to the off-chain legal order without publishing it.
+/// `Bytes`, not a fixed-size hash type, matching `forced_transfer`'s
+/// parameter: `InvalidReasonHash` rejects it empty, but does not require any
+/// particular length.
 #[contractevent(topics = ["forced_transfer"], data_format = "map")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForcedTransfer {
@@ -146,5 +184,5 @@ pub struct ForcedTransfer {
     #[topic]
     pub to: Address,
     pub amount: i128,
-    pub reason_hash: soroban_sdk::BytesN<32>,
+    pub reason_hash: Bytes,
 }
