@@ -153,6 +153,39 @@ describe("GovernanceClient.proposalCount", () => {
   });
 });
 
+describe("GovernanceClient.pendingAdmin (#125)", () => {
+  it("decodes an address when a transfer is pending", async () => {
+    stubSimulation(succeeds(addr(HOLDER)));
+    await expect(new GovernanceClient(govConfig).pendingAdmin()).resolves.toBe(HOLDER);
+  });
+
+  it("decodes null when no transfer is pending", async () => {
+    stubSimulation(succeeds(none()));
+    await expect(new GovernanceClient(govConfig).pendingAdmin()).resolves.toBeNull();
+  });
+});
+
+describe("GovernanceClient.quorum (#135)", () => {
+  it("decodes an i128 to bigint", async () => {
+    stubSimulation(succeeds(i128(1_000n)));
+    const quorum = await new GovernanceClient(govConfig).quorum();
+    expect(quorum).toBe(1_000n);
+    expect(typeof quorum).toBe("bigint");
+  });
+
+  it("decodes the default of zero", async () => {
+    stubSimulation(succeeds(i128(0n)));
+    await expect(new GovernanceClient(govConfig).quorum()).resolves.toBe(0n);
+  });
+});
+
+describe("GovernanceClient.passThresholdBps (#135)", () => {
+  it("decodes a u32", async () => {
+    stubSimulation(succeeds(u32(6_000)));
+    await expect(new GovernanceClient(govConfig).passThresholdBps()).resolves.toBe(6_000);
+  });
+});
+
 describe("GovernanceClient read failures", () => {
   it("surfaces the simulation error message", async () => {
     stubSimulation(fails("HostError: Error(Contract, #3)"));
@@ -217,6 +250,41 @@ describe("GovernanceClient write builders", () => {
     stubWritePath();
     const tx = await new GovernanceClient(govConfig).buildFinalizeTx(HOLDER, 4n);
     expect(builtInvocation(tx)).toEqual({ fn: "finalize", args: [4n] });
+  });
+
+  it("invokes `set_quorum` with the admin and the quorum (#135)", async () => {
+    stubWritePath();
+    const tx = await new GovernanceClient(govConfig).buildSetQuorumTx(PROPOSER, 1_000n);
+    expect(builtInvocation(tx)).toEqual({ fn: "set_quorum", args: [1_000n] });
+    expect(tx.source).toBe(PROPOSER);
+  });
+
+  it("invokes `set_pass_threshold_bps` with the threshold (#135)", async () => {
+    stubWritePath();
+    const tx = await new GovernanceClient(govConfig).buildSetPassThresholdBpsTx(PROPOSER, 6_000);
+    expect(builtInvocation(tx)).toEqual({ fn: "set_pass_threshold_bps", args: [6_000] });
+    expect(tx.source).toBe(PROPOSER);
+  });
+
+  it("invokes `propose_admin` with the new admin (#125)", async () => {
+    stubWritePath();
+    const tx = await new GovernanceClient(govConfig).buildProposeAdminTx(PROPOSER, HOLDER);
+    expect(builtInvocation(tx)).toEqual({ fn: "propose_admin", args: [HOLDER] });
+    expect(tx.source).toBe(PROPOSER);
+  });
+
+  it("invokes `accept_admin` sourced from the proposed admin, with no args (#125)", async () => {
+    stubWritePath();
+    const tx = await new GovernanceClient(govConfig).buildAcceptAdminTx(HOLDER);
+    expect(builtInvocation(tx)).toEqual({ fn: "accept_admin", args: [] });
+    expect(tx.source).toBe(HOLDER);
+  });
+
+  it("invokes `cancel_admin_transfer` with no args (#125)", async () => {
+    stubWritePath();
+    const tx = await new GovernanceClient(govConfig).buildCancelAdminTransferTx(PROPOSER);
+    expect(builtInvocation(tx)).toEqual({ fn: "cancel_admin_transfer", args: [] });
+    expect(tx.source).toBe(PROPOSER);
   });
 
   it.each([

@@ -2,17 +2,23 @@
 
 use soroban_sdk::{
     testutils::{
-        cost_estimate::NetworkInvocationResourceLimits, storage::Persistent as _, Address as _,
-        Events, Ledger, MockAuth, MockAuthInvoke,
+        cost_estimate::NetworkInvocationResourceLimits,
+        storage::{Instance as _, Persistent as _},
+        Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
     },
     Address, Env, Event, IntoVal, Symbol, Vec,
 };
 
 use oracle_adapter::{
     AdminTransferred, Asset, AssetAdded, AssetConfig, DataKey, MaxDeviationSet,
-    OracleAdapterContract, OracleAdapterContractClient, OracleError, PriceData, PriceOverridden,
-    PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS, MAX_RECORDS,
+    OracleAdapterContract, OracleAdapterContractClient, OracleError, Paused, PriceData,
+    PriceOverridden, PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS, MAX_RECORDS,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Asset, AssetAdded,
+    AssetConfig, DataKey, MaxDeviationSet, OracleAdapterContract, OracleAdapterContractClient,
+    OracleError, PriceData, PriceOverridden, PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS,
+    MAX_RECORDS,
 };
+use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 const DECIMALS: u32 = 14;
 const RESOLUTION: u32 = 300;
@@ -62,6 +68,12 @@ impl Harness<'_> {
     fn max_ttl(&self) -> u32 {
         self.env
             .as_contract(&self.contract_id, || self.env.storage().max_ttl())
+    }
+
+    fn instance_ttl(&self) -> u32 {
+        self.env.as_contract(&self.contract_id, || {
+            self.env.storage().instance().get_ttl()
+        })
     }
 }
 
@@ -691,41 +703,338 @@ fn test_report_extends_the_entries_it_writes_to_the_network_maximum() {
     assert_eq!(h.ttl_of(&DataKey::Config(h.asset.clone())), max);
 }
 
+/// #120. `report`'s own extension of `Config` and `Reporter` (asserted
+/// above) happens to mask whether `add_asset` and `set_reporter` extend what
+/// THEY write, since `setup()` already calls both before any test body runs
+/// and `report_now` re-extends the same keys regardless. This test isolates
+/// `add_asset`/`set_reporter`/`set_max_deviation`'s own writes on a second
+/// asset that no `report` call ever touches, so only their own extension (or
+/// its absence) can explain the result.
+#[test]
+fn test_add_asset_set_reporter_and_set_max_deviation_extend_what_they_write() {
+    let h = setup();
+    env_advance_ledger(&h.env, 600_000);
+
+    let second_asset = Asset::Stellar(Address::generate(&h.env));
+    h.client.add_asset(&second_asset, &MAX_DEVIATION_BPS);
+
+    let max = h.max_ttl();
+    assert_eq!(
+        h.ttl_of(&DataKey::Assets),
+        max,
+        "add_asset must extend the Assets list it just appended to"
+    );
+    assert_eq!(
+        h.ttl_of(&DataKey::Config(second_asset.clone())),
+        max,
+        "add_asset must extend the Config entry it just created"
+    );
+
+    env_advance_ledger(&h.env, 600_000);
+    let second_reporter = Address::generate(&h.env);
+    h.client
+        .set_reporter(&second_asset, &second_reporter, &true);
+    assert_eq!(
+        h.ttl_of(&DataKey::Reporter(second_asset.clone(), second_reporter)),
+        h.max_ttl(),
+        "set_reporter must extend the grant it just wrote"
+    );
+
+    env_advance_ledger(&h.env, 600_000);
+    h.client.set_max_deviation(&second_asset, &2_000);
+    assert_eq!(
+        h.ttl_of(&DataKey::Config(second_asset)),
+        h.max_ttl(),
+        "set_max_deviation must extend the Config entry it just rewrote"
+    );
+}
+
+fn env_advance_ledger(env: &Env, ledgers: u32) {
+    env.ledger().with_mut(|li| li.sequence_number += ledgers);
+}
+
 // ─── Admin handover ─────────────────────────────────────────────────────────
+// ─── Admin handover (two-step #125/ADR-006) ────────────────────────────────
 
 #[test]
-fn test_transfer_admin_moves_the_role() {
+fn test_propose_then_accept_admin_moves_the_role() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
+
+    h.client.propose_admin(&new_admin);
+    assert_eq!(
+        h.client.admin(),
+        h.admin,
+        "role must not move on propose alone"
+    );
+
+    h.client.accept_admin();
+
+    assert_eq!(h.client.admin(), new_admin);
+    assert!(h.client.pending_admin().is_none());
+}
+
+/// #120. No other test checks instance TTL after `transfer_admin` in
+/// isolation; `extend_instance` is one shared function already exercised by
+/// other write paths, but this closes the one call site that otherwise had
+/// nothing asserting it directly.
+#[test]
+fn test_transfer_admin_extends_the_instance() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    env_advance_ledger(&h.env, 600_000);
 
     h.client.transfer_admin(&new_admin);
 
-    assert_eq!(
-        h.env.events().all(),
-        std::vec![AdminTransferred {
-            previous: h.admin.clone(),
-            new_admin: new_admin.clone(),
-        }
-        .to_xdr(&h.env, &h.contract_id)],
-    );
-    assert_eq!(h.client.admin(), new_admin);
+    assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
 
 #[test]
-fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+fn test_propose_admin_requires_current_admin_auth() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
+    let not_admin = Address::generate(&h.env);
 
     h.env.mock_auths(&[MockAuth {
-        address: &h.admin,
+        address: &not_admin,
         invoke: &MockAuthInvoke {
             contract: &h.contract_id,
-            fn_name: "transfer_admin",
+            fn_name: "propose_admin",
             args: (new_admin.clone(),).into_val(&h.env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert!(h.client.try_propose_admin(&new_admin).is_err());
+    assert!(h.client.pending_admin().is_none());
+}
+
+#[test]
+fn test_accept_admin_without_the_proposed_admins_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "accept_admin",
+            args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_accept_admin().is_err());
     assert_eq!(h.client.admin(), h.admin);
+}
+
+// ─── Emergency pause (#126) ────────────────────────────────────────────────
+
+#[test]
+fn test_initialize_not_paused() {
+    let h = setup();
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_toggles_the_flag() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+    assert!(h.client.paused());
+
+    h.client.set_paused(&false);
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_emits_event() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![Paused { paused: true }.to_xdr(&h.env, &h.contract_id)],
+#[test]
+fn test_accept_admin_with_no_pending_transfer_fails() {
+    let h = setup();
+
+    let result = h.client.try_accept_admin();
+
+    assert_eq!(result, Err(Ok(OracleError::NoPendingAdminTransfer.into())));
+}
+
+#[test]
+fn test_cancel_admin_transfer_clears_the_pending_proposal() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.client.cancel_admin_transfer();
+
+    assert!(h.client.pending_admin().is_none());
+    assert!(h.client.try_accept_admin().is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+#[test]
+fn test_propose_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+
+    h.client.propose_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferProposed {
+            current: h.admin.clone(),
+            proposed_admin: new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_set_paused_requires_admin() {
+    let h = setup();
+    let stranger = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_paused",
+            args: (true,).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_paused(&true).is_err());
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_paused_blocks_report() {
+    let h = setup();
+    h.client.set_paused(&true);
+
+    let now = h.env.ledger().timestamp();
+    let res = h.client.try_report(&h.reporter, &h.asset, &PRICE, &now);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+    assert!(h.client.lastprice(&h.asset).is_none());
+}
+
+#[test]
+fn test_paused_blocks_override_price() {
+    let h = setup();
+    h.report_now(PRICE);
+    h.client.set_paused(&true);
+
+    let now = h.env.ledger().timestamp();
+    let res = h.client.try_override_price(&h.asset, &(PRICE * 10), &now);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+}
+
+#[test]
+fn test_paused_blocks_add_asset() {
+    let h = setup();
+    h.client.set_paused(&true);
+
+    let res = h.client.try_add_asset(&h.usd(), &500);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+}
+
+#[test]
+fn test_paused_blocks_set_max_deviation() {
+    let h = setup();
+    h.client.set_paused(&true);
+
+    let res = h.client.try_set_max_deviation(&h.asset, &500);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+}
+
+#[test]
+fn test_paused_blocks_set_reporter() {
+    let h = setup();
+    let new_reporter = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    let res = h.client.try_set_reporter(&h.asset, &new_reporter, &true);
+    assert_eq!(res, Err(Ok(OracleError::ContractPaused.into())));
+    assert!(!h.client.is_reporter(&h.asset, &new_reporter));
+}
+
+/// SEP-40 reads, plus is_reporter/asset_config, must stay open while paused:
+/// a consumer already holding a NAV should keep being able to read it.
+#[test]
+fn test_paused_does_not_block_reads() {
+    let h = setup();
+    h.report_now(PRICE);
+    h.client.set_paused(&true);
+
+    assert!(h.client.lastprice(&h.asset).is_some());
+    assert_eq!(h.client.base(), h.usd());
+    assert_eq!(h.client.decimals(), DECIMALS);
+    assert_eq!(h.client.resolution(), RESOLUTION);
+    assert!(h.client.is_reporter(&h.asset, &h.reporter));
+    assert!(h.client.asset_config(&h.asset).is_some());
+}
+
+#[test]
+fn test_unpausing_allows_report_again() {
+    let h = setup();
+    h.client.set_paused(&true);
+    h.client.set_paused(&false);
+
+    h.report_now(PRICE);
+    assert_eq!(h.client.lastprice(&h.asset).unwrap().price, PRICE);
+}
+
+/// transfer_admin must stay callable while paused, so a compromised admin
+/// key can still be rotated out.
+#[test]
+fn test_paused_does_not_block_transfer_admin() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
+fn test_accept_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.accept_admin();
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferred {
+            previous: h.admin.clone(),
+            new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_cancel_admin_transfer_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.cancel_admin_transfer();
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferCancelled {
+            cancelled_proposed_admin: new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
 }

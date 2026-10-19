@@ -10,8 +10,11 @@ use soroban_sdk::{
 };
 
 use registry::{
-    ActiveSet, AdminTransferred, AssetEntry, AssetRegistered, DataKey, RegistryContract,
+    ActiveSet, AdminTransferred, AssetEntry, AssetRegistered, DataKey, Paused, RegistryContract,
     RegistryContractClient, RegistryError, MAX_PAGE_SIZE,
+    ActiveSet, AdminTransferCancelled, AdminTransferProposed, AdminTransferred, AssetEntry,
+    AssetRegistered, DataKey, RegistryContract, RegistryContractClient, RegistryError,
+    MAX_PAGE_SIZE,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -427,37 +430,166 @@ fn test_set_active_emits_event() {
     );
 }
 
-// ─── Admin rotation (IR-04) ────────────────────────────────────────────────
+// ─── Admin rotation (IR-04, two-step handover #125/ADR-006) ────────────────
 
 #[test]
-fn test_transfer_admin_moves_the_role() {
+fn test_propose_then_accept_admin_moves_the_role() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    assert_eq!(
+        h.client.admin(),
+        h.admin,
+        "role must not move on propose alone"
+    );
+
+    h.client.accept_admin();
 
     assert_eq!(h.client.admin(), new_admin);
+    assert!(h.client.pending_admin().is_none());
+}
+
+/// #120. The existing instance-TTL assertions (above) exercise `register`'s
+/// and `set_active`'s calls to `extend_instance`, never `transfer_admin`'s.
+/// `extend_instance` is one shared function, so this mostly proves the same
+/// thing twice, but it closes the one call site that otherwise had no test
+/// exercising it directly.
+#[test]
+fn test_transfer_admin_extends_the_instance() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
 
 /// NFR-S-4 is dual authorization, not "the admin signs". Only the current
 /// admin's signature is supplied here, which must not be enough.
+/// Only the current admin may propose. Note NFR-S-4's dual-authorization
+/// guarantee survives the split into two steps: `accept_admin` below still
+/// requires the incoming admin's own signature, which is what makes the
+/// handover as a whole still require both sides' consent, just not in the
+/// same transaction.
 #[test]
-fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
+fn test_propose_admin_requires_current_admin_auth() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
+    let not_admin = Address::generate(&h.env);
 
     h.env.mock_auths(&[MockAuth {
-        address: &h.admin,
+        address: &not_admin,
         invoke: &MockAuthInvoke {
             contract: &h.contract_id,
-            fn_name: "transfer_admin",
+            fn_name: "propose_admin",
             args: (new_admin.clone(),).into_val(&h.env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert!(h.client.try_propose_admin(&new_admin).is_err());
+    assert!(h.client.pending_admin().is_none());
+}
+
+/// The proposed admin's own signature is required to accept; the current
+/// admin cannot complete the handover on the proposed admin's behalf.
+#[test]
+fn test_accept_admin_without_the_proposed_admins_signature_is_rejected() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "accept_admin",
+            args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_accept_admin().is_err());
     assert_eq!(h.client.admin(), h.admin);
+}
+
+/// `accept_admin` with nothing proposed is a defined failure, not a panic on
+/// an absent storage key.
+#[test]
+fn test_accept_admin_with_no_pending_transfer_fails() {
+    let h = setup();
+
+    let result = h.client.try_accept_admin();
+
+    assert_eq!(
+        result,
+        Err(Ok(RegistryError::NoPendingAdminTransfer.into()))
+    );
+}
+
+/// The current admin can withdraw a proposal before it is accepted.
+#[test]
+fn test_cancel_admin_transfer_clears_the_pending_proposal() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.client.cancel_admin_transfer();
+
+    assert!(h.client.pending_admin().is_none());
+    // The would-be incoming admin can no longer accept a withdrawn proposal.
+    assert!(h.client.try_accept_admin().is_err());
+    assert_eq!(h.client.admin(), h.admin);
+}
+
+/// Only the current admin may cancel, not the proposed admin trying to back
+/// out, and not an unrelated caller.
+#[test]
+fn test_cancel_admin_transfer_requires_current_admin_auth() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &new_admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "cancel_admin_transfer",
+            args: ().into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_cancel_admin_transfer().is_err());
+    assert!(h.client.pending_admin().is_some());
+}
+
+/// Proposing again before acceptance replaces the pending proposal rather
+/// than requiring `cancel_admin_transfer` first.
+#[test]
+fn test_a_second_proposal_replaces_the_first() {
+    let h = setup();
+    let first_candidate = Address::generate(&h.env);
+    let second_candidate = Address::generate(&h.env);
+
+    h.client.propose_admin(&first_candidate);
+    h.client.propose_admin(&second_candidate);
+
+    // Replaced, not queued: only the second candidate is pending.
+    assert_eq!(h.client.pending_admin(), Some(second_candidate.clone()));
+
+    // Only the current pending candidate's signature is accepted; the
+    // superseded first candidate's own signature authority test is covered
+    // by test_accept_admin_without_the_proposed_admins_signature_is_rejected.
+    h.client.accept_admin();
+    assert_eq!(
+        h.client.admin(),
+        second_candidate,
+        "the surviving (second) proposal must be the one accept_admin installs"
+    );
+    assert_ne!(h.client.admin(), first_candidate);
 }
 
 /// The point of rotation: once handed over, the outgoing key must be unable
@@ -465,7 +597,9 @@ fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
 #[test]
 fn test_a_rotated_out_admin_can_no_longer_register() {
     let h = setup();
-    h.client.transfer_admin(&Address::generate(&h.env));
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.client.accept_admin();
 
     let asset = Address::generate(&h.env);
     let listed = entry(&h.env, &asset, "real_estate", true);
@@ -484,17 +618,169 @@ fn test_a_rotated_out_admin_can_no_longer_register() {
 }
 
 #[test]
-fn test_transfer_admin_emits_event() {
+fn test_propose_admin_emits_event() {
     let h = setup();
     let new_admin = Address::generate(&h.env);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferProposed {
+            current: h.admin.clone(),
+            proposed_admin: new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_accept_admin_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event before asserting on accept's
+
+    h.client.accept_admin();
 
     assert_eq!(
         h.env.events().all(),
         std::vec![AdminTransferred {
             previous: h.admin.clone(),
             new_admin,
+        }
+        .to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+// ─── Emergency pause (#126) ────────────────────────────────────────────────
+
+#[test]
+fn test_initialize_not_paused() {
+    let h = setup();
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_toggles_the_flag() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+    assert!(h.client.paused());
+
+    h.client.set_paused(&false);
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_set_paused_emits_event() {
+    let h = setup();
+
+    h.client.set_paused(&true);
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![Paused { paused: true }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
+#[test]
+fn test_set_paused_requires_admin() {
+    let h = setup();
+    let stranger = Address::generate(&h.env);
+
+    h.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "set_paused",
+            args: (true,).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_paused(&true).is_err());
+    assert!(!h.client.paused());
+}
+
+#[test]
+fn test_paused_blocks_register() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    let res = h
+        .client
+        .try_register(&entry(&h.env, &asset, "real_estate", true));
+    assert_eq!(res, Err(Ok(RegistryError::ContractPaused.into())));
+    assert!(h.client.get_asset(&asset).is_none());
+}
+
+#[test]
+fn test_paused_blocks_set_active() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+    h.client.set_paused(&true);
+
+    let res = h.client.try_set_active(&asset, &false);
+    assert_eq!(res, Err(Ok(RegistryError::ContractPaused.into())));
+    assert!(h.client.get_asset(&asset).unwrap().active);
+}
+
+/// Reads must stay open while paused: a pause stops new/altered directory
+/// entries, not the ability to look up ones already on record.
+#[test]
+fn test_paused_does_not_block_reads() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+    h.client.set_paused(&true);
+
+    assert!(h.client.get_asset(&asset).is_some());
+    assert_eq!(h.client.list_assets(&0, &MAX_PAGE_SIZE).len(), 1);
+    assert_eq!(h.client.asset_count(), 1);
+}
+
+#[test]
+fn test_unpausing_allows_register_again() {
+    let h = setup();
+    let asset = Address::generate(&h.env);
+    h.client.set_paused(&true);
+    h.client.set_paused(&false);
+
+    h.client
+        .register(&entry(&h.env, &asset, "real_estate", true));
+    assert!(h.client.get_asset(&asset).is_some());
+}
+
+/// transfer_admin must stay callable while paused, so a compromised admin
+/// key can still be rotated out.
+#[test]
+fn test_paused_does_not_block_transfer_admin() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.set_paused(&true);
+
+    h.client.transfer_admin(&new_admin);
+
+    assert_eq!(h.client.admin(), new_admin);
+}
+#[test]
+fn test_cancel_admin_transfer_emits_event() {
+    let h = setup();
+    let new_admin = Address::generate(&h.env);
+    h.client.propose_admin(&new_admin);
+    h.env.events().all(); // drain the propose event
+
+    h.client.cancel_admin_transfer();
+
+    assert_eq!(
+        h.env.events().all(),
+        std::vec![AdminTransferCancelled {
+            cancelled_proposed_admin: new_admin,
         }
         .to_xdr(&h.env, &h.contract_id)],
     );
