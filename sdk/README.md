@@ -267,16 +267,22 @@ const { hash } = await client.submitSponsoredTx(sponsored, signed);
 - **The authorizer must have an account.** It must already exist on the
   network, even though it pays nothing.
 
-`buildTransferAdminTx(admin, newAdmin)`, on every client, uses the same flow,
-because the contract requires both admins to authorize. By default the current
-admin pays, and the incoming admin signs its entry.
+Admin handover (#125, see ADR-006) is a two-step
+`buildProposeAdminTx(admin, newAdmin)` / `buildAcceptAdminTx(newAdmin)` pair on
+every client, not a sponsored call: each needs only one signature, so neither
+needs this sponsorship flow at all. The current admin proposes in its own
+transaction; only the proposed admin's own signature can accept it in a
+separate one, which is also what makes `cancelAdminTransfer(admin)` a safe
+unilateral escape hatch for a mistaken or no-longer-wanted proposal.
 
 ### Governance results are advisory in Phase 1
 
 The governance contract accepts whatever vote weight its caller declares and
-verifies it against nothing, and `finalize` applies no quorum. **Any address
-can carry any proposal.** Do not gate anything privileged on an outcome read
-through `GovernanceClient`.
+verifies it against nothing. `finalize` does apply quorum and a pass
+threshold now (both admin-configurable via `setQuorum`/`setPassThresholdBps`),
+but against that same unverified weight, so **any address can still carry any
+proposal** by declaring enough weight. Do not gate anything privileged on an
+outcome read through `GovernanceClient`.
 
 Weight is deliberately unverified rather than read from a live balance, which
 would be worse: a holder could vote, transfer the same tokens onward, and vote

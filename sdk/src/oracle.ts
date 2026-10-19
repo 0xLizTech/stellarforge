@@ -59,6 +59,7 @@ export enum OracleErrorCode {
   DeviationTooLarge = 11,
   InvalidDeviation = 12,
   Overflow = 13,
+  ContractPaused = 14,
 }
 
 // ─── ScVal Codecs ─────────────────────────────────────────────────────────────
@@ -387,6 +388,12 @@ export class OracleAdapterClient extends ContractClient {
     };
   }
 
+  /** Whether the feed is currently paused. See {@link setPaused}. */
+  async isPaused(): Promise<boolean> {
+    const result = await this.simulateReadOnly("paused", []);
+    return scValToNative(result) as boolean;
+  }
+
   // ── Reporting Writes ────────────────────────────────────────────────────────
 
   /**
@@ -555,5 +562,19 @@ export class OracleAdapterClient extends ContractClient {
     allowed: boolean,
   ): Promise<TxResult> {
     return this.submit(await this.buildSetReporterTx(admin, asset, reporter, allowed), admin);
+  }
+
+  /**
+   * Pause (`true`) or unpause the feed. While it is paused, `report`,
+   * `overridePrice`, `addAsset`, `setMaxDeviation` and `setReporter` all
+   * fail. Reads keep working, and so does `transferAdmin`, so a compromised
+   * admin key can still be rotated out.
+   */
+  async buildSetPausedTx(admin: string, paused: boolean): Promise<Transaction> {
+    return this.buildWriteTx(admin, "set_paused", [nativeToScVal(paused)]);
+  }
+
+  async setPaused(admin: string, paused: boolean): Promise<TxResult> {
+    return this.submit(await this.buildSetPausedTx(admin, paused), admin);
   }
 }

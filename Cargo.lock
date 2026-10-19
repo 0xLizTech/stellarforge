@@ -1814,6 +1814,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellarforge-benchmark"
+version = "0.1.0"
+dependencies = [
+ "compliance",
+ "governance",
+ "oracle-adapter",
+ "registry",
+ "rwa-asset",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "stellarforge-common"
 version = "0.1.0"
 dependencies = [
