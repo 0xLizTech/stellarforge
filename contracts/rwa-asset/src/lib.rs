@@ -8,7 +8,7 @@ pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::RwaError;
 pub use events::{
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Approve, Burn, ComplianceSet,
-    IssuerSet, MetadataUpdated, Mint, Paused, Transfer, TransferFrom,
+    ForcedTransfer, IssuerSet, MetadataUpdated, Mint, Paused, Transfer, TransferFrom,
 };
 
 use stellarforge_common::{extend_instance, extend_persistent};
@@ -52,6 +52,8 @@ pub enum DataKey {
     TotalSupply,
     Allowance(Address, Address),
     Issuer(Address),
+    /// Addresses permitted to call `forced_transfer`.
+    ForcedTransferRole(Address),
 }
 
 /// A spender's allowance and the last ledger it may be spent in (SEP-41).
@@ -114,6 +116,30 @@ impl RwaAssetContract {
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Metadata);
         extend_persistent(&env, &DataKey::TotalSupply);
+    }
+
+    // ── Forced Transfer Role ──────────────────────────────────────────────────
+
+    /// Grant or revoke the forced-transfer role for an address.
+    ///
+    /// Only the admin may call this. The role is deliberately separate from
+    /// the issuer role: an issuer mints and burns, whereas a forced-transfer
+    /// holder can move any holder's balance without their consent, which is
+    /// the power a court order needs and nothing else should have.
+    pub fn set_forced_transfer_role(env: Env, account: Address, approved: bool) {
+        Self::require_admin(&env);
+        extend_instance(&env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ForcedTransferRole(account.clone()), &approved);
+        extend_persistent(&env, &DataKey::ForcedTransferRole(account.clone()));
+    }
+
+    pub fn is_forced_transfer_role(env: Env, account: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ForcedTransferRole(account))
+            .unwrap_or(false)
     }
 
     // ── Issuer Management ─────────────────────────────────────────────────────
@@ -374,6 +400,77 @@ impl RwaAssetContract {
         extend_persistent(&env, &DataKey::Balance(to.clone()));
 
         events::TransferFrom { from, to, amount }.publish(&env);
+    }
+
+    // ── Forced Transfers ──────────────────────────────────────────────────────
+
+    /// Move `amount` from `from` to `to` without `from`'s authorisation.
+    ///
+    /// Callable only by an address holding the forced-transfer role, which the
+    /// admin grants through `set_forced_transfer_role`. This is the on-chain
+    /// hook for court-ordered recovery: a regulated issuer must be able to
+    /// return tokens to a rightful owner when a legal order says so, even if
+    /// the current holder cannot or will not sign.
+    ///
+    /// `reason_hash` is a hash of the off-chain legal order (e.g. a SHA-256 of
+    /// the court document). It is not interpreted on-chain; it is emitted in
+    /// the [`events::ForcedTransfer`] event so that every forced move is
+    /// auditable against the order that justified it. Every call emits the
+    /// event, including a self-transfer, so the log is complete.
+    ///
+    /// Pausing does not block this: a pause is an operational safety valve,
+    /// not a legal one, and a court order must still be executable while
+    /// transfers are otherwise halted. Compliance screening still applies to
+    /// both parties, matching `transfer`.
+    pub fn forced_transfer(
+        env: Env,
+        operator: Address,
+        from: Address,
+        to: Address,
+        amount: i128,
+        reason_hash: Bytes,
+    ) {
+        operator.require_auth();
+        if !Self::is_forced_transfer_role(env.clone(), operator.clone()) {
+            panic_with_error!(&env, RwaError::NotForcedTransferRole);
+        }
+        Self::require_positive(&env, amount);
+        Self::require_compliant(&env, &from);
+        Self::require_compliant(&env, &to);
+
+        let from_bal = Self::balance(env.clone(), from.clone());
+        if from_bal < amount {
+            panic_with_error!(&env, RwaError::InsufficientBalance);
+        }
+
+        // A self-transfer moves nothing. The event is still published so the
+        // call is logged, but no balance is written: writing both legs would
+        // target the same storage key and mint `amount` out of nothing.
+        if from != to {
+            let to_bal = Self::balance(env.clone(), to.clone());
+            let to_new = Self::checked_add(&env, to_bal, amount);
+
+            env.storage()
+                .persistent()
+                .set(&DataKey::Balance(from.clone()), &(from_bal - amount));
+            env.storage()
+                .persistent()
+                .set(&DataKey::Balance(to.clone()), &to_new);
+
+            extend_persistent(&env, &DataKey::Balance(from.clone()));
+            extend_persistent(&env, &DataKey::Balance(to.clone()));
+        }
+
+        extend_instance(&env);
+
+        events::ForcedTransfer {
+            operator,
+            from,
+            to,
+            amount,
+            reason_hash,
+        }
+        .publish(&env);
     }
 
     // ── Read-only Views ───────────────────────────────────────────────────────
