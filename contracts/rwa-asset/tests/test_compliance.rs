@@ -72,7 +72,7 @@ fn metadata(env: &Env) -> AssetMetadata {
         symbol: String::from_str(env, "REIT-NYC-001"),
         decimals: 7,
         asset_class: String::from_str(env, "real_estate"),
-        legal_doc_hash: Bytes::from_array(env, &[0u8; 32]),
+        legal_doc_hash: Bytes::from_array(env, &[1u8; 32]),
         max_supply: 0,
     }
 }

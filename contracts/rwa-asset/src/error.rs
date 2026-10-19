@@ -54,7 +54,20 @@ pub enum RwaError {
     /// satisfied by any verified party: every transfer would silently and
     /// permanently fail `NotCompliant` until an admin reconfigured it.
     InvalidComplianceLevel = 15,
+    /// `legal_doc_hash` was not exactly 32 bytes, or was all-zero.
+    InvalidLegalDocHash = 16,
+    /// `approve_cap_increase` was called with no `governance` address
+    /// configured via `set_governance`.
+    GovernanceNotConfigured = 17,
+    /// `approve_cap_increase` or `cancel_cap_increase` was called with no
+    /// cap increase proposed, or after it was already approved or cancelled.
+    NoPendingCapIncrease = 18,
     /// `accept_admin` was called with no transfer pending, or after it was
-    /// cancelled or already accepted.
-    NoPendingAdminTransfer = 15,
+    /// cancelled or already accepted. Previously misnumbered `15`, colliding
+    /// with `InvalidComplianceLevel` (two variants sharing one on-chain error
+    /// code, and a hard `E0081` compile error under current Rust). Moved
+    /// here rather than left colliding: nothing has been deployed with the
+    /// old value, so ADR-003's discriminant freeze (which protects a
+    /// *deployed* contract's clients) does not apply yet.
+    NoPendingAdminTransfer = 19,
 }

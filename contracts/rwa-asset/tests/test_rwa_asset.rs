@@ -32,7 +32,7 @@ fn default_metadata(env: &Env) -> AssetMetadata {
         symbol: String::from_str(env, "REIT-NYC-001"),
         decimals: 7,
         asset_class: String::from_str(env, "real_estate"),
-        legal_doc_hash: Bytes::from_array(env, &[0u8; 32]),
+        legal_doc_hash: Bytes::from_array(env, &[1u8; 32]),
         max_supply: MAX_SUPPLY,
     }
 }
@@ -403,6 +403,45 @@ fn test_update_metadata_rejects_bad_input() {
     }
 }
 
+/// #150. An all-zero hash would anchor the asset to no verifiable legal
+/// document at all, so `update_metadata` must refuse it with its own typed
+/// error, distinct from the general `InvalidMetadata`.
+#[test]
+fn test_update_metadata_rejects_all_zero_legal_doc_hash() {
+    let (env, _, client) = setup();
+
+    let mut zero_hash = default_metadata(&env);
+    zero_hash.legal_doc_hash = Bytes::from_array(&env, &[0u8; 32]);
+
+    assert_eq!(
+        client.try_update_metadata(&zero_hash),
+        Err(Ok(RwaError::InvalidLegalDocHash.into()))
+    );
+}
+
+/// #150. Only a 32-byte SHA-256 digest is accepted; anything shorter or
+/// longer (e.g. a raw IPFS CID) must be refused rather than silently stored.
+#[test]
+fn test_update_metadata_rejects_wrong_length_legal_doc_hash() {
+    let (env, _, client) = setup();
+
+    let mut short_hash = default_metadata(&env);
+    short_hash.legal_doc_hash = Bytes::from_array(&env, &[1u8; 31]);
+
+    assert_eq!(
+        client.try_update_metadata(&short_hash),
+        Err(Ok(RwaError::InvalidLegalDocHash.into()))
+    );
+
+    let mut long_hash = default_metadata(&env);
+    long_hash.legal_doc_hash = Bytes::from_array(&env, &[1u8; 33]);
+
+    assert_eq!(
+        client.try_update_metadata(&long_hash),
+        Err(Ok(RwaError::InvalidLegalDocHash.into()))
+    );
+}
+
 /// Guards the negative tests above: were `update_metadata` to reject
 /// everything, they would all still pass.
 #[test]
@@ -460,8 +499,10 @@ fn test_update_metadata_cannot_lift_a_cap() {
     assert_eq!(client.metadata().max_supply, MAX_SUPPLY);
 }
 
-/// PRD §10.2: the cap is "not bypassable by admin". Raising it would dilute
-/// holders as surely as removing it, so both are refused.
+/// PRD §10.2: the cap is "not bypassable by admin [alone]". Raising it would
+/// dilute holders as surely as removing it, so `update_metadata` refuses
+/// both; raising one is only possible through the governance-approved
+/// `propose_cap_increase`/`approve_cap_increase` flow (#148, see below).
 #[test]
 fn test_update_metadata_cannot_raise_a_cap() {
     let (env, _, client) = setup();
@@ -531,6 +572,194 @@ fn test_update_metadata_can_cap_an_uncapped_asset_at_or_above_supply() {
     capped.max_supply = 500 * UNIT;
     client.update_metadata(&capped);
     assert_eq!(client.metadata().max_supply, 500 * UNIT);
+}
+
+// ─── Supply cap governance (#148) ──────────────────────────────────────────
+//
+// `update_metadata` (tested above) covers the tighten direction: the admin
+// alone, never loosening. These cover the loosen direction: the admin alone
+// cannot do it even through the dedicated entry points, and it only takes
+// effect once a separately configured `governance` address also signs.
+
+#[test]
+fn test_propose_cap_increase_requires_an_existing_finite_cap() {
+    let env = create_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let mut uncapped = default_metadata(&env);
+    uncapped.max_supply = 0;
+    let id = env.register(RwaAssetContract, (&admin, &uncapped));
+    let client = RwaAssetContractClient::new(&env, &id);
+
+    // Nothing to "increase": an uncapped asset has no cap for governance to
+    // raise, and tightening it later is `update_metadata`'s job.
+    assert_eq!(
+        client.try_propose_cap_increase(&(1_000 * UNIT)),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+}
+
+#[test]
+fn test_propose_cap_increase_rejects_a_value_that_is_not_a_loosening() {
+    let (_, _, client) = setup();
+
+    // Equal to the current cap: not a loosening, belongs on `update_metadata`
+    // (which would itself reject it as a no-op loosening attempt).
+    assert_eq!(
+        client.try_propose_cap_increase(&MAX_SUPPLY),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+    // Below the current cap: a tightening, not what this entry point is for.
+    assert_eq!(
+        client.try_propose_cap_increase(&(MAX_SUPPLY - 1)),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+}
+
+#[test]
+fn test_approve_cap_increase_without_governance_configured_fails() {
+    let (_, _, client) = setup();
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+
+    assert_eq!(
+        client.try_approve_cap_increase(),
+        Err(Ok(RwaError::GovernanceNotConfigured.into()))
+    );
+    // The proposal survives a failed approval attempt.
+    assert_eq!(
+        client.pending_cap_increase(),
+        Some(MAX_SUPPLY + 1_000 * UNIT)
+    );
+}
+
+#[test]
+fn test_approve_cap_increase_without_a_pending_proposal_fails() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+
+    assert_eq!(
+        client.try_approve_cap_increase(),
+        Err(Ok(RwaError::NoPendingCapIncrease.into()))
+    );
+}
+
+/// The loosen direction's happy path: admin proposes, a distinct governance
+/// address approves, and only then does the cap actually move — through the
+/// same `replace_metadata` path `update_metadata` uses, so it also bumps
+/// `metadata_version` and clears the pending proposal (#148, #149).
+#[test]
+fn test_governance_approval_raises_the_cap() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance.clone()));
+
+    let new_cap = MAX_SUPPLY + 1_000 * UNIT;
+    client.propose_cap_increase(&new_cap);
+    assert_eq!(client.pending_cap_increase(), Some(new_cap));
+
+    let version_before = client.metadata_version();
+    client.approve_cap_increase();
+
+    assert_eq!(client.metadata().max_supply, new_cap);
+    assert_eq!(client.metadata_version(), version_before + 1);
+    assert_eq!(client.pending_cap_increase(), None);
+}
+
+/// The admin cannot stand in for governance: only `governance`'s own
+/// signature may finalize the proposal.
+#[test]
+fn test_approve_cap_increase_rejects_a_caller_who_is_not_governance() {
+    let (env, admin, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "approve_cap_increase",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(client.try_approve_cap_increase().is_err());
+    assert_eq!(client.metadata().max_supply, MAX_SUPPLY);
+}
+
+#[test]
+fn test_cancel_cap_increase_withdraws_the_proposal() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+
+    client.cancel_cap_increase();
+
+    assert_eq!(client.pending_cap_increase(), None);
+    assert_eq!(
+        client.try_approve_cap_increase(),
+        Err(Ok(RwaError::NoPendingCapIncrease.into()))
+    );
+}
+
+#[test]
+fn test_cancel_cap_increase_without_a_pending_proposal_fails() {
+    let (_, _, client) = setup();
+
+    assert_eq!(
+        client.try_cancel_cap_increase(),
+        Err(Ok(RwaError::NoPendingCapIncrease.into()))
+    );
+}
+
+#[test]
+fn test_set_governance_can_disable_cap_increases_again() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+
+    client.set_governance(&None);
+    assert_eq!(client.governance(), None);
+
+    // The pending proposal from before governance was cleared is now
+    // unapprovable, exactly as if it had never been configured.
+    assert_eq!(
+        client.try_approve_cap_increase(),
+        Err(Ok(RwaError::GovernanceNotConfigured.into()))
+    );
+}
+
+/// IR-07's TTL policy covers these write paths too.
+#[test]
+fn test_cap_increase_write_paths_extend_what_they_write() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+    let pending_ttl = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKey::PendingCapIncrease)
+    });
+    assert_eq!(
+        pending_ttl,
+        env.as_contract(&client.address, || env.storage().max_ttl())
+    );
+
+    client.approve_cap_increase();
+    let metadata_ttl = env.as_contract(&client.address, || {
+        env.storage().persistent().get_ttl(&DataKey::Metadata)
+    });
+    assert_eq!(
+        metadata_ttl,
+        env.as_contract(&client.address, || env.storage().max_ttl())
+    );
 }
 
 /// IR-07. Both are write paths, so under the shared TTL policy both extend
@@ -690,6 +919,21 @@ fn test_constructor_rejects_invalid_metadata() {
     too_many_decimals.decimals = 19;
 
     env.register(RwaAssetContract, (&admin, &too_many_decimals));
+}
+
+/// #150. An asset must not be deployable already pointing at no verifiable
+/// legal document.
+#[test]
+#[should_panic]
+fn test_constructor_rejects_all_zero_legal_doc_hash() {
+    let env = create_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+
+    let mut zero_hash = default_metadata(&env);
+    zero_hash.legal_doc_hash = Bytes::from_array(&env, &[0u8; 32]);
+
+    env.register(RwaAssetContract, (&admin, &zero_hash));
 }
 
 #[test]

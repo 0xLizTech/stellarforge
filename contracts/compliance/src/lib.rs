@@ -7,9 +7,8 @@ mod error;
 mod events;
 
 pub use error::ComplianceError;
-pub use events::{AdminTransferred, KycRevoked, KycSet, Paused};
 pub use events::{
-    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, KycRevoked, KycSet,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, KycRevoked, KycSet, Paused,
 };
 
 use soroban_sdk::{

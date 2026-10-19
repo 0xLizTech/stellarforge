@@ -7,8 +7,9 @@ mod events;
 pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::RwaError;
 pub use events::{
-    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Approve, Burn, ComplianceSet,
-    IssuerSet, MetadataUpdated, Mint, Paused, Transfer, TransferFrom,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Approve, Burn,
+    CapIncreaseCancelled, CapIncreaseProposed, ComplianceSet, GovernanceSet, IssuerSet,
+    MetadataUpdated, Mint, Paused, Transfer, TransferFrom,
 };
 
 use stellarforge_common::{extend_instance, extend_persistent};
@@ -27,10 +28,16 @@ const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 const COMPLIANCE_KEY: Symbol = symbol_short!("COMPLY");
 /// Minimum verification level a party must hold to send or receive.
 const MIN_LEVEL_KEY: Symbol = symbol_short!("MINLVL");
+/// Address authorized to approve loosening a supply cap, absent when no cap
+/// may be loosened at all (#148).
+const GOVERNANCE_KEY: Symbol = symbol_short!("GOV");
 
 /// Upper bound on `AssetMetadata::decimals`. Beyond this a whole token no
 /// longer fits sensibly in `i128` alongside realistic supply figures.
 const MAX_DECIMALS: u32 = 18;
+
+/// Required length of `AssetMetadata::legal_doc_hash`: a raw SHA-256 digest.
+const LEGAL_DOC_HASH_LEN: u32 = 32;
 
 /// Upper bound on `set_compliance`'s `min_level`: 0 none, 1 basic, 2 full,
 /// 3 accredited, matching `compliance::MAX_LEVEL`'s scale. Declared locally
@@ -48,10 +55,19 @@ pub const MAX_COMPLIANCE_LEVEL: u32 = 3;
 #[derive(Clone)]
 pub enum DataKey {
     Metadata,
+    /// How many times `Metadata` has been written: 1 at construction,
+    /// incremented by one on every subsequent change (#149). Kept apart from
+    /// `AssetMetadata` itself rather than as one of its fields, so a caller
+    /// updating metadata never has to read back and resupply the current
+    /// version just to avoid clobbering it.
+    MetadataVersion,
     Balance(Address),
     TotalSupply,
     Allowance(Address, Address),
     Issuer(Address),
+    /// The `max_supply` a `propose_cap_increase` is waiting on `governance`
+    /// to approve, if any (#148).
+    PendingCapIncrease,
 }
 
 /// A spender's allowance and the last ledger it may be spent in (SEP-41).
@@ -76,7 +92,10 @@ pub struct AssetMetadata {
     pub decimals: u32,
     /// Asset class: "real_estate", "commodity", "equity", "debt", etc.
     pub asset_class: String,
-    /// Off-chain legal document hash (IPFS CID or SHA-256)
+    /// SHA-256 digest (32 raw bytes, not hex) of the off-chain legal document
+    /// this asset represents. Must be exactly [`LEGAL_DOC_HASH_LEN`] bytes
+    /// and not all-zero: either would make the on-chain token point at no
+    /// verifiable legal anchor (#150).
     pub legal_doc_hash: Bytes,
     /// Total cap on issuance (0 = uncapped)
     pub max_supply: i128,
@@ -109,10 +128,14 @@ impl RwaAssetContract {
             .set(&DataKey::Metadata, &metadata);
         env.storage()
             .persistent()
+            .set(&DataKey::MetadataVersion, &1_u32);
+        env.storage()
+            .persistent()
             .set(&DataKey::TotalSupply, &0_i128);
 
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Metadata);
+        extend_persistent(&env, &DataKey::MetadataVersion);
         extend_persistent(&env, &DataKey::TotalSupply);
     }
 
@@ -405,6 +428,17 @@ impl RwaAssetContract {
         }
     }
 
+    /// How many times metadata has been written: 1 right after construction,
+    /// incremented by one on every `update_metadata` or governance-approved
+    /// cap increase (#149). An integrator diffing two reads can tell from the
+    /// version alone whether anything changed, without comparing every field.
+    pub fn metadata_version(env: Env) -> u32 {
+        match env.storage().persistent().get(&DataKey::MetadataVersion) {
+            Some(v) => v,
+            None => panic_with_error!(&env, RwaError::NotInitialized),
+        }
+    }
+
     /// SEP-41 metadata getters, each a field of [`AssetMetadata`].
     pub fn decimals(env: Env) -> u32 {
         Self::metadata(env).decimals
@@ -443,14 +477,7 @@ impl RwaAssetContract {
         Self::validate_metadata(&env, &metadata);
         let previous = Self::metadata(env.clone());
         Self::validate_metadata_change(&env, &previous, &metadata);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Metadata, &metadata);
-
-        extend_instance(&env);
-        extend_persistent(&env, &DataKey::Metadata);
-
-        events::MetadataUpdated { previous, metadata }.publish(&env);
+        Self::replace_metadata(&env, previous, metadata);
     }
 
     /// Proposes `new_admin` as the next admin. Only the current admin may
@@ -565,6 +592,148 @@ impl RwaAssetContract {
         env.storage().instance().get(&MIN_LEVEL_KEY).unwrap_or(0)
     }
 
+    // ── Supply Cap Governance (#148) ──────────────────────────────────────────
+    //
+    // `update_metadata` (above) only ever tightens a cap, enforcing PRD §10.2's
+    // "not bypassable by admin" on the admin's own, single-signature path. That
+    // promise was never meant to make a cap permanently stuck once circulating
+    // supply legitimately needs to grow beyond it — only to stop one key doing
+    // it alone. This section adds the one path that can loosen a cap: the admin
+    // proposes a specific new ceiling, and a second, independently configured
+    // address (`governance`) must separately authorize it before it takes
+    // effect. Tightening never needed this; raising a cap dilutes every holder
+    // and so is held to the higher bar `update_metadata` deliberately refuses.
+
+    /// Names the address that may approve loosening a supply cap, or pass
+    /// `None` to disable loosening entirely (the default: a cap can then only
+    /// ever be tightened, exactly as before this feature existed).
+    ///
+    /// This address is deliberately not required to be the `governance`
+    /// contract: Phase 1/2 governance verifies no vote weight and executes
+    /// nothing (see `governance`'s crate docs), so gating real dilution power
+    /// on it would gate it on nothing. An operator can point this at a
+    /// multisig today and at the governance contract once Phase 3 makes its
+    /// outcomes binding — the contract does not need to know which.
+    pub fn set_governance(env: Env, governance: Option<Address>) {
+        Self::require_admin(&env);
+        match &governance {
+            Some(addr) => env.storage().instance().set(&GOVERNANCE_KEY, addr),
+            None => env.storage().instance().remove(&GOVERNANCE_KEY),
+        }
+        extend_instance(&env);
+
+        events::GovernanceSet { governance }.publish(&env);
+    }
+
+    pub fn governance(env: Env) -> Option<Address> {
+        env.storage().instance().get(&GOVERNANCE_KEY)
+    }
+
+    /// Admin-initiated first step of loosening a supply cap: proposes
+    /// `new_max_supply` as the next cap, replacing the field `update_metadata`
+    /// would otherwise refuse to touch. Replaces any proposal already pending
+    /// rather than requiring `cancel_cap_increase` first, mirroring
+    /// `propose_admin`.
+    ///
+    /// Rejects anything that is not an actual loosening of a cap that exists:
+    /// there must already be a finite cap, and the proposed value must be
+    /// `0` (uncapped) or strictly greater than the current cap. A value that
+    /// only tightens belongs on `update_metadata`, which needs no second
+    /// signature.
+    pub fn propose_cap_increase(env: Env, new_max_supply: i128) {
+        Self::require_admin(&env);
+        if new_max_supply < 0 {
+            panic_with_error!(&env, RwaError::InvalidSupplyCap);
+        }
+
+        let current = Self::metadata(env.clone());
+        let loosens_cap =
+            current.max_supply > 0 && (new_max_supply == 0 || new_max_supply > current.max_supply);
+        if !loosens_cap {
+            panic_with_error!(&env, RwaError::InvalidSupplyCap);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingCapIncrease, &new_max_supply);
+        extend_instance(&env);
+        extend_persistent(&env, &DataKey::PendingCapIncrease);
+
+        events::CapIncreaseProposed {
+            proposed_max_supply: new_max_supply,
+        }
+        .publish(&env);
+    }
+
+    /// Second step: `governance`'s own signature finalizes the pending
+    /// proposal, applying it the same way `update_metadata` would — through
+    /// `replace_metadata`, so this counts as a metadata version bump and
+    /// publishes the same `MetadataUpdated` event (#149), rather than a
+    /// parallel code path an integrator would also have to watch.
+    ///
+    /// Re-validates against current circulating supply rather than trusting
+    /// the proposal unconditionally: nothing stops supply from moving between
+    /// `propose_cap_increase` and this call, within whatever the cap at
+    /// proposal time still allowed.
+    pub fn approve_cap_increase(env: Env) {
+        let governance = match Self::governance(env.clone()) {
+            Some(addr) => addr,
+            None => panic_with_error!(&env, RwaError::GovernanceNotConfigured),
+        };
+        governance.require_auth();
+
+        let new_max_supply: i128 =
+            match env.storage().persistent().get(&DataKey::PendingCapIncrease) {
+                Some(v) => v,
+                None => panic_with_error!(&env, RwaError::NoPendingCapIncrease),
+            };
+
+        let previous = Self::metadata(env.clone());
+        let supply = Self::total_supply(env.clone());
+        if new_max_supply > 0 && new_max_supply < supply {
+            panic_with_error!(&env, RwaError::InvalidSupplyCap);
+        }
+
+        let mut next = previous.clone();
+        next.max_supply = new_max_supply;
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingCapIncrease);
+        extend_instance(&env);
+
+        Self::replace_metadata(&env, previous, next);
+    }
+
+    /// Withdraws a pending cap increase before `governance` approves it. Only
+    /// the current admin may call this, mirroring `cancel_admin_transfer`:
+    /// the admin proposed it and may change its mind, and nothing here
+    /// requires `governance`'s signature to withdraw what has not taken
+    /// effect yet.
+    pub fn cancel_cap_increase(env: Env) {
+        Self::require_admin(&env);
+        let proposed_max_supply: i128 =
+            match env.storage().persistent().get(&DataKey::PendingCapIncrease) {
+                Some(v) => v,
+                None => panic_with_error!(&env, RwaError::NoPendingCapIncrease),
+            };
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingCapIncrease);
+        extend_instance(&env);
+
+        events::CapIncreaseCancelled {
+            cancelled_proposed_max_supply: proposed_max_supply,
+        }
+        .publish(&env);
+    }
+
+    /// The `max_supply` `approve_cap_increase` would install if called now,
+    /// or `None` if no proposal is pending.
+    pub fn pending_cap_increase(env: Env) -> Option<i128> {
+        env.storage().persistent().get(&DataKey::PendingCapIncrease)
+    }
+
     // ── Private Helpers ───────────────────────────────────────────────────────
 
     fn require_admin(env: &Env) {
@@ -638,6 +807,17 @@ impl RwaAssetContract {
         {
             panic_with_error!(env, RwaError::InvalidMetadata);
         }
+        Self::validate_legal_doc_hash(env, &metadata.legal_doc_hash);
+    }
+
+    /// Rejects a `legal_doc_hash` that cannot be a real SHA-256 digest: the
+    /// wrong length, or all-zero. Either would let the asset claim a legal
+    /// anchor that resolves to nothing (#150); a hash this check accepts can
+    /// still be wrong, but it can no longer be absent in disguise.
+    fn validate_legal_doc_hash(env: &Env, hash: &Bytes) {
+        if hash.len() != LEGAL_DOC_HASH_LEN || hash.iter().all(|byte| byte == 0) {
+            panic_with_error!(env, RwaError::InvalidLegalDocHash);
+        }
     }
 
     /// Rejects a metadata change that would alter what holders already own.
@@ -655,10 +835,13 @@ impl RwaAssetContract {
         }
 
         // The cap is the holders' ceiling on dilution, and PRD §10.2 promises it
-        // is "not bypassable by admin". So the admin can only tighten a cap:
-        // never raise it, never lift it to uncapped, and never set it below what
-        // is already in circulation. An uncapped asset may be given a cap at or
-        // above its supply.
+        // is "not bypassable by admin [alone]". So the admin's own signature can
+        // only tighten a cap here: never raise it, never lift it to uncapped,
+        // and never set it below what is already in circulation. An uncapped
+        // asset may be given a cap at or above its supply. Raising a cap is
+        // still possible, but only through `propose_cap_increase` /
+        // `approve_cap_increase` (#148), which requires a second, separately
+        // configured `governance` signature the admin alone cannot produce.
         let supply = Self::total_supply(env.clone());
         let loosens_cap = current.max_supply > 0
             && (next.max_supply == 0 || next.max_supply > current.max_supply);
@@ -666,6 +849,36 @@ impl RwaAssetContract {
         if loosens_cap || below_supply {
             panic_with_error!(env, RwaError::InvalidSupplyCap);
         }
+    }
+
+    /// Writes `next` as the current metadata, bumps the version counter, and
+    /// publishes `MetadataUpdated` carrying both. Shared by `update_metadata`
+    /// and `approve_cap_increase` (#148), so every path that changes metadata
+    /// keeps the version and the event in lockstep with what is actually
+    /// stored, rather than each path reimplementing it slightly differently.
+    ///
+    /// Callers are responsible for validating `next` first; this only writes.
+    fn replace_metadata(env: &Env, previous: AssetMetadata, next: AssetMetadata) {
+        let version = match Self::metadata_version(env.clone()).checked_add(1) {
+            Some(v) => v,
+            None => panic_with_error!(env, RwaError::Overflow),
+        };
+
+        env.storage().persistent().set(&DataKey::Metadata, &next);
+        env.storage()
+            .persistent()
+            .set(&DataKey::MetadataVersion, &version);
+
+        extend_instance(env);
+        extend_persistent(env, &DataKey::Metadata);
+        extend_persistent(env, &DataKey::MetadataVersion);
+
+        events::MetadataUpdated {
+            previous,
+            metadata: next,
+            version,
+        }
+        .publish(env);
     }
 
     fn checked_add(env: &Env, a: i128, b: i128) -> i128 {
