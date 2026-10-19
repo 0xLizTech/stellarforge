@@ -855,6 +855,100 @@ fn test_burn_from_spends_the_allowance_and_reduces_supply() {
     );
 }
 
+// ─── Forced transfer (court-ordered recovery) ──────────────────────────────
+
+/// A dedicated role, separate from the issuer, authorizes forced transfers.
+/// The compliance officer is the only address that may move another holder's
+/// tokens without their signature.
+fn setup_with_compliance_officer() -> (Env, Address, Address, RwaAssetContractClient<'static>) {
+    let (env, admin, client) = setup();
+    let officer = Address::generate(&env);
+    client.set_compliance_officer(&officer, &true);
+    (env, admin, officer, client)
+}
+
+#[test]
+fn test_forced_transfer_moves_balance() {
+    let (env, _, officer, client) = setup_with_compliance_officer();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    let reason = Bytes::from_array(&env, &[0xAB; 32]);
+    client.forced_transfer(&officer, &alice, &bob, &400, &reason);
+
+    assert_eq!(client.balance(&alice), 600);
+    assert_eq!(client.balance(&bob), 400);
+    assert_eq!(client.total_supply(), 1_000);
+}
+
+#[test]
+fn test_forced_transfer_requires_the_compliance_officer_role() {
+    let (env, _, _officer, client) = setup_with_compliance_officer();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let not_officer = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    let reason = Bytes::from_array(&env, &[0xCD; 32]);
+    assert_eq!(
+        client.try_forced_transfer(&not_officer, &alice, &bob, &100, &reason),
+        Err(Ok(RwaError::NotComplianceOfficer.into()))
+    );
+    assert_eq!(client.balance(&alice), 1_000);
+    assert_eq!(client.balance(&bob), 0);
+}
+
+#[test]
+fn test_forced_transfer_emits_event_with_reason_hash() {
+    let (env, _, officer, client) = setup_with_compliance_officer();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    let reason = Bytes::from_array(&env, &[0xEF; 32]);
+    client.forced_transfer(&officer, &alice, &bob, &250, &reason);
+
+    let events = env.events().all();
+    let last = events.last().expect("forced_transfer must emit an event");
+    assert_eq!(last.0, client.address);
+    let (topics, data): (soroban_sdk::Vec<soroban_sdk::Val>, (Address, Address, i128, Bytes)) =
+        soroban_sdk::FromVal::from_val(&env, &last.1);
+    assert_eq!(topics.len(), 1);
+    assert_eq!(data.0, alice);
+    assert_eq!(data.1, bob);
+    assert_eq!(data.2, 250);
+    assert_eq!(data.3, reason);
+}
+
+#[test]
+fn test_forced_transfer_still_validates_balance() {
+    let (env, _, officer, client) = setup_with_compliance_officer();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 100);
+
+    let reason = Bytes::from_array(&env, &[0x11; 32]);
+    assert_eq!(
+        client.try_forced_transfer(&officer, &alice, &bob, &101, &reason),
+        Err(Ok(RwaError::InsufficientBalance.into()))
+    );
+}
+
+#[test]
+fn test_forced_transfer_rejects_zero_amount() {
+    let (env, _, officer, client) = setup_with_compliance_officer();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 100);
+
+    let reason = Bytes::from_array(&env, &[0x22; 32]);
+    assert_eq!(
+        client.try_forced_transfer(&officer, &alice, &bob, &0, &reason),
+        Err(Ok(RwaError::InvalidAmount.into()))
+    );
+}
+
 #[test]
 fn test_sep41_metadata_getters_match_the_metadata() {
     let (env, _, client) = setup();

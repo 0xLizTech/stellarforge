@@ -131,3 +131,20 @@ pub struct ComplianceSet {
     pub compliance: Option<Address>,
     pub min_level: u32,
 }
+
+/// Published by `forced_transfer`, a court-ordered recovery executed by the
+/// dedicated forced-transfer role. Distinct from `Transfer` so indexers and
+/// monitors can isolate legally compelled movements from ordinary ones. The
+/// `reason_hash` commits to the off-chain legal order without publishing it.
+#[contractevent(topics = ["forced_transfer"], data_format = "map")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForcedTransfer {
+    #[topic]
+    pub operator: Address,
+    #[topic]
+    pub from: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+    pub reason_hash: soroban_sdk::BytesN<32>,
+}
