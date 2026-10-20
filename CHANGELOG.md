@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ci`: Add commitlint configuration (`commitlint.config.js`) and GitHub Actions PR workflow (`.github/workflows/commitlint.yml`) enforcing Conventional Commits and documented scopes (#90).
+
 - `rwa-asset`: holder count tracking (#146). `holder_count()` returns the number of addresses currently holding a strictly positive balance. The counter is incremented when a balance crosses 0 → >0 (first receive) and decremented when a balance hits exactly 0 (full burn or full send). `set_holder_cap(cap)` lets the admin set an optional ceiling on the holder count (Reg D style); any `mint`, `transfer`, `transfer_from` or `forced_transfer` that would add a new holder when the count already equals the cap is rejected with `ExceedsHolderCap` (error 25). `holder_count_cap()` returns the configured ceiling or `None`. The new `HolderCapSet` event is emitted by `set_holder_cap`, including when the cap is removed. A property test (`tests/test_holder_count.rs`) verifies the invariant `holder_count == count(addresses with balance > 0)` after every step in a 50-operation sequence of mints, burns, and transfers, both with and without an active cap.
 
 - `rwa-asset`: `set_governance`, `propose_cap_increase`/`approve_cap_increase`/`cancel_cap_increase` and `pending_cap_increase`. `update_metadata` still refuses to loosen a supply cap by itself (IR-02); raising one now requires the admin to propose a value and a separately configured `governance` address to approve it, mirroring `propose_admin`/`accept_admin`'s two-step shape. See [ADR-007](docs/architecture/007-governance-controlled-supply-cap.md) for why this is a second address rather than the `governance` contract itself (#148).
