@@ -109,6 +109,27 @@ jobs:
           stellar contract build --manifest-path contracts/governance/Cargo.toml
           stellar contract build --manifest-path contracts/oracle-adapter/Cargo.toml
 
+      - name: Check WASM size budgets
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const budgets = JSON.parse(fs.readFileSync("contracts/size-budget.json", "utf8"));
+            let failed = false;
+            for (const [name, budget] of Object.entries(budgets)) {
+              const file = path.join("target/wasm32v1-none/release", `${name}.wasm`);
+              if (fs.existsSync(file)) {
+                const size = fs.statSync(file).size;
+                console.log(`[SIZE] ${name}: ${size} bytes (budget: ${budget} bytes)`);
+                if (size > budget) {
+                  console.error(`[ERROR] ${name} exceeds budget (${size} > ${budget})`);
+                  failed = true;
+                }
+              }
+            }
+            if (failed) process.exit(1);
+          '
+
       # Published with the artifacts, so the hash of a deployed contract's wasm
       # can be checked against the commit that built it.
       - name: Record wasm checksums
