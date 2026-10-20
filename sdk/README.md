@@ -12,6 +12,11 @@ npm install @stellarforge-protocol/sdk
 
 Requires Node.js 22.12 or newer, which is what `@stellar/stellar-sdk` 17 requires. Its CommonJS build loads ESM-only dependencies with `require()`, and Node supports that without a flag only from 22.12.
 
+Supported versions: **22.12 (the exact minimum) and 24 (current LTS)**. CI
+(`.github/workflows/sdk-ci.yml`) runs the test matrix over both. Node.js 20 and
+older are not supported and are not tested — they are below the `engines` floor
+and fail at import time.
+
 ## Reading
 
 Every read is a simulation. Nothing is written, nothing is signed, and no
