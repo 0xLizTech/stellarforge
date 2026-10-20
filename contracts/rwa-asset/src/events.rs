@@ -208,3 +208,18 @@ pub struct LockupDateSet {
     pub address: Address,
     pub lockup_until_ledger: u32,
 }
+
+// ─── Holder count (#146) ──────────────────────────────────────────────────────
+
+/// Published by `set_holder_cap`. `cap` is `None` when the holder cap was
+/// removed, which — like `ComplianceSet`'s `None` — is worth a monitor's
+/// attention: it is a privileged capability turning on or off.
+///
+/// Reg D and similar rules bound the number of distinct holders rather than
+/// the total supply. When a cap is set, every `mint` and `transfer` that would
+/// add a new holder fails with `ExceedsHolderCap`.
+#[contractevent(topics = ["set_holder_cap"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HolderCapSet {
+    pub cap: Option<u32>,
+}
