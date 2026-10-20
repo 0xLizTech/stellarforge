@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The admin lists assets and authorizes reporters per asset.
   - History is append-only, one price per resolution tick.
   - A report may move the price at most the asset's `max_deviation_bps`. A larger move needs the admin's `override_price`, which publishes its own event.
-  - Not yet in `scripts/deploy.sh` (see #64). Exposed in the SDK as `OracleAdapterClient` (this release).
+  - Deployed in `scripts/deploy.sh` and exposed in the SDK as `OracleAdapterClient`.
 - `VaultClient` in `@stellarforge-protocol/sdk` for interacting with the Phase 2 Vault contract (#63):
   - Typed read and write methods matching the vault contract interface (`config`, `underlyingHeld`, `balance`, `totalSupply`, `allowance`, `decimals`, `name`, `symbol`, `lockedUntil`, `redeemable`, `paused`, `admin`, `oracles`, `nav`, `navPerShare`, `balanceAt`, `totalSupplyAt`; `deposit`, `redeem`, `transfer`, `approve`, `transferFrom`, `setPaused`, `setOracles`).
   - Sponsored write methods (`buildSponsoredDepositTx`, `buildSponsoredRedeemTx`, `buildSponsoredTransferTx`, `buildSponsoredTransferFromTx`) with recursive multi-contract auth-tree verification (`checkInvocationTree`), detecting and preventing any tampering of root invocations, nested child invocations (such as underlying token transfers), contracts, function names, or arguments.
