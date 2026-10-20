@@ -79,4 +79,8 @@ pub enum RwaError {
     /// way `transfer`/`transfer_from` treat a self-transfer elsewhere in this
     /// contract, rather than rejecting it.
     InvalidForcedTransferParty = 22,
+    /// Sender address is frozen and cannot transfer tokens.
+    AddressFrozen = 23,
+    /// Sender address's tokens are locked until the lock-up date passes.
+    AddressLocked = 24,
 }

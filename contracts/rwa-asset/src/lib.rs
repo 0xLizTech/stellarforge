@@ -8,8 +8,9 @@ pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::RwaError;
 pub use events::{
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Approve, Burn,
-    CapIncreaseCancelled, CapIncreaseProposed, ComplianceSet, ForcedTransfer, GovernanceSet,
-    IssuerSet, MetadataUpdated, Mint, Paused, Transfer, TransferFrom,
+    CapIncreaseCancelled, CapIncreaseProposed, ComplianceSet, ForcedTransfer, FrozenSet,
+    GovernanceSet, IssuerSet, LockupDateSet, MetadataUpdated, Mint, Paused, Transfer,
+    TransferFrom,
 };
 
 use stellarforge_common::{extend_instance, extend_persistent};
@@ -70,6 +71,10 @@ pub enum DataKey {
     PendingCapIncrease,
     /// Addresses permitted to call `forced_transfer` (#144).
     ForcedTransferRole(Address),
+    /// Whether an address is frozen and cannot send tokens.
+    Frozen(Address),
+    /// The ledger sequence until which an address's tokens are locked.
+    LockupDate(Address),
 }
 
 /// A spender's allowance and the last ledger it may be spent in (SEP-41).
@@ -163,6 +168,59 @@ impl RwaAssetContract {
             .persistent()
             .get(&DataKey::ForcedTransferRole(account))
             .unwrap_or(false)
+    }
+
+    // ── Frozen Address Management ──────────────────────────────────────────────
+
+    /// Freeze or unfreeze an address. Frozen addresses cannot send tokens.
+    ///
+    /// Only the admin may call this. This is used to comply with sanctions or
+    /// other regulatory requirements that require blocking specific addresses.
+    pub fn set_frozen(env: Env, address: Address, frozen: bool) {
+        Self::require_admin(&env);
+        extend_instance(&env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Frozen(address.clone()), &frozen);
+        extend_persistent(&env, &DataKey::Frozen(address.clone()));
+
+        events::FrozenSet { address, frozen }.publish(&env);
+    }
+
+    pub fn is_frozen(env: Env, address: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Frozen(address))
+            .unwrap_or(false)
+    }
+
+    // ── Lock-up Date Management ────────────────────────────────────────────────
+
+    /// Set the lock-up date for an address. Tokens are locked until the
+    /// specified ledger sequence.
+    ///
+    /// Only the admin may call this. This is used for vesting periods or
+    /// regulatory holding periods. Setting to 0 removes the lock-up.
+    pub fn set_lockup_date(env: Env, address: Address, lockup_until_ledger: u32) {
+        Self::require_admin(&env);
+        extend_instance(&env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::LockupDate(address.clone()), &lockup_until_ledger);
+        extend_persistent(&env, &DataKey::LockupDate(address.clone()));
+
+        events::LockupDateSet {
+            address,
+            lockup_until_ledger,
+        }
+        .publish(&env);
+    }
+
+    pub fn lockup_date(env: Env, address: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::LockupDate(address))
+            .unwrap_or(0)
     }
 
     // ── Issuer Management ─────────────────────────────────────────────────────
@@ -298,6 +356,8 @@ impl RwaAssetContract {
         Self::require_positive(&env, amount);
         Self::require_compliant(&env, &from);
         Self::require_compliant(&env, &to);
+        Self::require_not_frozen(&env, &from);
+        Self::require_not_locked(&env, &from);
 
         let from_bal = Self::balance(env.clone(), from.clone());
         if from_bal < amount {
@@ -388,6 +448,8 @@ impl RwaAssetContract {
         Self::require_positive(&env, amount);
         Self::require_compliant(&env, &from);
         Self::require_compliant(&env, &to);
+        Self::require_not_frozen(&env, &from);
+        Self::require_not_locked(&env, &from);
 
         // The spender exercised their authorisation, so the allowance is
         // consumed even when the transfer turns out to be a no-op.
@@ -889,6 +951,21 @@ impl RwaAssetContract {
         let client = ComplianceClient::new(env, &compliance);
         if !client.screen(party, &min_level) {
             panic_with_error!(env, RwaError::NotCompliant);
+        }
+    }
+
+    /// Rejects transfers from frozen addresses.
+    fn require_not_frozen(env: &Env, from: &Address) {
+        if Self::is_frozen(env.clone(), from.clone()) {
+            panic_with_error!(env, RwaError::AddressFrozen);
+        }
+    }
+
+    /// Rejects transfers from addresses whose tokens are still locked.
+    fn require_not_locked(env: &Env, from: &Address) {
+        let lockup_until = Self::lockup_date(env.clone(), from.clone());
+        if lockup_until > 0 && lockup_until > env.ledger().sequence() {
+            panic_with_error!(env, RwaError::AddressLocked);
         }
     }
 
