@@ -53,6 +53,11 @@ deploy-testnet:
 	@echo "Ensure STELLAR_ACCOUNT env var is set to a funded testnet keypair."
 	NETWORK=testnet ./scripts/deploy.sh
 
+# ─── Tooling Hooks ────────────────────────────────────────────────────────────
+hooks-install:
+	@echo "Installing pre-commit hooks..."
+	pre-commit install
+
 # ─── Help ─────────────────────────────────────────────────────────────────────
 help:
 	@echo ""
@@ -66,4 +71,5 @@ help:
 	@echo "  make sdk-build      Build the TypeScript SDK"
 	@echo "  make sdk-test       Run SDK unit tests"
 	@echo "  make deploy-testnet Deploy all four contracts to Stellar testnet"
+	@echo "  make hooks-install  Install local git pre-commit hooks"
 	@echo ""

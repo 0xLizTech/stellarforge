@@ -89,6 +89,10 @@ make test
 # Set up SDK
 make sdk-install
 make sdk-test
+
+# Install pre-commit hooks (cargo fmt & eslint)
+pip install pre-commit
+make hooks-install
 ```
 
 ### Running a single contract's tests
