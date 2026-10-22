@@ -21,26 +21,14 @@ mod events;
 
 pub use error::GovernanceError;
 pub use events::{
-    AdminTransferred, ProposalCancelled, ProposalCreated, ProposalFinalized, VoteCast,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, DepositConfigured,
+    PassThresholdSet, ProposalCancelled, ProposalCreated, ProposalDepositRefunded,
+    ProposalFinalized, QuorumSet, VoteCast,
 };
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, String,
-    Symbol, Vec,
-    AdminTransferred, DepositConfigured, ProposalCreated, ProposalDepositRefunded,
-    ProposalFinalized, VoteCast,
-};
-
-use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env,
-    String, Symbol,
-    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, PassThresholdSet,
-    ProposalCreated, ProposalFinalized, QuorumSet, VoteCast,
-};
-
-use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Bytes, BytesN,
-    Env, String, Symbol,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Bytes,
+    BytesN, Env, String, Symbol, Vec,
 };
 use stellarforge_common::{extend_instance, extend_persistent, storage::DAY_IN_LEDGERS};
 
@@ -626,6 +614,12 @@ impl GovernanceContract {
         events::DepositConfigured {
             token,
             amount: stored_amount,
+        }
+        .publish(&env);
+    }
+
+    // ── Quorum and Pass Threshold (#135) ────────────────────────────────────
+
     /// Sets the minimum total votes (`votes_for + votes_against`) a proposal
     /// needs before `finalize` will even evaluate its threshold (#135). Zero
     /// disables the check, matching `finalize`'s pre-#135 behavior.
@@ -685,6 +679,10 @@ impl GovernanceContract {
 
     fn require_admin(env: &Env) {
         Self::admin(env.clone()).require_auth();
+    }
+
+    /// The share of cast votes, in basis points, `finalize` requires to be
+    /// `votes_for` (#135).
     pub fn pass_threshold_bps(env: Env) -> u32 {
         env.storage()
             .instance()
