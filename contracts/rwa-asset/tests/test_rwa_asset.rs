@@ -9,7 +9,7 @@ use soroban_sdk::{
 };
 
 use rwa_asset::{
-    AssetMetadata, DataKey, FrozenSet, ForcedTransfer, LockupDateSet, RwaAssetContract,
+    AssetMetadata, DataKey, ForcedTransfer, FrozenSet, LockupDateSet, RwaAssetContract,
     RwaAssetContractClient, RwaError,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;

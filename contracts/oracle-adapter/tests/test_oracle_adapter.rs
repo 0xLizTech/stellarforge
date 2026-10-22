@@ -10,13 +10,10 @@ use soroban_sdk::{
 };
 
 use oracle_adapter::{
-    AdminTransferred, Asset, AssetAdded, AssetConfig, DataKey, MaxDeviationSet,
-    OracleAdapterContract, OracleAdapterContractClient, OracleError, Paused, PriceData,
-    PriceOverridden, PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS, MAX_RECORDS,
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Asset, AssetAdded,
     AssetConfig, DataKey, MaxDeviationSet, OracleAdapterContract, OracleAdapterContractClient,
-    OracleError, PriceData, PriceOverridden, PriceReported, ReporterSet, MAX_ASSETS, MAX_DECIMALS,
-    MAX_RECORDS,
+    OracleError, Paused, PriceData, PriceOverridden, PriceReported, ReporterSet, MAX_ASSETS,
+    MAX_DECIMALS, MAX_RECORDS,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -784,7 +781,8 @@ fn test_transfer_admin_extends_the_instance() {
     let new_admin = Address::generate(&h.env);
     env_advance_ledger(&h.env, 600_000);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    h.client.accept_admin();
 
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
@@ -857,6 +855,9 @@ fn test_set_paused_emits_event() {
     assert_eq!(
         h.env.events().all(),
         std::vec![Paused { paused: true }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
 #[test]
 fn test_accept_admin_with_no_pending_transfer_fails() {
     let h = setup();
@@ -992,7 +993,7 @@ fn test_unpausing_allows_report_again() {
     assert_eq!(h.client.lastprice(&h.asset).unwrap().price, PRICE);
 }
 
-/// transfer_admin must stay callable while paused, so a compromised admin
+/// Admin handover must stay callable while paused, so a compromised admin
 /// key can still be rotated out.
 #[test]
 fn test_paused_does_not_block_transfer_admin() {
@@ -1000,9 +1001,13 @@ fn test_paused_does_not_block_transfer_admin() {
     let new_admin = Address::generate(&h.env);
     h.client.set_paused(&true);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    h.client.accept_admin();
 
     assert_eq!(h.client.admin(), new_admin);
+}
+
+#[test]
 fn test_accept_admin_emits_event() {
     let h = setup();
     let new_admin = Address::generate(&h.env);

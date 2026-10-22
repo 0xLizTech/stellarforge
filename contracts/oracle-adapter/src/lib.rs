@@ -45,10 +45,8 @@ mod math;
 
 pub use error::OracleError;
 pub use events::{
-    AdminTransferred, AssetAdded, MaxDeviationSet, Paused, PriceOverridden, PriceReported,
-    ReporterSet,
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, AssetAdded, MaxDeviationSet,
-    PriceOverridden, PriceReported, ReporterSet,
+    Paused, PriceOverridden, PriceReported, ReporterSet,
 };
 pub use math::{check_price_deviation, tick_of, DeviationCheck};
 

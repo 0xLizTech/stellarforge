@@ -246,3 +246,23 @@ detail and the regression tests.
 | SF-2026-017 | IR-15 | A self-`transfer_from` emitted a phantom `Transfer` event (info) | `0e7b905` |
 | SF-2026-018 | IR-16 | Registry entries were not documented as unverified (info) | `4f04c60` |
 | SF-2026-019 | IR-17 | Constructor `require_auth` was asserted by no test (info) | `d9fc624` |
+
+## Dependency Licensing, Supply-Chain Policy, and Residual Risks (`cargo-deny`)
+
+In addition to `cargo audit` (RustSec vulnerability advisories) and `npm audit --omit=dev` (SDK runtime dependencies), `.github/workflows/security.yml` runs `cargo deny check` against the root [`deny.toml`](../deny.toml) configuration (#91).
+
+### Findings
+
+1. **License inventory.** Every crate in `Cargo.lock` across the workspace and its `soroban-sdk` 27.x dependency graph is licensed under permissive terms compatible with StellarForge's `Apache-2.0` release: `Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, and `Unicode-3.0` (used by `unicode-ident` under `(MIT OR Apache-2.0) AND Unicode-3.0`). No copyleft (`GPL-*`, `LGPL-*`, `AGPL-*`, `MPL-*`) crates are present.
+2. **Registry provenance.** Every external crate in `Cargo.lock` resolves exclusively from the canonical crates.io index (`https://github.com/rust-lang/crates.io-index`). No third-party registries or direct `git` dependencies are used.
+3. **Transitive unmaintained proc-macro (`RUSTSEC-2024-0436`).** `cargo deny check advisories` flags `paste 1.0.15` as unmaintained (`RUSTSEC-2024-0436`). `paste` is pulled in transitively by `soroban-env-host 27.0.1` (via `ark-ff 0.5.0`) and `soroban-wasmi 0.31.1-soroban.20.0.1` (via `wasmi_core 0.13.0`).
+
+### Assumptions
+
+- **Guest vs. host boundary.** Deployed Soroban contracts are compiled for `wasm32v1-none` with `no_std` and link only the guest environment (`soroban-env-guest`). `soroban-env-host`, `ark-ff`, `soroban-wasmi`, and `paste` are compiled only when the `testutils` feature is enabled for native unit tests and benchmarks; their code never enters the deployed `.wasm` bytecode.
+- **SPDX metadata accuracy.** `cargo-deny` evaluates the `license` and `license-file` declarations published in each crate's `Cargo.toml` on crates.io with a minimum confidence threshold of `0.8`.
+
+### Residual Risks
+
+- **`RUSTSEC-2024-0436` (`paste 1.0.15`).** Because `paste` is pinned inside `soroban-sdk` 27's own host dependency tree and has no known security or soundness vulnerability (it is an archived proc-macro crate), `deny.toml` records a scoped ignore for `RUSTSEC-2024-0436` until an upstream `soroban-sdk` release drops `paste` from `ark-ff` / `wasmi_core`.
+- **Transitive duplicate versions (`multiple-versions = "allow"`).** `soroban-sdk` 27 transitively depends on two versions of `syn`, `darling`, and `stellar-strkey`. `deny.toml` allows duplicate versions to accommodate the upstream SDK graph while rejecting any unapproved license or registry across all resolved versions.

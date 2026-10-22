@@ -1,0 +1,54 @@
+# cargo-deny configuration for the StellarForge Rust workspace (#91).
+#
+# Run locally with:
+#   cargo deny check
+#
+# Enforced in CI by .github/workflows/security.yml.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+ignore = [
+    # paste 1.0.15 is an unmaintained proc-macro crate pulled in transitively by
+    # soroban-env-host (via ark-ff) and soroban-wasmi (via wasmi_core) in
+    # soroban-sdk 27.x. Both sit on the host/testutils side and are not linked
+    # into the deployed wasm32v1-none contract artifacts. Tracked for removal
+    # when upstream soroban-env-host drops paste.
+    { id = "RUSTSEC-2024-0436", reason = "Transitive host-only dependency of soroban-sdk 27 (via ark-ff and wasmi_core); no upstream replacement in soroban-env-host 27.0.1" },
+]
+
+[licenses]
+# Only permissive licenses compatible with StellarForge's Apache-2.0 release
+# are allowed. Any license not listed here (including all GPL, LGPL, and AGPL
+# variants) is rejected by default.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    # Required by unicode-ident, which is licensed under
+    # "(MIT OR Apache-2.0) AND Unicode-3.0" in the proc-macro dependency tree.
+    "Unicode-3.0",
+]
+confidence-threshold = 0.8
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true
+
+[bans]
+# Transitive dependencies of soroban-sdk currently pull in more than one major
+# version of syn, darling, and stellar-strkey; allow duplicate versions and
+# workspace path dependencies while enforcing explicit bans.
+multiple-versions = "allow"
+wildcards = "allow"
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
