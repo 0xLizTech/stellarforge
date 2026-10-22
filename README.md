@@ -68,7 +68,8 @@ stellarforge/
 │   ├── registry/           # Global asset registry
 │   ├── compliance/         # KYC/AML compliance engine
 │   ├── governance/         # On-chain governance
-│   └── oracle-adapter/     # SEP-40 NAV price feed (Phase 2)
+│   ├── oracle-adapter/     # SEP-40 NAV price feed (Phase 2)
+│   └── vault/              # Fractionalization vault & SEP-41 share token (Phase 2)
 ├── sdk/
 │   ├── src/
 │   │   ├── client.ts       # Contract interaction clients
