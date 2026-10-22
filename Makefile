@@ -1,4 +1,4 @@
-.PHONY: all build test fmt lint clean deploy-testnet help
+.PHONY: all build test fmt lint clean doctor deploy-testnet help
 
 # ─── Variables ────────────────────────────────────────────────────────────────
 NETWORK        ?= testnet
@@ -16,6 +16,7 @@ build:
 	$(STELLAR_CLI) contract build --manifest-path contracts/compliance/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/governance/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/oracle-adapter/Cargo.toml
+	$(STELLAR_CLI) contract build --manifest-path contracts/vault/Cargo.toml
 	@echo "Build complete. Artifacts in target/wasm32v1-none/release/"
 
 test:
@@ -33,6 +34,9 @@ lint:
 clean:
 	$(CARGO) clean
 	rm -rf sdk/dist sdk/node_modules
+
+doctor:
+	./scripts/doctor.sh
 
 # ─── SDK ──────────────────────────────────────────────────────────────────────
 sdk-install:
@@ -63,6 +67,7 @@ help:
 	@echo "  make fmt            Format Rust source code"
 	@echo "  make lint           Run Clippy linter"
 	@echo "  make clean          Remove build artifacts"
+	@echo "  make doctor         Check local Rust, stellar-cli, and Node toolchain"
 	@echo "  make sdk-build      Build the TypeScript SDK"
 	@echo "  make sdk-test       Run SDK unit tests"
 	@echo "  make deploy-testnet Deploy all four contracts to Stellar testnet"

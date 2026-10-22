@@ -9,16 +9,11 @@ use soroban_sdk::{
 };
 
 use governance::{
-    AdminTransferred, DataKey, GovernanceContract, GovernanceContractClient, GovernanceError,
-    ProposalCancelled, ProposalCreated, ProposalFinalized, ProposalStatus, VoteCast, MAX_PAGE_SIZE,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, DataKey, DepositConfigured,
+    GovernanceContract, GovernanceContractClient, GovernanceError, PassThresholdSet,
+    ProposalCancelled, ProposalCreated, ProposalDepositRefunded, ProposalFinalized, ProposalStatus,
+    QuorumSet, VoteCast, DEFAULT_PASS_THRESHOLD_BPS, MAX_PAGE_SIZE, MAX_PASS_THRESHOLD_BPS,
     MAX_TITLE_BYTES, MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
-    AdminTransferred, DataKey, DepositConfigured, GovernanceContract, GovernanceContractClient,
-    GovernanceError, ProposalCreated, ProposalDepositRefunded, ProposalFinalized, ProposalStatus,
-    VoteCast, MAX_TITLE_BYTES, MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
-    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, DataKey, GovernanceContract,
-    GovernanceContractClient, GovernanceError, PassThresholdSet, ProposalCreated,
-    ProposalFinalized, ProposalStatus, QuorumSet, VoteCast, DEFAULT_PASS_THRESHOLD_BPS,
-    MAX_PASS_THRESHOLD_BPS, MAX_TITLE_BYTES, MAX_VOTING_PERIOD_LEDGERS, MIN_VOTING_PERIOD_LEDGERS,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -845,7 +840,8 @@ fn test_transfer_admin_extends_the_instance() {
         .ledger()
         .with_mut(|li| li.sequence_number += VOTING_PERIOD * 10);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    h.client.accept_admin();
 
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
@@ -1114,6 +1110,9 @@ fn test_cancellation_after_a_single_against_vote_is_also_rejected() {
     assert_eq!(
         res,
         Err(Ok(GovernanceError::ProposalAlreadyHasVotes.into()))
+    );
+}
+
 // ─── Proposal deposit (#134) ───────────────────────────────────────────────
 
 #[test]
@@ -1292,7 +1291,9 @@ fn test_list_proposals_returns_an_empty_page_when_there_are_none() {
 #[test]
 fn test_pages_partition_proposals_in_creation_order() {
     let h = setup();
-    let ids: std::vec::Vec<u64> = (0..7).map(|_| h.propose()).collect();
+    let ids: std::vec::Vec<u64> = (0..7)
+        .map(|i| h.propose_distinct(&std::format!("{i}")))
+        .collect();
 
     let mut walked = std::vec::Vec::new();
     let mut start = 0;
@@ -1311,8 +1312,8 @@ fn test_pages_partition_proposals_in_creation_order() {
 #[test]
 fn test_a_page_past_the_end_is_empty() {
     let h = setup();
-    h.propose();
-    h.propose();
+    h.propose_distinct("a");
+    h.propose_distinct("b");
 
     assert_eq!(h.client.list_proposals(&2, &MAX_PAGE_SIZE).len(), 0);
     assert_eq!(h.client.list_proposals(&u32::MAX, &MAX_PAGE_SIZE).len(), 0);
@@ -1334,6 +1335,9 @@ fn test_list_proposals_reflects_cancelled_status() {
 
     let page = h.client.list_proposals(&0, &MAX_PAGE_SIZE);
     assert_eq!(page.get(0).unwrap().status, ProposalStatus::Cancelled);
+}
+
+#[test]
 fn test_propose_collects_the_configured_deposit() {
     let h = setup();
     let (token_address, mint) = setup_token(&h.env, &h.admin);
