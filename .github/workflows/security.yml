@@ -11,6 +11,7 @@ on:
       - "contracts/**/*.rs"
       - "**/Cargo.toml"
       - "Cargo.lock"
+      - "deny.toml"
       - "sdk/package.json"
       - "sdk/package-lock.json"
       - ".github/workflows/security.yml"
@@ -36,6 +37,19 @@ jobs:
 
       - name: Run audit
         run: cargo audit
+
+  cargo-deny:
+    name: Cargo Deny (licenses, bans, and sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned and --locked, matching cargo-audit above.
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked --version 0.20.2
+
+      - name: Check licenses, bans, and sources
+        run: cargo deny check
 
   npm-audit:
     name: npm Audit (SDK runtime dependencies)

@@ -7,9 +7,9 @@ mod error;
 mod events;
 
 pub use error::RegistryError;
-pub use events::{ActiveSet, AdminTransferred, AssetRegistered, Paused};
 pub use events::{
     ActiveSet, AdminTransferCancelled, AdminTransferProposed, AdminTransferred, AssetRegistered,
+    Paused,
 };
 
 use soroban_sdk::{

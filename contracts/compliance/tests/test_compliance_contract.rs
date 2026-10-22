@@ -9,11 +9,9 @@ use soroban_sdk::{
 };
 
 use compliance::{
-    AdminTransferred, ComplianceContract, ComplianceContractClient, ComplianceError, DataKey,
-    KycRecord, KycRevoked, KycSet, Paused, MAX_LEVEL,
-    KycRecord, KycRevoked, KycSet, MAX_BATCH_SIZE, MAX_LEVEL,
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, ComplianceContract,
-    ComplianceContractClient, ComplianceError, DataKey, KycRecord, KycRevoked, KycSet, MAX_LEVEL,
+    ComplianceContractClient, ComplianceError, DataKey, KycRecord, KycRevoked, KycSet, Paused,
+    MAX_BATCH_SIZE, MAX_LEVEL,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
@@ -367,7 +365,8 @@ fn test_transfer_admin_extends_the_instance() {
     let new_admin = Address::generate(&h.env);
     h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    h.client.accept_admin();
 
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
@@ -624,6 +623,9 @@ fn test_set_paused_emits_event() {
     assert_eq!(
         h.env.events().all(),
         std::vec![Paused { paused: true }.to_xdr(&h.env, &h.contract_id)],
+    );
+}
+
 // ─── Batch KYC set/revoke (#140) ───────────────────────────────────────────
 
 #[test]
@@ -688,6 +690,15 @@ fn test_set_paused_requires_admin() {
             contract: &h.contract_id,
             fn_name: "set_paused",
             args: (true,).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(h.client.try_set_paused(&true).is_err());
+    assert!(!h.client.paused());
+}
+
+#[test]
 fn test_set_kyc_batch_requires_admin() {
     let h = setup();
     let subject = Address::generate(&h.env);
@@ -706,8 +717,14 @@ fn test_set_kyc_batch_requires_admin() {
         },
     }]);
 
-    assert!(h.client.try_set_paused(&true).is_err());
-    assert!(!h.client.paused());
+    assert!(h
+        .client
+        .try_set_kyc_batch(&Vec::from_array(
+            &h.env,
+            [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))],
+        ))
+        .is_err());
+    assert!(h.client.get_kyc(&subject).is_none());
 }
 
 #[test]
@@ -763,7 +780,7 @@ fn test_unpausing_allows_set_kyc_again() {
     assert_eq!(h.client.get_kyc(&subject).unwrap().level, LEVEL_BASIC);
 }
 
-/// transfer_admin must stay callable while paused, matching rwa-asset's own
+/// Admin handover must stay callable while paused, matching rwa-asset's own
 /// exemption, so a compromised admin key can still be rotated out.
 #[test]
 fn test_paused_does_not_block_transfer_admin() {
@@ -771,17 +788,10 @@ fn test_paused_does_not_block_transfer_admin() {
     let new_admin = Address::generate(&h.env);
     h.client.set_paused(&true);
 
-    h.client.transfer_admin(&new_admin);
+    h.client.propose_admin(&new_admin);
+    h.client.accept_admin();
 
     assert_eq!(h.client.admin(), new_admin);
-    assert!(h
-        .client
-        .try_set_kyc_batch(&Vec::from_array(
-            &h.env,
-            [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))],
-        ))
-        .is_err());
-    assert!(h.client.get_kyc(&subject).is_none());
 }
 
 /// The partial-failure case the issue asks for: one bad record must not let
