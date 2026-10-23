@@ -7,6 +7,15 @@ on:
       - "sdk/**"
       - "contracts/oracle-adapter/**"
       - "scripts/generate-oracle-parity-table.cjs"
+      - "scripts/pre-commit-eslint.sh"
+      - "scripts/check-unused-deps.sh"
+      - "**/Cargo.toml"
+      - ".gitattributes"
+      - ".pre-commit-config.yaml"
+      - "commitlint.config.cjs"
+      - "CONTRIBUTING.md"
+      - ".github/workflows/commitlint.yml"
+      - ".github/workflows/unused-deps.yml"
       - ".github/workflows/sdk-ci.yml"
   pull_request:
     branches: [main, develop]
@@ -14,6 +23,16 @@ on:
       - "sdk/**"
       - "contracts/oracle-adapter/**"
       - "scripts/generate-oracle-parity-table.cjs"
+      - "scripts/pre-commit-eslint.sh"
+      - "scripts/check-unused-deps.sh"
+      - "**/Cargo.toml"
+      - ".gitattributes"
+      - ".pre-commit-config.yaml"
+      - "commitlint.config.cjs"
+      - "CONTRIBUTING.md"
+      - ".github/workflows/commitlint.yml"
+      - ".github/workflows/unused-deps.yml"
+      - ".github/workflows/sdk-ci.yml"
 
 jobs:
   oracle-parity:
@@ -62,6 +81,10 @@ jobs:
       - name: Type check
         working-directory: sdk
         run: npm run typecheck
+
+      - name: Lint
+        working-directory: sdk
+        run: npm run lint
 
       - name: Run tests
         working-directory: sdk

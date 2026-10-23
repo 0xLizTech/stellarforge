@@ -1,0 +1,44 @@
+name: Commitlint
+
+# Lints every commit a pull request adds against commitlint.config.cjs, which
+# implements the "Commit Style" section of CONTRIBUTING.md.
+on:
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  commitlint:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    # Dependabot titles its own commits ("Bump x from 1 to 2").
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The range base..head needs the PR's history, not a shallow clone.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Install dependencies
+        working-directory: sdk
+        run: npm ci
+
+      - name: Lint pull request commits
+        working-directory: sdk
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          npx --no-install commitlint \
+            --config ../commitlint.config.cjs \
+            --from "$BASE_SHA" \
+            --to "$HEAD_SHA" \
+            --verbose

@@ -1,0 +1,32 @@
+# Local pre-commit hooks: the same formatting gates CI runs, before a commit
+# exists. Install once per clone:
+#
+#   pipx install pre-commit      # or: pip install --user pre-commit
+#   make sdk-install             # eslint lives in sdk/node_modules
+#   make hooks                   # = pre-commit install
+#
+# Run against every file instead of only staged ones:
+#   pre-commit run --all-files
+#
+# Both hooks are `language: system`: they use the Rust toolchain pinned by
+# rust-toolchain.toml and the eslint installed by `npm ci`, so the local check
+# and the CI check are the same binaries.
+minimum_pre_commit_version: "3.0.0"
+
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        # cargo fmt formats a whole workspace; passing it individual staged
+        # paths would skip its edition and config handling.
+        entry: cargo fmt --all -- --check
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+      - id: eslint
+        name: eslint (sdk)
+        entry: bash scripts/pre-commit-eslint.sh
+        language: system
+        files: ^sdk/src/.*\.ts$

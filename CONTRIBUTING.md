@@ -100,6 +100,49 @@ make sdk-install
 make sdk-test
 ```
 
+### Git hooks (recommended)
+
+Formatting failures should never reach CI. `.pre-commit-config.yaml` runs
+`cargo fmt --all -- --check` when you stage a `.rs` file and `eslint` when you
+stage a file under `sdk/src/`, and rejects the commit if either fails.
+
+```bash
+pipx install pre-commit      # or: pip install --user pre-commit
+make hooks                   # npm ci in sdk/, then `pre-commit install`
+```
+
+Run the hooks on the whole tree with `pre-commit run --all-files`. Skip them
+once with `git commit --no-verify`; CI runs the same checks, so a skipped hook
+only moves the failure to your pull request.
+
+### Unused dependencies
+
+An unused crate grows the WASM and the audit surface. CI runs
+[cargo-machete](https://github.com/bnjbvr/cargo-machete) on every pull request
+that touches Rust code or a manifest, and weekly on `main`
+(`.github/workflows/unused-deps.yml`).
+
+```bash
+cargo install cargo-machete --locked --version 0.7.0
+make unused-deps             # fails and lists the crate if a dependency is unused
+make unused-deps-selftest    # proves the check can fail
+```
+
+If cargo-machete reports a false positive (a crate used only through a macro it
+cannot see), list it under `[package.metadata.cargo-machete] ignored = ["name"]`
+in that crate's `Cargo.toml` and say why in the pull request.
+
+### Line endings
+
+`.gitattributes` forces LF for `*.sh`, `*.rs`, `*.ts`, `*.md` and the other
+files the repo executes or parses, whatever your `core.autocrlf` is. Windows
+contributors do not need to configure anything. To check a clone:
+
+```bash
+git ls-files --eol           # the i/ column must never say crlf or mixed
+git add --renormalize .      # re-normalizes files committed before .gitattributes
+```
+
 ### Running a single contract's tests
 
 ```bash
@@ -202,6 +245,10 @@ make lint
 
 # TypeScript — checks src/ and tests/
 cd sdk && npm run typecheck
+cd sdk && npm run lint       # eslint, config in sdk/eslint.config.mjs
+
+# Unused Rust dependencies
+make unused-deps
 ```
 
 CI will reject PRs that fail formatting or linting.
@@ -226,7 +273,26 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 **Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`
 
-**Scopes:** `rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`, `sdk`, `ci`, `docs`
+**Scopes:** `rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`, `sdk`, `ci`, `docs`, `common`, `benchmark`, `readme`
+
+The scope is optional, but if you give one it must be on this list. Use the
+contract's name for a change to that contract, `common` for `contracts/common`,
+`benchmark` for `tools/benchmark`, `sdk` for `sdk/`, `ci` for workflows and
+tooling, and `docs` or `readme` for documentation. Add `!` before the colon for a
+breaking change (`feat(sdk)!: ...`).
+
+**Enforced:** the `Commitlint` workflow lints every commit in a pull request
+against `commitlint.config.cjs` and fails the check on a type or scope outside
+these lists, a subject over 72 characters, an empty subject or a trailing full
+stop. Check your branch before pushing:
+
+```bash
+make commitlint              # lints commits on your branch that are not on origin/main
+```
+
+Fix a bad message with `git commit --amend` (last commit) or
+`git rebase -i origin/main` (older ones), then force-push your branch. Merge
+commits and `Revert "..."` commits are ignored.
 
 **Examples:**
 

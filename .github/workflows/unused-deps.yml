@@ -1,0 +1,55 @@
+name: Unused Dependencies
+
+on:
+  schedule:
+    # Weekly on Mondays at 07:00 UTC. A dependency can become unused without a
+    # Cargo.toml change (a refactor that drops the last `use`), so the check
+    # also runs on a clock.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: &unused-deps-paths
+      - "contracts/**"
+      - "tools/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/check-unused-deps.sh"
+      - ".github/workflows/unused-deps.yml"
+  pull_request:
+    branches: [main, develop]
+    paths: *unused-deps-paths
+
+permissions:
+  contents: read
+
+env:
+  # Pinned so the check is the same build on every run. Keep in step with
+  # MACHETE_VERSION in scripts/check-unused-deps.sh.
+  CARGO_MACHETE_VERSION: "0.7.0"
+
+jobs:
+  cargo-machete:
+    name: cargo-machete (unused Rust dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+
+      # Also caches ~/.cargo/bin, so cargo-machete is compiled once, not per run.
+      - name: Cache cargo registry and binaries
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ runner.os }}-machete-${{ env.CARGO_MACHETE_VERSION }}
+
+      - name: Install cargo-machete
+        run: cargo install cargo-machete --locked --version "$CARGO_MACHETE_VERSION"
+
+      # Proves the job can fail: an unused dependency must exit non-zero.
+      - name: Self-test
+        run: bash scripts/check-unused-deps.sh --self-test
+
+      - name: Check workspace for unused dependencies
+        run: bash scripts/check-unused-deps.sh
