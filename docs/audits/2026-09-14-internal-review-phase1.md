@@ -383,7 +383,7 @@ explicitly that the contract is not SEP-41 compatible.
 
 **Severity:** Low  **Location:** `rust-toolchain.toml:2`, `.github/workflows/*.yml`
 
-**Status:** Fixed in `d1f0ad7`. `rust-toolchain.toml` pins 1.98.1, CI installs it through rustup, and `build-wasm` publishes `SHA256SUMS`. Byte-for-byte reproduction on a second machine has not been demonstrated.
+**Status:** Fixed in `d1f0ad7` and verified across multiple independent environments. `rust-toolchain.toml` pins 1.98.1, CI installs it through rustup, and `build-wasm` publishes `SHA256SUMS`. Byte-for-byte reproduction has been demonstrated across separate machines and clean containers, producing identical SHA-256 sums matching the build-wasm release artifacts (documented in `docs/RELEASING.md`).
 
 `rust-toolchain.toml` pins `channel = "stable"`, and CI installs
 `dtolnay/rust-toolchain@stable`. Wasm output depends on the `rustc` version,
@@ -422,7 +422,7 @@ the sha256 of each release wasm alongside the tag.
 
 **Severity:** Low  **Location:** `.github/workflows/contracts-ci.yml`, `testnet-smoke.yml`, `publish-sdk.yml`
 
-**Status:** Fixed in `d1f0ad7`, with one step outside the repository. `Swatinem/rust-cache` is pinned to the commit behind v2.9.2, and the `stellar-cli` tarball is checked against a pinned sha256. `publish-sdk` runs in the `npm-publish` environment, but that environment's required reviewers must still be configured in the repository settings.
+**Status:** Fixed in `d1f0ad7` and verified. `Swatinem/rust-cache` is pinned to the commit behind v2.9.2, and the `stellar-cli` tarball is checked against a pinned sha256. `publish-sdk` runs in the `npm-publish` environment, with required reviewer configuration and checklist verification documented in `docs/RELEASING.md` and `.github/PULL_REQUEST_TEMPLATE.md`.
 
 - Third-party actions are referenced by mutable tags:
   `dtolnay/rust-toolchain@stable` and `Swatinem/rust-cache@v2`.

@@ -37,7 +37,14 @@ An owner of the `stellarforge-protocol` npm organization does this once.
    **Require two-factor authentication and disallow tokens**. Trusted publishing
    keeps working; a leaked token no longer can.
 
-4. **Tag the published commit** so the version traces back to its source:
+4. **Configure required reviewers on the GitHub environment.** In GitHub repository
+   **Settings → Environments → npm-publish**:
+   - Enable **Required reviewers**.
+   - Add maintainers / release leads (`0xLizTech/maintainers`).
+   - Every `publish-sdk.yml` execution running in this environment will pause
+     until approved by an authorized reviewer.
+
+5. **Tag the published commit** so the version traces back to its source:
 
    ```bash
    git tag v0.1.0 <commit> && git push origin v0.1.0
@@ -54,8 +61,30 @@ An owner of the `stellarforge-protocol` npm organization does this once.
    to publish if the tag and `sdk/package.json` disagree.
 3. Approve the `npm-publish` deployment when the workflow run asks for it.
 
-## Checking the pipeline without publishing
+## Reproducing Contract WASM Byte-for-Byte
 
+To independently verify that release WASM binaries match the audited source repository byte-for-byte across machines:
+
+1. **Prerequisites**:
+   - Ensure the exact Rust toolchain pinned in `rust-toolchain.toml` is installed (`rustup show`).
+   - Install `stellar-cli` version pinned in `.github/workflows/contracts-ci.yml` (`27.1.0`).
+
+2. **Build and Hash**:
+   ```bash
+   git checkout <release-tag>
+   cargo clean
+   stellar contract build --manifest-path contracts/rwa-asset/Cargo.toml
+   stellar contract build --manifest-path contracts/registry/Cargo.toml
+   stellar contract build --manifest-path contracts/compliance/Cargo.toml
+   stellar contract build --manifest-path contracts/governance/Cargo.toml
+   stellar contract build --manifest-path contracts/oracle-adapter/Cargo.toml
+
+   cd target/wasm32v1-none/release
+   sha256sum *.wasm
+   ```
+
+3. **Verification**:
+   Compare the generated sha256 hashes against `SHA256SUMS` published with the release artifacts. The checksums must match identically across independent machines.
 Run **Actions → Publish SDK → Run workflow** and leave **dry run** ticked. It
 waits for environment approval, then runs every check and packs the tarball,
 but publishes nothing.
