@@ -8,8 +8,9 @@ pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::RwaError;
 pub use events::{
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Approve, Burn,
-    CapIncreaseCancelled, CapIncreaseProposed, ComplianceSet, ForcedTransfer, GovernanceSet,
-    IssuerSet, MetadataUpdated, Mint, Paused, Transfer, TransferFrom,
+    CapIncreaseCancelled, CapIncreaseProposed, ComplianceSet, ForcedTransfer, FrozenSet,
+    GovernanceSet, HolderCapSet, IssuerSet, LockupDateSet, MetadataUpdated, Mint, Paused,
+    Transfer, TransferFrom,
 };
 
 use stellarforge_common::{extend_instance, extend_persistent};
@@ -31,6 +32,10 @@ const MIN_LEVEL_KEY: Symbol = symbol_short!("MINLVL");
 /// Address authorized to approve loosening a supply cap, absent when no cap
 /// may be loosened at all (#148).
 const GOVERNANCE_KEY: Symbol = symbol_short!("GOV");
+
+/// Per-contract ceiling on the number of distinct token holders, absent when
+/// uncapped. Stored in instance storage alongside the other small admin flags.
+const HOLDER_CAP_KEY: Symbol = symbol_short!("HOLDCAP");
 
 /// Upper bound on `AssetMetadata::decimals`. Beyond this a whole token no
 /// longer fits sensibly in `i128` alongside realistic supply figures.
@@ -70,6 +75,13 @@ pub enum DataKey {
     PendingCapIncrease,
     /// Addresses permitted to call `forced_transfer` (#144).
     ForcedTransferRole(Address),
+    /// Whether an address is frozen and cannot send tokens.
+    Frozen(Address),
+    /// The ledger sequence until which an address's tokens are locked.
+    LockupDate(Address),
+    /// Running count of addresses whose balance is strictly greater than zero.
+    /// Incremented when a balance transitions 0 → >0, decremented on >0 → 0.
+    HolderCount,
 }
 
 /// A spender's allowance and the last ledger it may be spent in (SEP-41).
@@ -135,10 +147,16 @@ impl RwaAssetContract {
             .persistent()
             .set(&DataKey::TotalSupply, &0_i128);
 
+        // Holder count starts at zero; no addresses hold tokens at construction.
+        env.storage()
+            .persistent()
+            .set(&DataKey::HolderCount, &0_u32);
+
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Metadata);
         extend_persistent(&env, &DataKey::MetadataVersion);
         extend_persistent(&env, &DataKey::TotalSupply);
+        extend_persistent(&env, &DataKey::HolderCount);
     }
 
     // ── Forced Transfer Role ──────────────────────────────────────────────────
@@ -163,6 +181,59 @@ impl RwaAssetContract {
             .persistent()
             .get(&DataKey::ForcedTransferRole(account))
             .unwrap_or(false)
+    }
+
+    // ── Frozen Address Management ──────────────────────────────────────────────
+
+    /// Freeze or unfreeze an address. Frozen addresses cannot send tokens.
+    ///
+    /// Only the admin may call this. This is used to comply with sanctions or
+    /// other regulatory requirements that require blocking specific addresses.
+    pub fn set_frozen(env: Env, address: Address, frozen: bool) {
+        Self::require_admin(&env);
+        extend_instance(&env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Frozen(address.clone()), &frozen);
+        extend_persistent(&env, &DataKey::Frozen(address.clone()));
+
+        events::FrozenSet { address, frozen }.publish(&env);
+    }
+
+    pub fn is_frozen(env: Env, address: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Frozen(address))
+            .unwrap_or(false)
+    }
+
+    // ── Lock-up Date Management ────────────────────────────────────────────────
+
+    /// Set the lock-up date for an address. Tokens are locked until the
+    /// specified ledger sequence.
+    ///
+    /// Only the admin may call this. This is used for vesting periods or
+    /// regulatory holding periods. Setting to 0 removes the lock-up.
+    pub fn set_lockup_date(env: Env, address: Address, lockup_until_ledger: u32) {
+        Self::require_admin(&env);
+        extend_instance(&env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::LockupDate(address.clone()), &lockup_until_ledger);
+        extend_persistent(&env, &DataKey::LockupDate(address.clone()));
+
+        events::LockupDateSet {
+            address,
+            lockup_until_ledger,
+        }
+        .publish(&env);
+    }
+
+    pub fn lockup_date(env: Env, address: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::LockupDate(address))
+            .unwrap_or(0)
     }
 
     // ── Issuer Management ─────────────────────────────────────────────────────
@@ -209,12 +280,22 @@ impl RwaAssetContract {
         let bal = Self::balance(env.clone(), to.clone());
         let new_bal = Self::checked_add(&env, bal, amount);
 
+        // Reject if this mint would add a new holder and exceed the cap.
+        if bal == 0 {
+            Self::require_holder_cap_not_exceeded(&env);
+        }
+
         env.storage()
             .persistent()
             .set(&DataKey::Balance(to.clone()), &new_bal);
         env.storage()
             .persistent()
             .set(&DataKey::TotalSupply, &new_total);
+
+        // A new holder is anyone whose balance just crossed zero → positive.
+        if bal == 0 {
+            Self::increment_holder_count(&env);
+        }
 
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Balance(to.clone()));
@@ -235,14 +316,20 @@ impl RwaAssetContract {
         }
 
         let total = Self::total_supply(env.clone());
+        let new_bal = bal - amount;
 
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(from.clone()), &(bal - amount));
+            .set(&DataKey::Balance(from.clone()), &new_bal);
         env.storage().persistent().set(
             &DataKey::TotalSupply,
             &Self::checked_sub(&env, total, amount),
         );
+
+        // Holder count decrements when a balance hits zero.
+        if new_bal == 0 {
+            Self::decrement_holder_count(&env);
+        }
 
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Balance(from.clone()));
@@ -267,14 +354,20 @@ impl RwaAssetContract {
         }
 
         let total = Self::total_supply(env.clone());
+        let new_bal = bal - amount;
 
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(from.clone()), &(bal - amount));
+            .set(&DataKey::Balance(from.clone()), &new_bal);
         env.storage().persistent().set(
             &DataKey::TotalSupply,
             &Self::checked_sub(&env, total, amount),
         );
+
+        // Holder count decrements when a balance hits zero.
+        if new_bal == 0 {
+            Self::decrement_holder_count(&env);
+        }
 
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Balance(from.clone()));
@@ -298,6 +391,8 @@ impl RwaAssetContract {
         Self::require_positive(&env, amount);
         Self::require_compliant(&env, &from);
         Self::require_compliant(&env, &to);
+        Self::require_not_frozen(&env, &from);
+        Self::require_not_locked(&env, &from);
 
         let from_bal = Self::balance(env.clone(), from.clone());
         if from_bal < amount {
@@ -313,13 +408,27 @@ impl RwaAssetContract {
 
         let to_bal = Self::balance(env.clone(), to.clone());
         let to_new = Self::checked_add(&env, to_bal, amount);
+        let from_new = from_bal - amount;
+
+        // Reject if this transfer would add a new holder and exceed the cap.
+        if to_bal == 0 {
+            Self::require_holder_cap_not_exceeded(&env);
+        }
 
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(from.clone()), &(from_bal - amount));
+            .set(&DataKey::Balance(from.clone()), &from_new);
         env.storage()
             .persistent()
             .set(&DataKey::Balance(to.clone()), &to_new);
+
+        // Update holder count: `to` gains a position (0 → >0), `from` may lose one.
+        if to_bal == 0 {
+            Self::increment_holder_count(&env);
+        }
+        if from_new == 0 {
+            Self::decrement_holder_count(&env);
+        }
 
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Balance(from.clone()));
@@ -388,6 +497,8 @@ impl RwaAssetContract {
         Self::require_positive(&env, amount);
         Self::require_compliant(&env, &from);
         Self::require_compliant(&env, &to);
+        Self::require_not_frozen(&env, &from);
+        Self::require_not_locked(&env, &from);
 
         // The spender exercised their authorisation, so the allowance is
         // consumed even when the transfer turns out to be a no-op.
@@ -410,13 +521,27 @@ impl RwaAssetContract {
 
         let to_bal = Self::balance(env.clone(), to.clone());
         let to_new = Self::checked_add(&env, to_bal, amount);
+        let from_new = from_bal - amount;
+
+        // Reject if this transfer would add a new holder and exceed the cap.
+        if to_bal == 0 {
+            Self::require_holder_cap_not_exceeded(&env);
+        }
 
         env.storage()
             .persistent()
-            .set(&DataKey::Balance(from.clone()), &(from_bal - amount));
+            .set(&DataKey::Balance(from.clone()), &from_new);
         env.storage()
             .persistent()
             .set(&DataKey::Balance(to.clone()), &to_new);
+
+        // Update holder count: `to` gains a position, `from` may lose one.
+        if to_bal == 0 {
+            Self::increment_holder_count(&env);
+        }
+        if from_new == 0 {
+            Self::decrement_holder_count(&env);
+        }
 
         extend_instance(&env);
         extend_persistent(&env, &DataKey::Balance(from.clone()));
@@ -475,13 +600,27 @@ impl RwaAssetContract {
         if from != to {
             let to_bal = Self::balance(env.clone(), to.clone());
             let to_new = Self::checked_add(&env, to_bal, amount);
+            let from_new = from_bal - amount;
+
+            // Reject if this forced transfer would add a new holder and exceed the cap.
+            if to_bal == 0 {
+                Self::require_holder_cap_not_exceeded(&env);
+            }
 
             env.storage()
                 .persistent()
-                .set(&DataKey::Balance(from.clone()), &(from_bal - amount));
+                .set(&DataKey::Balance(from.clone()), &from_new);
             env.storage()
                 .persistent()
                 .set(&DataKey::Balance(to.clone()), &to_new);
+
+            // Update holder count: `to` gains a position, `from` may lose one.
+            if to_bal == 0 {
+                Self::increment_holder_count(&env);
+            }
+            if from_new == 0 {
+                Self::decrement_holder_count(&env);
+            }
 
             extend_persistent(&env, &DataKey::Balance(from.clone()));
             extend_persistent(&env, &DataKey::Balance(to.clone()));
@@ -519,6 +658,24 @@ impl RwaAssetContract {
             .persistent()
             .get(&DataKey::TotalSupply)
             .unwrap_or(0)
+    }
+
+    /// The number of addresses currently holding a strictly positive balance.
+    ///
+    /// Incremented when a balance transitions 0 → >0 (first receive), and
+    /// decremented when a balance hits exactly 0. Used for Reg D–style
+    /// holder-count limits; an optional ceiling is set via `set_holder_cap`.
+    pub fn holder_count(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::HolderCount)
+            .unwrap_or(0)
+    }
+
+    /// The maximum number of distinct holders the admin has configured, or
+    /// `None` if the contract is uncapped.
+    pub fn holder_count_cap(env: Env) -> Option<u32> {
+        env.storage().instance().get(&HOLDER_CAP_KEY)
     }
 
     pub fn metadata(env: Env) -> AssetMetadata {
@@ -570,6 +727,30 @@ impl RwaAssetContract {
         env.storage().instance().set(&PAUSED_KEY, &paused);
         extend_instance(&env);
         events::Paused { paused }.publish(&env);
+    }
+
+    // ── Holder Cap (#146) ─────────────────────────────────────────────────────
+
+    /// Set or remove a ceiling on the number of distinct token holders.
+    ///
+    /// Pass `Some(n)` to cap the number of addresses that may hold a positive
+    /// balance at `n`. Any `mint`, `transfer`, `transfer_from` or
+    /// `forced_transfer` that would create a *new* holder when the count
+    /// already equals the cap is rejected with `ExceedsHolderCap`.
+    ///
+    /// Pass `None` to lift the cap entirely. The cap may be tightened below the
+    /// current holder count — doing so freezes new entries rather than evicting
+    /// existing ones.
+    ///
+    /// Only the admin may call this.
+    pub fn set_holder_cap(env: Env, cap: Option<u32>) {
+        Self::require_admin(&env);
+        match cap {
+            Some(c) => env.storage().instance().set(&HOLDER_CAP_KEY, &c),
+            None => env.storage().instance().remove(&HOLDER_CAP_KEY),
+        }
+        extend_instance(&env);
+        events::HolderCapSet { cap }.publish(&env);
     }
 
     pub fn update_metadata(env: Env, metadata: AssetMetadata) {
@@ -892,6 +1073,21 @@ impl RwaAssetContract {
         }
     }
 
+    /// Rejects transfers from frozen addresses.
+    fn require_not_frozen(env: &Env, from: &Address) {
+        if Self::is_frozen(env.clone(), from.clone()) {
+            panic_with_error!(env, RwaError::AddressFrozen);
+        }
+    }
+
+    /// Rejects transfers from addresses whose tokens are still locked.
+    fn require_not_locked(env: &Env, from: &Address) {
+        let lockup_until = Self::lockup_date(env.clone(), from.clone());
+        if lockup_until > 0 && lockup_until > env.ledger().sequence() {
+            panic_with_error!(env, RwaError::AddressLocked);
+        }
+    }
+
     fn require_positive(env: &Env, amount: i128) {
         if amount <= 0 {
             panic_with_error!(env, RwaError::InvalidAmount);
@@ -992,6 +1188,62 @@ impl RwaAssetContract {
         match a.checked_sub(b) {
             Some(v) => v,
             None => panic_with_error!(env, RwaError::Overflow),
+        }
+    }
+
+    // ── Holder count helpers (#146) ───────────────────────────────────────────
+
+    /// Increments the persistent holder count by one. Called when a balance
+    /// transitions 0 → >0. The counter is stored as `u32` because Reg D's own
+    /// ceiling (2,000 US accredited investors, 500 non-accredited) fits in one
+    /// byte; `u32::MAX` is an unreachable upper bound, not a useful cap.
+    fn increment_holder_count(env: &Env) {
+        let current: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::HolderCount)
+            .unwrap_or(0);
+        let next = match current.checked_add(1) {
+            Some(v) => v,
+            None => panic_with_error!(env, RwaError::Overflow),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::HolderCount, &next);
+        extend_persistent(env, &DataKey::HolderCount);
+    }
+
+    /// Decrements the persistent holder count by one. Called when a balance
+    /// transitions >0 → 0. Saturates at zero rather than underflowing: the
+    /// counter is a derived value, and a corrupt zero is already a problem;
+    /// there is nothing useful a contract can do from a negative count.
+    fn decrement_holder_count(env: &Env) {
+        let current: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::HolderCount)
+            .unwrap_or(0);
+        let next = current.saturating_sub(1);
+        env.storage()
+            .persistent()
+            .set(&DataKey::HolderCount, &next);
+        extend_persistent(env, &DataKey::HolderCount);
+    }
+
+    /// Fails with `ExceedsHolderCap` when a holder cap is configured and the
+    /// current count has reached it. Called before any balance write that
+    /// would add a new holder (i.e. the recipient's balance is zero).
+    fn require_holder_cap_not_exceeded(env: &Env) {
+        let Some(cap) = env.storage().instance().get::<_, u32>(&HOLDER_CAP_KEY) else {
+            return; // no cap configured
+        };
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::HolderCount)
+            .unwrap_or(0);
+        if count >= cap {
+            panic_with_error!(env, RwaError::ExceedsHolderCap);
         }
     }
 }

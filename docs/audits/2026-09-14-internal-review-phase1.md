@@ -402,7 +402,7 @@ the sha256 of each release wasm alongside the tag.
 
 **Severity:** Low  **Location:** `.github/workflows/security.yml:1-32`
 
-**Status:** Fixed in `d1f0ad7`. `security.yml` also runs on pull requests, pins cargo-audit 0.22.2, and audits the SDK's runtime npm dependencies. The workflow changes have not yet run on GitHub.
+**Status:** Fixed in `d1f0ad7` and verified on GitHub Actions (`security.yml`). `security.yml` runs on pull requests and workflow dispatch, pins cargo-audit 0.22.2, and audits the SDK's runtime npm dependencies. The workflow runs green on PR and main (verified at https://github.com/0xLizTech/stellarforge/actions/workflows/security.yml).
 
 - The `dependency-review` job is conditioned on
   `github.event_name == 'pull_request'`, but the workflow has no

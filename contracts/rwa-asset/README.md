@@ -33,6 +33,9 @@ patterns) and [ADR-007](../../docs/architecture/007-governance-controlled-supply
 | `cancel_cap_increase()` | admin | Withdraw a pending cap increase before it is approved |
 | `set_forced_transfer_role(account, approved)` | admin | Grant/revoke the forced-transfer role (#144) |
 | `forced_transfer(operator, from, to, amount, reason_hash)` | forced-transfer role | Move tokens without `from`'s authorization, for court-ordered recovery; not blocked by `set_paused` |
+| `set_holder_cap(cap)` | admin | Set an optional ceiling on the number of distinct holders (Reg D–style); `None` removes the cap (#146) |
+| `holder_count()` | — | Number of addresses currently holding a strictly positive balance (#146) |
+| `holder_count_cap()` | — | The configured holder ceiling, or `None` if uncapped (#146) |
 | `balance(owner)`, `allowance(owner, spender)`, `total_supply()`, `metadata()`, `metadata_version()`, `decimals()`, `name()`, `symbol()`, `admin()`, `pending_admin()`, `is_issuer(address)`, `paused()`, `compliance_contract()`, `min_compliance_level()`, `governance()`, `pending_cap_increase()`, `is_forced_transfer_role(address)` | — | Read-only queries |
 
 ## Errors (`RwaError`)
@@ -61,6 +64,9 @@ patterns) and [ADR-007](../../docs/architecture/007-governance-controlled-supply
 | 20 | `NotForcedTransferRole` | `forced_transfer`, when the caller does not hold the forced-transfer role |
 | 21 | `InvalidReasonHash` | `forced_transfer`, on an empty `reason_hash` |
 | 22 | `InvalidForcedTransferParty` | Reserved; not currently raised (`forced_transfer` treats a same-address call as a no-op, like `transfer`) |
+| 23 | `AddressFrozen` | `transfer`, `transfer_from`, when the sender's address is frozen |
+| 24 | `AddressLocked` | `transfer`, `transfer_from`, when the sender's lock-up period has not yet passed |
+| 25 | `ExceedsHolderCap` | `mint`, `transfer`, `transfer_from`, `forced_transfer`, when a holder cap is configured and adding a new holder would exceed it |
 
 Discriminants are frozen once a contract using them is deployed (ADR-003):
 existing values never change meaning, and new ones are only ever appended.
@@ -81,6 +87,9 @@ existing values never change meaning, and new ones are only ever appended.
 | `CapIncreaseProposed` | `propose_cap_increase` (#148) |
 | `CapIncreaseCancelled` | `cancel_cap_increase` (#148) |
 | `ForcedTransfer` | `forced_transfer`; carries `reason_hash` so a court-ordered move is auditable against the order that justified it (#144) |
+| `FrozenSet` | `set_frozen` |
+| `LockupDateSet` | `set_lockup_date` |
+| `HolderCapSet` | `set_holder_cap`; `cap` is `None` when the cap was removed (#146) |
 
 ## Legal document hash
 

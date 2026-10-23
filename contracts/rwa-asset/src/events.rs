@@ -186,3 +186,40 @@ pub struct ForcedTransfer {
     pub amount: i128,
     pub reason_hash: Bytes,
 }
+
+// ─── Frozen Address & Lock-up Date ────────────────────────────────────────────
+
+/// Published by `set_frozen`. Monitors can track which addresses have been
+/// frozen to comply with sanctions or other regulatory requirements.
+#[contractevent(topics = ["set_frozen"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrozenSet {
+    #[topic]
+    pub address: Address,
+    pub frozen: bool,
+}
+
+/// Published by `set_lockup_date`. Monitors can track lock-up periods for
+/// holders, which are often required for regulatory or vesting purposes.
+#[contractevent(topics = ["set_lockup_date"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LockupDateSet {
+    #[topic]
+    pub address: Address,
+    pub lockup_until_ledger: u32,
+}
+
+// ─── Holder count (#146) ──────────────────────────────────────────────────────
+
+/// Published by `set_holder_cap`. `cap` is `None` when the holder cap was
+/// removed, which — like `ComplianceSet`'s `None` — is worth a monitor's
+/// attention: it is a privileged capability turning on or off.
+///
+/// Reg D and similar rules bound the number of distinct holders rather than
+/// the total supply. When a cap is set, every `mint` and `transfer` that would
+/// add a new holder fails with `ExceedsHolderCap`.
+#[contractevent(topics = ["set_holder_cap"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HolderCapSet {
+    pub cap: Option<u32>,
+}
