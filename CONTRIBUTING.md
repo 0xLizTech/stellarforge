@@ -98,6 +98,8 @@ make test
 # Set up SDK
 make sdk-install
 make sdk-test
+make sdk-lint
+make sdk-typecheck
 ```
 
 ### Running a single contract's tests
@@ -200,8 +202,12 @@ Branch naming conventions:
 make fmt
 make lint
 
-# TypeScript — checks src/ and tests/
-cd sdk && npm run typecheck
+# TypeScript SDK
+make sdk-lint
+make sdk-typecheck
+
+# Or run all formatting, linting, tests, and builds
+make all
 ```
 
 CI will reject PRs that fail formatting or linting.
