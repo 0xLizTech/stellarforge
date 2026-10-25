@@ -698,6 +698,8 @@ impl VaultContract {
     /// Internal balance writer: the single central point where share balances change.
     ///
     /// Every balance mutation (transfers, mints, burns) routes through this function.
+    /// Future issues (#60 checkpoints) hook this exact entry point to record
+    /// ledger-bounded historical balances.
     /// Records historical checkpoints by ledger with same-ledger coalescing (FR-07-2, #60).
     pub(crate) fn write_balance(env: &Env, holder: &Address, new_balance: i128) {
         let key = DataKey::Balance(holder.clone());
@@ -800,6 +802,11 @@ impl VaultContract {
         let new_bal = Self::checked_add(env, bal, amount);
 
         Self::write_balance(env, to, new_bal);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalSupply, &new_total);
+        extend_persistent(env, &DataKey::TotalSupply);
         Self::write_total_supply(env, new_total);
         extend_instance(env);
     }
@@ -816,6 +823,11 @@ impl VaultContract {
         let new_bal = bal - amount;
 
         Self::write_balance(env, from, new_bal);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalSupply, &new_total);
+        extend_persistent(env, &DataKey::TotalSupply);
         Self::write_total_supply(env, new_total);
         extend_instance(env);
     }

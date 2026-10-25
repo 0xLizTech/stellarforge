@@ -210,6 +210,7 @@ changes who authenticates. Two new entry points extend the map:
 | | `set_paused` | `admin` | Emergency control |
 | | `set_oracles` | `admin` | Multi-source oracle configuration |
 | | `transfer_admin` | `admin` and `new_admin` | Dual-authorization handover (NFR-S-4) |
+| | `balance`, `total_supply`, `allowance`, `decimals`, `name`, `symbol`, `locked_until`, `admin`, `config`, `underlying_held`, `paused`, `redeemable`, `oracles`, `nav`, `nav_per_share` | nobody | Pure state reads |
 | | `balance`, `total_supply`, `balance_at`, `total_supply_at`, `allowance`, `decimals`, `name`, `symbol`, `locked_until`, `admin`, `config`, `underlying_held`, `paused`, `redeemable`, `oracles`, `nav`, `nav_per_share` | nobody | Pure state reads |
 
 That makes `burn_from` a fourth deliberate exception, alongside
