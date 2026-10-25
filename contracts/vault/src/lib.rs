@@ -48,6 +48,13 @@ const ORACLES_KEY: Symbol = symbol_short!("ORACLES");
 pub const MAX_LOCKUP_SECS: u64 = 10 * 365 * 24 * 60 * 60;
 
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Checkpoint {
+    pub ledger: u32,
+    pub balance: i128,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Balance(Address),
@@ -55,6 +62,10 @@ pub enum DataKey {
     UnderlyingHeld,
     Allowance(Address, Address),
     LockedUntil(Address),
+    Checkpoint(Address, u32),
+    CheckpointCount(Address),
+    SupplyCheckpoint(u32),
+    SupplyCheckpointCount,
 }
 
 /// A spender's allowance and the last ledger it may be spent in (SEP-41).
@@ -143,6 +154,123 @@ impl VaultContract {
         env.storage()
             .persistent()
             .get(&DataKey::TotalSupply)
+            .unwrap_or(0)
+    }
+
+    /// Returns the share balance of `owner` at the end of closed ledger `ledger` (FR-07-2, #60).
+    ///
+    /// Refuses with `LedgerNotClosed` if `ledger >= env.ledger().sequence()`.
+    /// Returns 0 before the first checkpoint and for an address that never held shares.
+    pub fn balance_at(env: Env, owner: Address, ledger: u32) -> i128 {
+        let current_seq = env.ledger().sequence();
+        if ledger >= current_seq {
+            panic_with_error!(&env, VaultError::LedgerNotClosed);
+        }
+
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CheckpointCount(owner.clone()))
+            .unwrap_or(0);
+        if count == 0 {
+            return 0;
+        }
+
+        let mut low: u32 = 0;
+        let mut high: u32 = count;
+        let mut found_idx: Option<u32> = None;
+
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let cp: Checkpoint = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Checkpoint(owner.clone(), mid))
+                .unwrap();
+            if cp.ledger <= ledger {
+                found_idx = Some(mid);
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+
+        match found_idx {
+            Some(idx) => {
+                let cp: Checkpoint = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::Checkpoint(owner, idx))
+                    .unwrap();
+                cp.balance
+            }
+            None => 0,
+        }
+    }
+
+    /// Returns the total supply at the end of closed ledger `ledger` (FR-07-2, #60).
+    ///
+    /// Refuses with `LedgerNotClosed` if `ledger >= env.ledger().sequence()`.
+    pub fn total_supply_at(env: Env, ledger: u32) -> i128 {
+        let current_seq = env.ledger().sequence();
+        if ledger >= current_seq {
+            panic_with_error!(&env, VaultError::LedgerNotClosed);
+        }
+
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SupplyCheckpointCount)
+            .unwrap_or(0);
+        if count == 0 {
+            return 0;
+        }
+
+        let mut low: u32 = 0;
+        let mut high: u32 = count;
+        let mut found_idx: Option<u32> = None;
+
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let cp: Checkpoint = env
+                .storage()
+                .persistent()
+                .get(&DataKey::SupplyCheckpoint(mid))
+                .unwrap();
+            if cp.ledger <= ledger {
+                found_idx = Some(mid);
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+
+        match found_idx {
+            Some(idx) => {
+                let cp: Checkpoint = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::SupplyCheckpoint(idx))
+                    .unwrap();
+                cp.balance
+            }
+            None => 0,
+        }
+    }
+
+    /// Returns the number of balance checkpoints recorded for `holder`.
+    pub fn checkpoint_count(env: Env, holder: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::CheckpointCount(holder))
+            .unwrap_or(0)
+    }
+
+    /// Returns the number of total supply checkpoints recorded.
+    pub fn supply_checkpoint_count(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SupplyCheckpointCount)
             .unwrap_or(0)
     }
 
@@ -572,10 +700,91 @@ impl VaultContract {
     /// Every balance mutation (transfers, mints, burns) routes through this function.
     /// Future issues (#60 checkpoints) hook this exact entry point to record
     /// ledger-bounded historical balances.
+    /// Records historical checkpoints by ledger with same-ledger coalescing (FR-07-2, #60).
     pub(crate) fn write_balance(env: &Env, holder: &Address, new_balance: i128) {
         let key = DataKey::Balance(holder.clone());
         env.storage().persistent().set(&key, &new_balance);
         extend_persistent(env, &key);
+
+        let current_ledger = env.ledger().sequence();
+        let count_key = DataKey::CheckpointCount(holder.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+        if count > 0 {
+            let last_idx = count - 1;
+            let last_cp_key = DataKey::Checkpoint(holder.clone(), last_idx);
+            let mut last_cp: Checkpoint = env.storage().persistent().get(&last_cp_key).unwrap();
+            if last_cp.ledger == current_ledger {
+                // Same-ledger coalescing: several changes in one ledger update the ledger's last checkpoint
+                last_cp.balance = new_balance;
+                env.storage().persistent().set(&last_cp_key, &last_cp);
+                extend_persistent(env, &last_cp_key);
+            } else {
+                let new_cp_key = DataKey::Checkpoint(holder.clone(), count);
+                let cp = Checkpoint {
+                    ledger: current_ledger,
+                    balance: new_balance,
+                };
+                env.storage().persistent().set(&new_cp_key, &cp);
+                extend_persistent(env, &new_cp_key);
+                env.storage().persistent().set(&count_key, &(count + 1));
+                extend_persistent(env, &count_key);
+            }
+        } else {
+            let new_cp_key = DataKey::Checkpoint(holder.clone(), 0);
+            let cp = Checkpoint {
+                ledger: current_ledger,
+                balance: new_balance,
+            };
+            env.storage().persistent().set(&new_cp_key, &cp);
+            extend_persistent(env, &new_cp_key);
+            env.storage().persistent().set(&count_key, &1u32);
+            extend_persistent(env, &count_key);
+        }
+    }
+
+    /// Internal total supply writer recording checkpoints with same-ledger coalescing (FR-07-2, #60).
+    pub(crate) fn write_total_supply(env: &Env, new_supply: i128) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalSupply, &new_supply);
+        extend_persistent(env, &DataKey::TotalSupply);
+
+        let current_ledger = env.ledger().sequence();
+        let count_key = DataKey::SupplyCheckpointCount;
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+        if count > 0 {
+            let last_idx = count - 1;
+            let last_cp_key = DataKey::SupplyCheckpoint(last_idx);
+            let mut last_cp: Checkpoint = env.storage().persistent().get(&last_cp_key).unwrap();
+            if last_cp.ledger == current_ledger {
+                // Same-ledger coalescing
+                last_cp.balance = new_supply;
+                env.storage().persistent().set(&last_cp_key, &last_cp);
+                extend_persistent(env, &last_cp_key);
+            } else {
+                let new_cp_key = DataKey::SupplyCheckpoint(count);
+                let cp = Checkpoint {
+                    ledger: current_ledger,
+                    balance: new_supply,
+                };
+                env.storage().persistent().set(&new_cp_key, &cp);
+                extend_persistent(env, &new_cp_key);
+                env.storage().persistent().set(&count_key, &(count + 1));
+                extend_persistent(env, &count_key);
+            }
+        } else {
+            let new_cp_key = DataKey::SupplyCheckpoint(0);
+            let cp = Checkpoint {
+                ledger: current_ledger,
+                balance: new_supply,
+            };
+            env.storage().persistent().set(&new_cp_key, &cp);
+            extend_persistent(env, &new_cp_key);
+            env.storage().persistent().set(&count_key, &1u32);
+            extend_persistent(env, &count_key);
+        }
     }
 
     /// Internal share mint helper for deposit operations (#58).
@@ -598,6 +807,7 @@ impl VaultContract {
             .persistent()
             .set(&DataKey::TotalSupply, &new_total);
         extend_persistent(env, &DataKey::TotalSupply);
+        Self::write_total_supply(env, new_total);
         extend_instance(env);
     }
 
@@ -618,6 +828,7 @@ impl VaultContract {
             .persistent()
             .set(&DataKey::TotalSupply, &new_total);
         extend_persistent(env, &DataKey::TotalSupply);
+        Self::write_total_supply(env, new_total);
         extend_instance(env);
     }
 

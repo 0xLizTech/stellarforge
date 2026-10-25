@@ -60,4 +60,6 @@ pub enum VaultError {
     IdenticalOracleSources = 24,
     /// Oracle configuration has not been set.
     OracleNotConfigured = 25,
+    /// Queried ledger sequence has not yet closed (ledger >= current ledger sequence).
+    LedgerNotClosed = 26,
 }

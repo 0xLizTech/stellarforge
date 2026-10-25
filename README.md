@@ -63,7 +63,7 @@ StellarForge is an open-source, permissionless protocol for **Real World Asset (
 ```
 stellarforge/
 ├── contracts/
-│   ├── common/             # Shared storage/TTL policy (library, not deployed)
+│   ├── common/             # Shared storage/TTL policy (library, not deployed; see contracts/common/README.md)
 │   ├── rwa-asset/          # Core tokenization contract (Soroban/Rust)
 │   ├── registry/           # Global asset registry
 │   ├── compliance/         # KYC/AML compliance engine
@@ -135,11 +135,26 @@ make sdk-test
 stellar keys generate mykey --network testnet
 stellar keys fund mykey --network testnet
 
-# Deploy
-STELLAR_ACCOUNT=mykey make deploy-testnet
+# Deploy deterministically with bytecode verification
+STELLAR_ACCOUNT=mykey DEPLOY_NAMESPACE=my-deployment make deploy-testnet
+
+# Verify on-chain bytecode provenance
+./scripts/verify-deployment.sh deployed-contracts.json target/wasm32v1-none/release/SHA256SUMS
 ```
 
-### 6. Use the SDK
+For operational procedures, parameter sizing, and troubleshooting, see the [Vault Operations Guide](docs/guides/vault-operations.md).
+
+### 6. NAV Appraisal Reporter CLI
+
+Appraisers and operators publish audited NAV reports via `tools/nav-reporter`:
+
+```bash
+cd tools/nav-reporter
+npm ci && npm run build
+stellarforge-nav-reporter --appraisal path/to/appraisal.json --oracle <ORACLE_ID> --dry-run
+```
+
+### 7. Use the SDK
 
 ```typescript
 import { RwaAssetClient, toStroops, TESTNET_CONFIG } from "@stellarforge-protocol/sdk";
@@ -191,6 +206,8 @@ authorization entries to sign; the SDK README shows the flow.
 
 ### RwaAsset
 
+Full reference, including errors and events: [contracts/rwa-asset/README.md](contracts/rwa-asset/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
 | `__constructor(admin, metadata)` | admin | Runs at deploy; not callable afterwards |
@@ -202,15 +219,20 @@ authorization entries to sign; the SDK README shows the flow.
 | `transfer_from(spender, from, to, amount)` | spender | Spend allowance |
 | `set_issuer(issuer, approved)` | admin | Grant/revoke issuer role |
 | `set_paused(paused)` | admin | Emergency circuit breaker |
-| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can only be tightened: never raised, removed or set below supply |
+| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can only be tightened here, never raised, removed or set below supply — raising one needs `propose_cap_increase`/`approve_cap_increase` |
 | `propose_admin(new_admin)` | admin | Propose the next admin |
 | `accept_admin()` | new_admin | Complete a proposed handover |
 | `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `set_compliance(compliance, min_level)` | admin | Point at a compliance contract, or `None` to disable screening |
+| `set_governance(governance)` | admin | Name the address that may approve loosening a supply cap, or `None` to disable loosening |
+| `propose_cap_increase(new_max_supply)` | admin | Propose raising (or removing) the supply cap |
+| `approve_cap_increase()` | governance | Finalize a pending cap increase; applies it through the same path `update_metadata` uses |
+| `cancel_cap_increase()` | admin | Withdraw a pending cap increase before it is approved |
 | `balance(owner)` | — | Query balance |
 | `allowance(owner, spender)` | — | Query allowance |
 | `total_supply()` | — | Query supply |
 | `metadata()` | — | Query metadata |
+| `metadata_version()` | — | Query how many times metadata has been written; 1 at construction, incremented on every change |
 | `decimals()`, `name()`, `symbol()` | — | SEP-41 metadata getters |
 | `admin()` | — | Query admin address |
 | `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
@@ -218,6 +240,8 @@ authorization entries to sign; the SDK README shows the flow.
 | `paused()` | — | Query pause state |
 | `compliance_contract()` | — | Query the configured compliance contract |
 | `min_compliance_level()` | — | Query the required verification level |
+| `governance()` | — | Query the address that may approve loosening a supply cap, if any |
+| `pending_cap_increase()` | — | Query the proposed-but-not-yet-approved supply cap, if any |
 
 **Transfer screening.** When `set_compliance` names a contract, `mint`,
 `transfer` and `transfer_from` require every counterparty to hold a valid
@@ -227,6 +251,8 @@ has lapsed can still exit their position. Screening is skipped entirely while
 no compliance contract is configured.
 
 ### Compliance
+
+Full reference, including errors and events: [contracts/compliance/README.md](contracts/compliance/README.md).
 
 | Function | Auth | Description |
 |---|---|---|
@@ -249,6 +275,8 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 
 ### Registry
 
+Full reference, including errors and events: [contracts/registry/README.md](contracts/registry/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
 | `register(entry)` | admin | Register a new asset contract, or update a registered one |
@@ -268,6 +296,8 @@ metadata, and nothing in the protocol reads `active`. Treat the registry as
 the admin's directory, not as proof that an asset is genuine or current.
 
 ### Governance
+
+Full reference, including errors and events: [contracts/governance/README.md](contracts/governance/README.md).
 
 | Function | Auth | Description |
 |---|---|---|
@@ -301,6 +331,8 @@ The read functions are SEP-40's, so anything that reads a SEP-40 oracle reads
 this one. Prices are scaled by `10^decimals()` and timestamped in Unix seconds,
 rounded down to `resolution()`. See [ADR-005](docs/architecture/005-oracle-adapter.md).
 
+Full reference, including errors and events: [contracts/oracle-adapter/README.md](contracts/oracle-adapter/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
 | `report(reporter, asset, price, timestamp)` | reporter | Record a price; the reporter must be authorized for the asset, the tick must be later than the latest, and the move must be within the asset's limit |
@@ -330,6 +362,16 @@ can be followed without re-reading contract state.
 **Error codes.** Every contract returns a typed `contracterror` enum, so
 clients match on a stable numeric code. Discriminants are part of the public
 interface: variants keep their values and new ones are appended.
+
+---
+
+## Documentation
+
+- [Glossary](docs/GLOSSARY.md) — Definitions of over 50 Real World Asset (RWA), Soroban smart contract, and Stellar terms.
+- [Integrator FAQ](docs/FAQ.md) — Frequently asked questions covering keys, fees, TTL, compliance, and contract upgrades.
+- [Architecture & ADRs](docs/architecture/) — Architectural decision records and protocol designs.
+- [Audit Handover](docs/audits/external-audit-handover-phase1.md) — Phase 1 external audit scope, invariants, and reproduction steps.
+- [Release Guide](docs/RELEASING.md) — SDK trusted publishing, provenance, and byte-for-byte WASM verification.
 
 ---
 

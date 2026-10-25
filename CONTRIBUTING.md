@@ -51,6 +51,15 @@ Serious or repeated violations may result in removal from the project. Report is
 
 **Experienced contributor?** Jump straight into the [Roadmap](ROADMAP.md) and pick up a Phase 2 or 3 task that excites you, then open a discussion before building.
 
+### Issue Label Taxonomy
+
+We organize issues using structured label prefixes defined in `.github/labels.yml`:
+
+- **Type (`type/*`)**: `type/bug`, `type/feature`, `type/docs`, `type/refactor`, `type/security`
+- **Area (`area/*`)**: `area/contracts` (Soroban crates), `area/sdk` (TypeScript SDK), `area/docs` (architecture & guides), `area/ci` (workflows & release automation)
+- **Phase (`phase/*`)**: `phase/1-foundation`, `phase/2-fractionalization`, `phase/3-defi`
+- **Difficulty (`difficulty/*`)**: `difficulty/starter`, `difficulty/medium`, `difficulty/advanced`
+
 ---
 
 ## Development Setup
@@ -89,6 +98,8 @@ make test
 # Set up SDK
 make sdk-install
 make sdk-test
+make sdk-lint
+make sdk-typecheck
 ```
 
 ### Running a single contract's tests
@@ -191,8 +202,12 @@ Branch naming conventions:
 make fmt
 make lint
 
-# TypeScript — checks src/ and tests/
-cd sdk && npm run typecheck
+# TypeScript SDK
+make sdk-lint
+make sdk-typecheck
+
+# Or run all formatting, linting, tests, and builds
+make all
 ```
 
 CI will reject PRs that fail formatting or linting.
@@ -238,12 +253,18 @@ Keep the subject line under 72 characters. Use the body for _why_, not _what_.
 1. **Open a draft PR early** if you want design feedback before finishing.
 2. **Fill in the PR template** — describe what changed, why, and how to test it.
 3. **Ensure CI is green** — all checks must pass before review.
-4. **Request a review** from a maintainer (listed in [CODEOWNERS](.github/CODEOWNERS) once it exists).
+4. **Request a review** from the appropriate area maintainer as defined in [CODEOWNERS](.github/CODEOWNERS) (reviews are routed specifically for `contracts/`, `sdk/`, `docs/`, and `.github/workflows/`).
 5. **Address review comments** — update the branch; do not open a new PR.
 6. **Squash or rebase** messy commit history before final merge if asked.
-7. A maintainer will merge once at least **one approval** is received and all checks pass.
+7. A maintainer will merge once at least **one approval** is received and all checks pass. PRs modifying workflows require a security reviewer approval.
 
 ### PR size guidelines
+
+PRs are automatically labeled by total lines changed:
+- `size/S`: 0–100 lines changed (ideal for fast review)
+- `size/M`: 101–500 lines changed
+- `size/L`: 501–1,000 lines changed
+- `size/XL`: >1,000 lines changed (automated warning; strongly consider splitting into smaller pull requests)
 
 - **Small PRs merge faster.** Keep each PR focused on a single concern.
 - If a feature naturally requires multiple contracts or layers, split it across linked PRs.
@@ -317,6 +338,45 @@ npm run test:smoke:write
 **What one run changes:** it mints 1,000 base units, transfers 510 of them to the recipient (40 in a transfer the spender pays for), burns 80, and leaves the spender an allowance of 150 over the issuer's balance. Total supply rises by 920 per run. The issuer and the spender each pay testnet fees for the transactions they source. With `SMOKE_WRITE_SETUP` set, it also records KYC for the issuer and the recipient, switches compliance on at level 1, pauses and unpauses the asset, and replaces its legal document hash. With `SMOKE_WRITE_TRANSFER_ADMIN` set, the spender also ends up as the asset's admin. Nothing is cleaned up afterwards.
 
 The **Testnet Smoke** workflow runs it on every dispatch, against a fresh deployment it configures through `SMOKE_WRITE_SETUP`.
+
+#### Step-by-Step Guide for New Contributors
+
+To run the smoke tests locally against testnet for the first time:
+
+1. **Generate and Fund Testnet Accounts with Friendbot**:
+   ```bash
+   # Generate keypairs for deployer/issuer and spender
+   stellar keys generate testnet-issuer --network testnet
+   stellar keys fund testnet-issuer --network testnet
+
+   stellar keys generate testnet-spender --network testnet
+   stellar keys fund testnet-spender --network testnet
+
+   # Generate a recipient address (needs no XLM funding)
+   stellar keys generate testnet-recipient --network testnet
+   ```
+
+2. **Friendbot Rate Limits**:
+   > **Note on Friendbot Rate Limits**: Stellar Friendbot enforces rate limits per IP address and account.
+   > - If you receive an HTTP 429 (Too Many Requests), wait 60 seconds before retrying.
+   > - Reuse existing funded testnet keypairs (`stellar keys list`) rather than generating new keys for each test run.
+   > - You can check your account balance anytime with: `stellar keys fund <account-name> --network testnet`.
+
+3. **Deploy Contracts and Run Smoke Tests**:
+   ```bash
+   # Extract secrets
+   export SMOKE_WRITE_ISSUER_SECRET=$(stellar keys secret testnet-issuer)
+   export SMOKE_WRITE_SPENDER_SECRET=$(stellar keys secret testnet-spender)
+   export SMOKE_WRITE_RECIPIENT_ADDRESS=$(stellar keys address testnet-recipient)
+
+   # Deploy contracts or use deployed-contracts.json
+   make deploy-testnet
+
+   # Run test suites
+   cd sdk
+   npm run test:smoke
+   npm run test:smoke:write
+   ```
 
 ### Coverage targets (aspirational, not enforced in CI yet)
 
