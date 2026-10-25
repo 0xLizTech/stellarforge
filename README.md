@@ -135,11 +135,26 @@ make sdk-test
 stellar keys generate mykey --network testnet
 stellar keys fund mykey --network testnet
 
-# Deploy
-STELLAR_ACCOUNT=mykey make deploy-testnet
+# Deploy deterministically with bytecode verification
+STELLAR_ACCOUNT=mykey DEPLOY_NAMESPACE=my-deployment make deploy-testnet
+
+# Verify on-chain bytecode provenance
+./scripts/verify-deployment.sh deployed-contracts.json target/wasm32v1-none/release/SHA256SUMS
 ```
 
-### 6. Use the SDK
+For operational procedures, parameter sizing, and troubleshooting, see the [Vault Operations Guide](docs/guides/vault-operations.md).
+
+### 6. NAV Appraisal Reporter CLI
+
+Appraisers and operators publish audited NAV reports via `tools/nav-reporter`:
+
+```bash
+cd tools/nav-reporter
+npm ci && npm run build
+stellarforge-nav-reporter --appraisal path/to/appraisal.json --oracle <ORACLE_ID> --dry-run
+```
+
+### 7. Use the SDK
 
 ```typescript
 import { RwaAssetClient, toStroops, TESTNET_CONFIG } from "@stellarforge-protocol/sdk";
