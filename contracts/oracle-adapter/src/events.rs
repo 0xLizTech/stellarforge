@@ -61,12 +61,37 @@ pub struct PriceOverridden {
     pub previous_price: Option<i128>,
 }
 
-/// Published by `transfer_admin`. The incoming admin is data rather than a
+/// Published by `propose_admin`. Distinct from `AdminTransferred`: the role
+/// has not moved yet, only a handover has been proposed.
+#[contractevent(topics = ["propose_admin"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferProposed {
+    #[topic]
+    pub current: Address,
+    pub proposed_admin: Address,
+}
+
+/// Published by `accept_admin`. The incoming admin is data rather than a
 /// topic, matching the Phase 1 contracts.
-#[contractevent(topics = ["transfer_admin"], data_format = "single-value")]
+#[contractevent(topics = ["accept_admin"], data_format = "single-value")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminTransferred {
     #[topic]
     pub previous: Address,
     pub new_admin: Address,
+}
+
+/// Published by `set_paused`, matching the Phase 1 contracts' `Paused` event.
+#[contractevent(topics = ["paused"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Paused {
+    pub paused: bool,
+}
+
+/// Published by `cancel_admin_transfer`.
+#[contractevent(topics = ["cancel_admin_transfer"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferCancelled {
+    #[topic]
+    pub cancelled_proposed_admin: Address,
 }

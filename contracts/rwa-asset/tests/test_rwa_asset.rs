@@ -3,12 +3,15 @@
 use soroban_sdk::{
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Ledger, MockAuth, MockAuthInvoke,
+        Address as _, Events as _, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, Bytes, Env, IntoVal, String,
+    Address, Bytes, Env, Event, IntoVal, String,
 };
 
-use rwa_asset::{AssetMetadata, DataKey, RwaAssetContract, RwaAssetContractClient, RwaError};
+use rwa_asset::{
+    AssetMetadata, DataKey, FrozenSet, ForcedTransfer, LockupDateSet, RwaAssetContract,
+    RwaAssetContractClient, RwaError,
+};
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 
 /// One whole token in base units. The asset uses 7 decimals, matching the
@@ -32,7 +35,7 @@ fn default_metadata(env: &Env) -> AssetMetadata {
         symbol: String::from_str(env, "REIT-NYC-001"),
         decimals: 7,
         asset_class: String::from_str(env, "real_estate"),
-        legal_doc_hash: Bytes::from_array(env, &[0u8; 32]),
+        legal_doc_hash: Bytes::from_array(env, &[1u8; 32]),
         max_supply: MAX_SUPPLY,
     }
 }
@@ -403,6 +406,45 @@ fn test_update_metadata_rejects_bad_input() {
     }
 }
 
+/// #150. An all-zero hash would anchor the asset to no verifiable legal
+/// document at all, so `update_metadata` must refuse it with its own typed
+/// error, distinct from the general `InvalidMetadata`.
+#[test]
+fn test_update_metadata_rejects_all_zero_legal_doc_hash() {
+    let (env, _, client) = setup();
+
+    let mut zero_hash = default_metadata(&env);
+    zero_hash.legal_doc_hash = Bytes::from_array(&env, &[0u8; 32]);
+
+    assert_eq!(
+        client.try_update_metadata(&zero_hash),
+        Err(Ok(RwaError::InvalidLegalDocHash.into()))
+    );
+}
+
+/// #150. Only a 32-byte SHA-256 digest is accepted; anything shorter or
+/// longer (e.g. a raw IPFS CID) must be refused rather than silently stored.
+#[test]
+fn test_update_metadata_rejects_wrong_length_legal_doc_hash() {
+    let (env, _, client) = setup();
+
+    let mut short_hash = default_metadata(&env);
+    short_hash.legal_doc_hash = Bytes::from_array(&env, &[1u8; 31]);
+
+    assert_eq!(
+        client.try_update_metadata(&short_hash),
+        Err(Ok(RwaError::InvalidLegalDocHash.into()))
+    );
+
+    let mut long_hash = default_metadata(&env);
+    long_hash.legal_doc_hash = Bytes::from_array(&env, &[1u8; 33]);
+
+    assert_eq!(
+        client.try_update_metadata(&long_hash),
+        Err(Ok(RwaError::InvalidLegalDocHash.into()))
+    );
+}
+
 /// Guards the negative tests above: were `update_metadata` to reject
 /// everything, they would all still pass.
 #[test]
@@ -460,8 +502,10 @@ fn test_update_metadata_cannot_lift_a_cap() {
     assert_eq!(client.metadata().max_supply, MAX_SUPPLY);
 }
 
-/// PRD §10.2: the cap is "not bypassable by admin". Raising it would dilute
-/// holders as surely as removing it, so both are refused.
+/// PRD §10.2: the cap is "not bypassable by admin [alone]". Raising it would
+/// dilute holders as surely as removing it, so `update_metadata` refuses
+/// both; raising one is only possible through the governance-approved
+/// `propose_cap_increase`/`approve_cap_increase` flow (#148, see below).
 #[test]
 fn test_update_metadata_cannot_raise_a_cap() {
     let (env, _, client) = setup();
@@ -533,6 +577,194 @@ fn test_update_metadata_can_cap_an_uncapped_asset_at_or_above_supply() {
     assert_eq!(client.metadata().max_supply, 500 * UNIT);
 }
 
+// ─── Supply cap governance (#148) ──────────────────────────────────────────
+//
+// `update_metadata` (tested above) covers the tighten direction: the admin
+// alone, never loosening. These cover the loosen direction: the admin alone
+// cannot do it even through the dedicated entry points, and it only takes
+// effect once a separately configured `governance` address also signs.
+
+#[test]
+fn test_propose_cap_increase_requires_an_existing_finite_cap() {
+    let env = create_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let mut uncapped = default_metadata(&env);
+    uncapped.max_supply = 0;
+    let id = env.register(RwaAssetContract, (&admin, &uncapped));
+    let client = RwaAssetContractClient::new(&env, &id);
+
+    // Nothing to "increase": an uncapped asset has no cap for governance to
+    // raise, and tightening it later is `update_metadata`'s job.
+    assert_eq!(
+        client.try_propose_cap_increase(&(1_000 * UNIT)),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+}
+
+#[test]
+fn test_propose_cap_increase_rejects_a_value_that_is_not_a_loosening() {
+    let (_, _, client) = setup();
+
+    // Equal to the current cap: not a loosening, belongs on `update_metadata`
+    // (which would itself reject it as a no-op loosening attempt).
+    assert_eq!(
+        client.try_propose_cap_increase(&MAX_SUPPLY),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+    // Below the current cap: a tightening, not what this entry point is for.
+    assert_eq!(
+        client.try_propose_cap_increase(&(MAX_SUPPLY - 1)),
+        Err(Ok(RwaError::InvalidSupplyCap.into()))
+    );
+}
+
+#[test]
+fn test_approve_cap_increase_without_governance_configured_fails() {
+    let (_, _, client) = setup();
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+
+    assert_eq!(
+        client.try_approve_cap_increase(),
+        Err(Ok(RwaError::GovernanceNotConfigured.into()))
+    );
+    // The proposal survives a failed approval attempt.
+    assert_eq!(
+        client.pending_cap_increase(),
+        Some(MAX_SUPPLY + 1_000 * UNIT)
+    );
+}
+
+#[test]
+fn test_approve_cap_increase_without_a_pending_proposal_fails() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+
+    assert_eq!(
+        client.try_approve_cap_increase(),
+        Err(Ok(RwaError::NoPendingCapIncrease.into()))
+    );
+}
+
+/// The loosen direction's happy path: admin proposes, a distinct governance
+/// address approves, and only then does the cap actually move — through the
+/// same `replace_metadata` path `update_metadata` uses, so it also bumps
+/// `metadata_version` and clears the pending proposal (#148, #149).
+#[test]
+fn test_governance_approval_raises_the_cap() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance.clone()));
+
+    let new_cap = MAX_SUPPLY + 1_000 * UNIT;
+    client.propose_cap_increase(&new_cap);
+    assert_eq!(client.pending_cap_increase(), Some(new_cap));
+
+    let version_before = client.metadata_version();
+    client.approve_cap_increase();
+
+    assert_eq!(client.metadata().max_supply, new_cap);
+    assert_eq!(client.metadata_version(), version_before + 1);
+    assert_eq!(client.pending_cap_increase(), None);
+}
+
+/// The admin cannot stand in for governance: only `governance`'s own
+/// signature may finalize the proposal.
+#[test]
+fn test_approve_cap_increase_rejects_a_caller_who_is_not_governance() {
+    let (env, admin, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "approve_cap_increase",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(client.try_approve_cap_increase().is_err());
+    assert_eq!(client.metadata().max_supply, MAX_SUPPLY);
+}
+
+#[test]
+fn test_cancel_cap_increase_withdraws_the_proposal() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+
+    client.cancel_cap_increase();
+
+    assert_eq!(client.pending_cap_increase(), None);
+    assert_eq!(
+        client.try_approve_cap_increase(),
+        Err(Ok(RwaError::NoPendingCapIncrease.into()))
+    );
+}
+
+#[test]
+fn test_cancel_cap_increase_without_a_pending_proposal_fails() {
+    let (_, _, client) = setup();
+
+    assert_eq!(
+        client.try_cancel_cap_increase(),
+        Err(Ok(RwaError::NoPendingCapIncrease.into()))
+    );
+}
+
+#[test]
+fn test_set_governance_can_disable_cap_increases_again() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+
+    client.set_governance(&None);
+    assert_eq!(client.governance(), None);
+
+    // The pending proposal from before governance was cleared is now
+    // unapprovable, exactly as if it had never been configured.
+    assert_eq!(
+        client.try_approve_cap_increase(),
+        Err(Ok(RwaError::GovernanceNotConfigured.into()))
+    );
+}
+
+/// IR-07's TTL policy covers these write paths too.
+#[test]
+fn test_cap_increase_write_paths_extend_what_they_write() {
+    let (env, _, client) = setup();
+    let governance = Address::generate(&env);
+    client.set_governance(&Some(governance));
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.propose_cap_increase(&(MAX_SUPPLY + 1_000 * UNIT));
+    let pending_ttl = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKey::PendingCapIncrease)
+    });
+    assert_eq!(
+        pending_ttl,
+        env.as_contract(&client.address, || env.storage().max_ttl())
+    );
+
+    client.approve_cap_increase();
+    let metadata_ttl = env.as_contract(&client.address, || {
+        env.storage().persistent().get_ttl(&DataKey::Metadata)
+    });
+    assert_eq!(
+        metadata_ttl,
+        env.as_contract(&client.address, || env.storage().max_ttl())
+    );
+}
+
 /// IR-07. Both are write paths, so under the shared TTL policy both extend
 /// what they write. The ledger is advanced first so the extension is actually
 /// due rather than already satisfied by the constructor's.
@@ -541,7 +773,7 @@ fn test_admin_write_paths_extend_what_they_write() {
     let (env, _, client) = setup();
     env.ledger().with_mut(|li| li.sequence_number += 600_000);
 
-    client.transfer_admin(&Address::generate(&env));
+    client.propose_admin(&Address::generate(&env));
     let instance_ttl = env.as_contract(&client.address, || env.storage().instance().get_ttl());
     assert_eq!(instance_ttl, INSTANCE_BUMP_AMOUNT);
 
@@ -553,6 +785,127 @@ fn test_admin_write_paths_extend_what_they_write() {
         )
     });
     assert_eq!(metadata_ttl, max_ttl);
+}
+
+// ─── Storage lifetime (#120) ────────────────────────────────────────────────
+//
+// IR-07 fixed the TTL gap in update_metadata and transfer_admin specifically.
+// This section proves every OTHER persistent key family rwa-asset writes is
+// also covered by the shared TTL policy: Balance, TotalSupply, Allowance and
+// Issuer previously had no test that would fail if their extend_persistent
+// call were removed. Each test below advances the ledger past the previous
+// write first, so the assertion is on the TTL the write path under test
+// actually restored, not one left over from an earlier call in the same
+// test (mint/set_issuer in setup already write some of these keys once).
+
+fn ttl_of(env: &Env, contract_id: &Address, key: &DataKey) -> u32 {
+    env.as_contract(contract_id, || env.storage().persistent().get_ttl(key))
+}
+
+fn max_ttl(env: &Env, contract_id: &Address) -> u32 {
+    env.as_contract(contract_id, || env.storage().max_ttl())
+}
+
+#[test]
+fn test_set_issuer_extends_what_it_writes() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.set_issuer(&issuer, &true);
+
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Issuer(issuer)),
+        max_ttl(&env, &client.address)
+    );
+}
+
+#[test]
+fn test_mint_extends_balance_and_total_supply() {
+    let (env, issuer_admin, client) = setup();
+    client.set_issuer(&issuer_admin, &true);
+    let recipient = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.mint(&issuer_admin, &recipient, &(100 * UNIT));
+
+    let max = max_ttl(&env, &client.address);
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Balance(recipient)),
+        max
+    );
+    assert_eq!(ttl_of(&env, &client.address, &DataKey::TotalSupply), max);
+}
+
+#[test]
+fn test_transfer_extends_both_balances() {
+    let (env, issuer_admin, client) = setup();
+    client.set_issuer(&issuer_admin, &true);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&issuer_admin, &alice, &(500 * UNIT));
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.transfer(&alice, &bob, &(200 * UNIT));
+
+    let max = max_ttl(&env, &client.address);
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Balance(alice)),
+        max,
+        "the sender's balance must be re-extended, not just the recipient's"
+    );
+    assert_eq!(ttl_of(&env, &client.address, &DataKey::Balance(bob)), max);
+}
+
+#[test]
+fn test_burn_extends_balance_and_total_supply() {
+    let (env, issuer_admin, client) = setup();
+    client.set_issuer(&issuer_admin, &true);
+    let alice = Address::generate(&env);
+    client.mint(&issuer_admin, &alice, &(500 * UNIT));
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.burn(&alice, &(100 * UNIT));
+
+    let max = max_ttl(&env, &client.address);
+    assert_eq!(ttl_of(&env, &client.address, &DataKey::Balance(alice)), max);
+    assert_eq!(ttl_of(&env, &client.address, &DataKey::TotalSupply), max);
+}
+
+#[test]
+fn test_approve_extends_the_allowance() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.approve(&alice, &bob, &(400 * UNIT), &(600_000 + LIVE_UNTIL));
+
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Allowance(alice, bob)),
+        max_ttl(&env, &client.address)
+    );
+}
+
+#[test]
+fn test_transfer_from_extends_the_spent_allowance() {
+    let (env, issuer_admin, client) = setup();
+    client.set_issuer(&issuer_admin, &true);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+    client.mint(&issuer_admin, &alice, &(500 * UNIT));
+    client.approve(&alice, &bob, &(400 * UNIT), &(700_000));
+    env.ledger().with_mut(|li| li.sequence_number += 600_000);
+
+    client.transfer_from(&bob, &alice, &carol, &(100 * UNIT));
+
+    assert_eq!(
+        ttl_of(&env, &client.address, &DataKey::Allowance(alice, bob)),
+        max_ttl(&env, &client.address),
+        "spend_allowance's own write, shared by transfer_from and burn_from, \
+         must extend the allowance it just reduced"
+    );
 }
 
 /// The constructor must validate too, or a contract could be deployed holding
@@ -571,6 +924,21 @@ fn test_constructor_rejects_invalid_metadata() {
     env.register(RwaAssetContract, (&admin, &too_many_decimals));
 }
 
+/// #150. An asset must not be deployable already pointing at no verifiable
+/// legal document.
+#[test]
+#[should_panic]
+fn test_constructor_rejects_all_zero_legal_doc_hash() {
+    let env = create_env();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+
+    let mut zero_hash = default_metadata(&env);
+    zero_hash.legal_doc_hash = Bytes::from_array(&env, &[0u8; 32]);
+
+    env.register(RwaAssetContract, (&admin, &zero_hash));
+}
+
 #[test]
 fn test_self_transfer_still_validates_balance() {
     let (env, _, client) = setup();
@@ -581,36 +949,61 @@ fn test_self_transfer_still_validates_balance() {
     assert_eq!(res, Err(Ok(RwaError::InsufficientBalance.into())));
 }
 
-// ─── Admin handover (NFR-S-4) ──────────────────────────────────────────────
+// ─── Admin handover (NFR-S-4, two-step #125/ADR-006) ───────────────────────
 
-// `transfer_admin` has required both signatures since it was written, but no
-// test asserted it: every call ran under `mock_all_auths`. IR-04 added the
-// same entry point to the other three contracts with this coverage, so the
-// original gets it too.
+// `transfer_admin` required both signatures in one transaction since it was
+// written. #125 replaces it with propose_admin/accept_admin: the current
+// admin's signature authorizes the proposal, the proposed admin's own
+// signature is required to accept it, and both are still required overall,
+// just not in the same transaction (see ADR-006 for why this is safe now
+// that #31 is closed).
 
 #[test]
-fn test_transfer_admin_without_the_incoming_signature_is_rejected() {
-    let (env, admin, client) = setup();
+fn test_propose_admin_requires_current_admin_auth() {
+    let (env, _admin, client) = setup();
     let new_admin = Address::generate(&env);
+    let not_admin = Address::generate(&env);
 
     env.mock_auths(&[MockAuth {
-        address: &admin,
+        address: &not_admin,
         invoke: &MockAuthInvoke {
             contract: &client.address,
-            fn_name: "transfer_admin",
+            fn_name: "propose_admin",
             args: (new_admin.clone(),).into_val(&env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(client.try_transfer_admin(&new_admin).is_err());
+    assert!(client.try_propose_admin(&new_admin).is_err());
+    assert!(client.pending_admin().is_none());
+}
+
+#[test]
+fn test_accept_admin_without_the_proposed_admins_signature_is_rejected() {
+    let (env, admin, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.propose_admin(&new_admin);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "accept_admin",
+            args: ().into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(client.try_accept_admin().is_err());
     assert_eq!(client.admin(), admin);
 }
 
 #[test]
 fn test_a_rotated_out_admin_can_no_longer_pause() {
     let (env, admin, client) = setup();
-    client.transfer_admin(&Address::generate(&env));
+    let new_admin = Address::generate(&env);
+    client.propose_admin(&new_admin);
+    client.accept_admin();
 
     env.mock_auths(&[MockAuth {
         address: &admin,
@@ -709,6 +1102,119 @@ fn test_burn_from_spends_the_allowance_and_reduces_supply() {
     );
 }
 
+// ─── Forced transfer (court-ordered recovery, #144) ────────────────────────
+
+/// A dedicated role, separate from the issuer, authorizes forced transfers.
+/// Only an address holding it may move another holder's tokens without
+/// their signature.
+fn setup_with_forced_transfer_role() -> (Env, Address, Address, RwaAssetContractClient<'static>) {
+    let (env, admin, client) = setup();
+    let officer = Address::generate(&env);
+    client.set_forced_transfer_role(&officer, &true);
+    (env, admin, officer, client)
+}
+
+#[test]
+fn test_forced_transfer_moves_balance() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    let reason = Bytes::from_array(&env, &[0xAB; 32]);
+    client.forced_transfer(&officer, &alice, &bob, &400, &reason);
+
+    assert_eq!(client.balance(&alice), 600);
+    assert_eq!(client.balance(&bob), 400);
+    assert_eq!(client.total_supply(), 1_000);
+}
+
+#[test]
+fn test_forced_transfer_requires_the_forced_transfer_role() {
+    let (env, _, _officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let not_officer = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    let reason = Bytes::from_array(&env, &[0xCD; 32]);
+    assert_eq!(
+        client.try_forced_transfer(&not_officer, &alice, &bob, &100, &reason),
+        Err(Ok(RwaError::NotForcedTransferRole.into()))
+    );
+    assert_eq!(client.balance(&alice), 1_000);
+    assert_eq!(client.balance(&bob), 0);
+}
+
+#[test]
+fn test_forced_transfer_emits_event_with_reason_hash() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    let reason = Bytes::from_array(&env, &[0xEF; 32]);
+    client.forced_transfer(&officer, &alice, &bob, &250, &reason);
+
+    assert_eq!(
+        env.events().all(),
+        std::vec![ForcedTransfer {
+            operator: officer,
+            from: alice,
+            to: bob,
+            amount: 250,
+            reason_hash: reason,
+        }
+        .to_xdr(&env, &client.address)],
+    );
+}
+
+#[test]
+fn test_forced_transfer_still_validates_balance() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 100);
+
+    let reason = Bytes::from_array(&env, &[0x11; 32]);
+    assert_eq!(
+        client.try_forced_transfer(&officer, &alice, &bob, &101, &reason),
+        Err(Ok(RwaError::InsufficientBalance.into()))
+    );
+}
+
+#[test]
+fn test_forced_transfer_rejects_zero_amount() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 100);
+
+    let reason = Bytes::from_array(&env, &[0x22; 32]);
+    assert_eq!(
+        client.try_forced_transfer(&officer, &alice, &bob, &0, &reason),
+        Err(Ok(RwaError::InvalidAmount.into()))
+    );
+}
+
+/// The reason hash is the only record of why tokens moved without their
+/// owner's signature, so an empty one is refused rather than silently
+/// accepted.
+#[test]
+fn test_forced_transfer_rejects_an_empty_reason_hash() {
+    let (env, _, officer, client) = setup_with_forced_transfer_role();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 100);
+
+    let empty_reason = Bytes::new(&env);
+    assert_eq!(
+        client.try_forced_transfer(&officer, &alice, &bob, &50, &empty_reason),
+        Err(Ok(RwaError::InvalidReasonHash.into()))
+    );
+    assert_eq!(client.balance(&alice), 100);
+}
+
 #[test]
 fn test_sep41_metadata_getters_match_the_metadata() {
     let (env, _, client) = setup();
@@ -717,4 +1223,291 @@ fn test_sep41_metadata_getters_match_the_metadata() {
     assert_eq!(client.decimals(), meta.decimals);
     assert_eq!(client.name(), meta.name);
     assert_eq!(client.symbol(), meta.symbol);
+}
+
+#[test]
+fn test_allowance_expiry_boundary_conditions() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    fund(&env, &client, &alice, 10_000);
+
+    let expiry_ledger: u32 = 100;
+    client.approve(&alice, &bob, &1_000, &expiry_ledger);
+
+    // Ledger = expiry - 1 (ledger 99)
+    env.ledger().with_mut(|li| li.sequence_number = expiry_ledger - 1);
+    assert_eq!(client.allowance(&alice, &bob), 1_000);
+    client.transfer_from(&bob, &alice, &recipient, &100);
+    assert_eq!(client.allowance(&alice, &bob), 900);
+
+    // Ledger = expiry (ledger 100)
+    env.ledger().with_mut(|li| li.sequence_number = expiry_ledger);
+    assert_eq!(client.allowance(&alice, &bob), 900);
+    client.transfer_from(&bob, &alice, &recipient, &100);
+    assert_eq!(client.allowance(&alice, &bob), 800);
+
+    // Ledger = expiry + 1 (ledger 101)
+    env.ledger().with_mut(|li| li.sequence_number = expiry_ledger + 1);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+    assert_eq!(
+        client.try_transfer_from(&bob, &alice, &recipient, &1),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+}
+
+#[test]
+fn test_allowance_overwriting_and_zeroing() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 5_000);
+
+    // Initial approval
+    client.approve(&alice, &bob, &500, &150);
+    assert_eq!(client.allowance(&alice, &bob), 500);
+
+    // Overwrite with higher amount and extended expiry
+    client.approve(&alice, &bob, &1_200, &200);
+    assert_eq!(client.allowance(&alice, &bob), 1_200);
+
+    // Zero out / revoke
+    client.approve(&alice, &bob, &0, &0);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+    assert_eq!(
+        client.try_transfer_from(&bob, &alice, &bob, &1),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+}
+
+#[test]
+fn test_burn_from_with_expired_allowance_fails() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    client.approve(&alice, &bob, &400, &50);
+
+    // Advance past expiry
+    env.ledger().with_mut(|li| li.sequence_number = 51);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+
+    // burn_from must fail with InsufficientAllowance
+    assert_eq!(
+        client.try_burn_from(&bob, &alice, &100),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+
+    // Balances and supply remain intact
+    assert_eq!(client.balance(&alice), 1_000);
+    assert_eq!(client.total_supply(), 1_000);
+// ─── Frozen Address Tests ───────────────────────────────────────────────────
+
+#[test]
+fn test_set_frozen_and_is_frozen() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+
+    assert!(!client.is_frozen(&alice));
+    client.set_frozen(&alice, &true);
+    assert!(client.is_frozen(&alice));
+
+    client.set_frozen(&alice, &false);
+    assert!(!client.is_frozen(&alice));
+}
+
+#[test]
+fn test_frozen_address_cannot_transfer() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+    client.set_frozen(&alice, &true);
+
+    let res = client.try_transfer(&alice, &bob, &100);
+    assert_eq!(res, Err(Ok(RwaError::AddressFrozen.into())));
+    assert_eq!(client.balance(&alice), 1_000);
+    assert_eq!(client.balance(&bob), 0);
+}
+
+#[test]
+fn test_frozen_address_cannot_transfer_from() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+    client.approve(&alice, &bob, &500, &LIVE_UNTIL);
+    client.set_frozen(&alice, &true);
+
+    let res = client.try_transfer_from(&bob, &alice, &carol, &100);
+    assert_eq!(res, Err(Ok(RwaError::AddressFrozen.into())));
+    assert_eq!(client.balance(&alice), 1_000);
+    assert_eq!(client.balance(&carol), 0);
+}
+
+#[test]
+fn test_unfrozen_address_can_transfer() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+    client.set_frozen(&alice, &true);
+    client.set_frozen(&alice, &false);
+
+    client.transfer(&alice, &bob, &100);
+    assert_eq!(client.balance(&alice), 900);
+    assert_eq!(client.balance(&bob), 100);
+}
+
+#[test]
+fn test_set_frozen_emits_event() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+
+    client.set_frozen(&alice, &true);
+
+    assert_eq!(
+        env.events().all(),
+        std::vec![FrozenSet {
+            address: alice,
+            frozen: true,
+        }
+        .to_xdr(&env, &client.address)],
+    );
+}
+
+// ─── Lock-up Date Tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_set_lockup_date_and_lockup_date() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+
+    assert_eq!(client.lockup_date(&alice), 0);
+    client.set_lockup_date(&alice, &100);
+    assert_eq!(client.lockup_date(&alice), 100);
+
+    client.set_lockup_date(&alice, &0);
+    assert_eq!(client.lockup_date(&alice), 0);
+}
+
+#[test]
+fn test_locked_address_cannot_transfer_before_lockup_expires() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+    client.set_lockup_date(&alice, &100);
+
+    // Current ledger is 0, so locked until 100
+    let res = client.try_transfer(&alice, &bob, &100);
+    assert_eq!(res, Err(Ok(RwaError::AddressLocked.into())));
+    assert_eq!(client.balance(&alice), 1_000);
+    assert_eq!(client.balance(&bob), 0);
+}
+
+#[test]
+fn test_locked_address_can_transfer_after_lockup_expires() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+    client.set_lockup_date(&alice, &100);
+
+    // Advance ledger past lockup date
+    env.ledger().with_mut(|li| li.sequence_number = 101);
+
+    client.transfer(&alice, &bob, &100);
+    assert_eq!(client.balance(&alice), 900);
+    assert_eq!(client.balance(&bob), 100);
+}
+
+#[test]
+fn test_locked_address_cannot_transfer_from_before_lockup_expires() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+    client.approve(&alice, &bob, &500, &LIVE_UNTIL);
+    client.set_lockup_date(&alice, &100);
+
+    let res = client.try_transfer_from(&bob, &alice, &carol, &100);
+    assert_eq!(res, Err(Ok(RwaError::AddressLocked.into())));
+    assert_eq!(client.balance(&alice), 1_000);
+    assert_eq!(client.balance(&carol), 0);
+}
+
+#[test]
+fn test_address_with_zero_lockup_can_transfer() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+    client.set_lockup_date(&alice, &100);
+    client.set_lockup_date(&alice, &0);
+
+    client.transfer(&alice, &bob, &100);
+    assert_eq!(client.balance(&alice), 900);
+    assert_eq!(client.balance(&bob), 100);
+}
+
+#[test]
+fn test_set_lockup_date_emits_event() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+
+    client.set_lockup_date(&alice, &100);
+
+    assert_eq!(
+        env.events().all(),
+        std::vec![LockupDateSet {
+            address: alice,
+            lockup_until_ledger: 100,
+        }
+        .to_xdr(&env, &client.address)],
+    );
+}
+
+#[test]
+fn test_transfer_at_lockup_expiration_ledger_succeeds() {
+    let (env, _, client) = setup();
+    let issuer = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.set_issuer(&issuer, &true);
+    client.mint(&issuer, &alice, &1_000);
+    client.set_lockup_date(&alice, &100);
+
+    // At the exact lockup ledger, transfer should succeed
+    env.ledger().with_mut(|li| li.sequence_number = 100);
+
+    client.transfer(&alice, &bob, &100);
+    assert_eq!(client.balance(&alice), 900);
+    assert_eq!(client.balance(&bob), 100);
 }

@@ -29,13 +29,41 @@ pub struct ActiveSet {
     pub active: bool,
 }
 
-/// Published by `transfer_admin`. The incoming admin is data rather than a
-/// topic, matching `rwa-asset`, so one topic filter on the outgoing address
-/// finds every handover away from a key being watched.
-#[contractevent(topics = ["transfer_admin"], data_format = "single-value")]
+/// Published by `propose_admin`. Distinct from `AdminTransferred`: the role
+/// has not moved yet, only a handover has been proposed. An indexer watching
+/// an admin address for the moment it loses control should key on
+/// `AdminTransferred`, not this.
+#[contractevent(topics = ["propose_admin"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferProposed {
+    #[topic]
+    pub current: Address,
+    pub proposed_admin: Address,
+}
+
+/// Published by `accept_admin`, once the proposed admin's own signature
+/// completes the handover. The incoming admin is data rather than a topic,
+/// matching `rwa-asset`, so one topic filter on the outgoing address finds
+/// every handover away from a key being watched.
+#[contractevent(topics = ["accept_admin"], data_format = "single-value")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminTransferred {
     #[topic]
     pub previous: Address,
     pub new_admin: Address,
+}
+
+/// Published by `set_paused`, matching `rwa-asset::events::Paused`.
+#[contractevent(topics = ["paused"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Paused {
+    pub paused: bool,
+}
+
+/// Published by `cancel_admin_transfer`.
+#[contractevent(topics = ["cancel_admin_transfer"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferCancelled {
+    #[topic]
+    pub cancelled_proposed_admin: Address,
 }

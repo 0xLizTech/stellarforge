@@ -437,30 +437,24 @@ describe.runIf(ASSET_ID)("live RwaAssetClient writes", () => {
     WRITE_TIMEOUT,
   );
 
-  // Runs last: it hands the admin role away. The contract needs the current and
-  // the incoming admin to authorize, so the current admin pays and the incoming
-  // admin signs its entry.
+  // Runs last: it hands the admin role away. Two-step (#125/ADR-006): the
+  // current admin proposes in its own transaction, the incoming admin accepts
+  // in a separate one. Neither needs sponsorship - each is a single-signer
+  // write, unlike the old single-transaction dual-auth transferAdmin.
   it.runIf(TRANSFER_ADMIN)(
-    "transferAdmin: the current admin pays while the incoming admin signs",
+    "proposeAdmin/acceptAdmin: the current admin proposes, the incoming admin accepts",
     async () => {
       if ((await issuerClient.admin()) !== issuer) {
         throw new Error("SMOKE_WRITE_TRANSFER_ADMIN needs the issuer to be the asset's admin");
       }
 
-      const sponsored = await issuerClient.buildTransferAdminTx(issuer, spender);
-      expect(sponsored.transaction.source).toBe(issuer);
-      expect(sponsored.authorizers.filter((a) => a !== null)).toEqual([spender]);
+      await issuerClient.proposeAdmin(issuer, spender);
+      expect(await issuerClient.pendingAdmin()).toBe(spender);
 
-      const { sequence } = await server.getLatestLedger();
-      const signed = await authorizeEntries(
-        sponsored.authEntries,
-        Keypair.fromSecret(SPENDER_SECRET as string),
-        sequence + DEFAULT_AUTH_VALIDITY_LEDGERS,
-        NETWORK_PASSPHRASE,
-      );
-      await issuerClient.submitSponsoredTx(sponsored, signed);
+      await spenderClient.acceptAdmin(spender);
 
       expect(await issuerClient.admin()).toBe(spender);
+      expect(await issuerClient.pendingAdmin()).toBeNull();
     },
     WRITE_TIMEOUT,
   );

@@ -33,7 +33,7 @@ jobs:
     name: Check & Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # rustup installs the exact toolchain, target and components pinned in
       # rust-toolchain.toml, so CI builds what a release is reproduced from.
@@ -55,7 +55,7 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # rustup installs the exact toolchain, target and components pinned in
       # rust-toolchain.toml, so CI builds what a release is reproduced from.
@@ -80,7 +80,7 @@ jobs:
     name: Build WASM Artifacts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # rustup installs the exact toolchain, target and components pinned in
       # rust-toolchain.toml, so CI builds what a release is reproduced from.
@@ -108,6 +108,7 @@ jobs:
           stellar contract build --manifest-path contracts/compliance/Cargo.toml
           stellar contract build --manifest-path contracts/governance/Cargo.toml
           stellar contract build --manifest-path contracts/oracle-adapter/Cargo.toml
+          stellar contract build --manifest-path contracts/vault/Cargo.toml
 
       # Published with the artifacts, so the hash of a deployed contract's wasm
       # can be checked against the commit that built it.
@@ -116,10 +117,70 @@ jobs:
         run: sha256sum *.wasm | tee SHA256SUMS
 
       - name: Upload WASM artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf6581a12fe42986043a # v4.4.3
         with:
           name: contract-wasm
           path: |
             target/wasm32v1-none/release/*.wasm
             target/wasm32v1-none/release/SHA256SUMS
+          retention-days: 7
+
+  reproducible-wasm:
+    name: Verify WASM Reproducibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc --version
+
+      - name: Install stellar-cli
+        run: |
+          curl -sSfL -o stellar-cli.tar.gz \
+            "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${STELLAR_CLI_SHA256}  stellar-cli.tar.gz" | sha256sum --check --strict
+          tar xzf stellar-cli.tar.gz -C /usr/local/bin stellar
+          rm stellar-cli.tar.gz
+
+      - name: First build pass
+        run: |
+          stellar contract build --manifest-path contracts/rwa-asset/Cargo.toml
+          stellar contract build --manifest-path contracts/registry/Cargo.toml
+          stellar contract build --manifest-path contracts/compliance/Cargo.toml
+          stellar contract build --manifest-path contracts/governance/Cargo.toml
+          stellar contract build --manifest-path contracts/oracle-adapter/Cargo.toml
+          mkdir -p build1
+          cp target/wasm32v1-none/release/*.wasm build1/
+          cd build1 && sha256sum *.wasm > SHA256SUMS_BUILD1.txt
+
+      - name: Clean build cache
+        run: cargo clean
+
+      - name: Second build pass
+        run: |
+          stellar contract build --manifest-path contracts/rwa-asset/Cargo.toml
+          stellar contract build --manifest-path contracts/registry/Cargo.toml
+          stellar contract build --manifest-path contracts/compliance/Cargo.toml
+          stellar contract build --manifest-path contracts/governance/Cargo.toml
+          stellar contract build --manifest-path contracts/oracle-adapter/Cargo.toml
+          mkdir -p build2
+          cp target/wasm32v1-none/release/*.wasm build2/
+          cd build2 && sha256sum *.wasm > SHA256SUMS_BUILD2.txt
+
+      - name: Compare build checksums
+        run: |
+          diff -u build1/SHA256SUMS_BUILD1.txt build2/SHA256SUMS_BUILD2.txt || {
+            echo "::error::WASM build is nondeterministic! Hash mismatch between builds."
+            exit 1
+          }
+          echo "Byte-for-byte reproducibility verified across passes."
+
+      - name: Upload hash comparisons
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: wasm-reproducibility-hashes
+          path: |
+            build1/SHA256SUMS_BUILD1.txt
+            build2/SHA256SUMS_BUILD2.txt
           retention-days: 7

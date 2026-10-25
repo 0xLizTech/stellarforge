@@ -16,8 +16,9 @@ use soroban_sdk::{
 };
 
 use rwa_asset::{
-    AdminTransferred, Approve, AssetMetadata, Burn, ComplianceSet, IssuerSet, MetadataUpdated,
-    Mint, Paused, RwaAssetContract, RwaAssetContractClient, Transfer, TransferFrom,
+    AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Approve, AssetMetadata, Burn,
+    ComplianceSet, IssuerSet, MetadataUpdated, Mint, Paused, RwaAssetContract,
+    RwaAssetContractClient, Transfer, TransferFrom,
 };
 
 /// Allowance expiry used throughout; the test ledger starts at sequence 0.
@@ -29,7 +30,7 @@ fn metadata(env: &Env) -> AssetMetadata {
         symbol: String::from_str(env, "REIT-NYC-001"),
         decimals: 7,
         asset_class: String::from_str(env, "real_estate"),
-        legal_doc_hash: Bytes::from_array(env, &[0u8; 32]),
+        legal_doc_hash: Bytes::from_array(env, &[1u8; 32]),
         max_supply: 0,
     }
 }
@@ -209,38 +210,79 @@ fn test_set_issuer_emits_event() {
 }
 
 #[test]
-fn test_update_metadata_emits_both_versions() {
+fn test_update_metadata_emits_both_versions_and_bumps_version_counter() {
     let f = setup();
     let mut updated = metadata(&f.env);
     updated.legal_doc_hash = Bytes::from_array(&f.env, &[9u8; 32]);
 
     f.client.update_metadata(&updated);
 
-    // The previous version rides along so the document hash the asset used to
-    // name is recoverable without replaying state.
+    // The previous metadata rides along so the document hash the asset used
+    // to name is recoverable without replaying state (#149), and `version`
+    // is construction's 1 bumped once by this call.
     assert_eq!(
         f.env.events().all(),
         std::vec![MetadataUpdated {
             previous: metadata(&f.env),
             metadata: updated,
+            version: 2,
+        }
+        .to_xdr(&f.env, &f.id)],
+    );
+    assert_eq!(f.client.metadata_version(), 2);
+}
+
+#[test]
+fn test_propose_admin_emits_event() {
+    let f = setup();
+    let current = f.client.admin();
+    let new_admin = Address::generate(&f.env);
+
+    f.client.propose_admin(&new_admin);
+
+    assert_eq!(
+        f.env.events().all(),
+        std::vec![AdminTransferProposed {
+            current,
+            proposed_admin: new_admin,
         }
         .to_xdr(&f.env, &f.id)],
     );
 }
 
 #[test]
-fn test_transfer_admin_emits_event() {
+fn test_accept_admin_emits_event() {
     let f = setup();
     let previous = f.client.admin();
     let new_admin = Address::generate(&f.env);
+    f.client.propose_admin(&new_admin);
+    f.env.events().all(); // drain the propose event
 
-    f.client.transfer_admin(&new_admin);
+    f.client.accept_admin();
 
     assert_eq!(
         f.env.events().all(),
         std::vec![AdminTransferred {
             previous,
             new_admin,
+        }
+        .to_xdr(&f.env, &f.id)],
+    );
+}
+
+#[test]
+fn test_cancel_admin_transfer_emits_event() {
+    let f = setup();
+    let new_admin = Address::generate(&f.env);
+    f.client.propose_admin(&new_admin);
+    f.env.events().all(); // drain the propose event
+
+    f.client.cancel_admin_transfer();
+
+    assert_eq!(
+        f.env.events().all(),
+        std::vec![AdminTransferCancelled {
+            cancelled_proposed_admin: new_admin,
         }
         .to_xdr(&f.env, &f.id)],
     );

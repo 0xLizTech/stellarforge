@@ -1,0 +1,36 @@
+name: Spell Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - ".cspell.json"
+      - ".github/workflows/spell-check.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - ".cspell.json"
+      - ".github/workflows/spell-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cspell:
+    name: Spell Check Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Run cspell
+        uses: streetsidesoftware/cspell-action@5f79a96ea6ff27cf6e511470438cf3ff9be3f92a # v6.0.0
+        with:
+          files: 'docs/**/*.md README.md CONTRIBUTING.md'
+          config: '.cspell.json'

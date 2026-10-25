@@ -63,7 +63,7 @@ StellarForge is an open-source, permissionless protocol for **Real World Asset (
 ```
 stellarforge/
 ├── contracts/
-│   ├── common/             # Shared storage/TTL policy (library, not deployed)
+│   ├── common/             # Shared storage/TTL policy (library, not deployed; see contracts/common/README.md)
 │   ├── rwa-asset/          # Core tokenization contract (Soroban/Rust)
 │   ├── registry/           # Global asset registry
 │   ├── compliance/         # KYC/AML compliance engine
@@ -135,11 +135,26 @@ make sdk-test
 stellar keys generate mykey --network testnet
 stellar keys fund mykey --network testnet
 
-# Deploy
-STELLAR_ACCOUNT=mykey make deploy-testnet
+# Deploy deterministically with bytecode verification
+STELLAR_ACCOUNT=mykey DEPLOY_NAMESPACE=my-deployment make deploy-testnet
+
+# Verify on-chain bytecode provenance
+./scripts/verify-deployment.sh deployed-contracts.json target/wasm32v1-none/release/SHA256SUMS
 ```
 
-### 6. Use the SDK
+For operational procedures, parameter sizing, and troubleshooting, see the [Vault Operations Guide](docs/guides/vault-operations.md).
+
+### 6. NAV Appraisal Reporter CLI
+
+Appraisers and operators publish audited NAV reports via `tools/nav-reporter`:
+
+```bash
+cd tools/nav-reporter
+npm ci && npm run build
+stellarforge-nav-reporter --appraisal path/to/appraisal.json --oracle <ORACLE_ID> --dry-run
+```
+
+### 7. Use the SDK
 
 ```typescript
 import { RwaAssetClient, toStroops, TESTNET_CONFIG } from "@stellarforge-protocol/sdk";
@@ -191,6 +206,8 @@ authorization entries to sign; the SDK README shows the flow.
 
 ### RwaAsset
 
+Full reference, including errors and events: [contracts/rwa-asset/README.md](contracts/rwa-asset/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
 | `__constructor(admin, metadata)` | admin | Runs at deploy; not callable afterwards |
@@ -202,19 +219,29 @@ authorization entries to sign; the SDK README shows the flow.
 | `transfer_from(spender, from, to, amount)` | spender | Spend allowance |
 | `set_issuer(issuer, approved)` | admin | Grant/revoke issuer role |
 | `set_paused(paused)` | admin | Emergency circuit breaker |
-| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can only be tightened: never raised, removed or set below supply |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `update_metadata(metadata)` | admin | Update asset metadata; `decimals` is fixed, and a cap can only be tightened here, never raised, removed or set below supply — raising one needs `propose_cap_increase`/`approve_cap_increase` |
+| `propose_admin(new_admin)` | admin | Propose the next admin |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `set_compliance(compliance, min_level)` | admin | Point at a compliance contract, or `None` to disable screening |
+| `set_governance(governance)` | admin | Name the address that may approve loosening a supply cap, or `None` to disable loosening |
+| `propose_cap_increase(new_max_supply)` | admin | Propose raising (or removing) the supply cap |
+| `approve_cap_increase()` | governance | Finalize a pending cap increase; applies it through the same path `update_metadata` uses |
+| `cancel_cap_increase()` | admin | Withdraw a pending cap increase before it is approved |
 | `balance(owner)` | — | Query balance |
 | `allowance(owner, spender)` | — | Query allowance |
 | `total_supply()` | — | Query supply |
 | `metadata()` | — | Query metadata |
+| `metadata_version()` | — | Query how many times metadata has been written; 1 at construction, incremented on every change |
 | `decimals()`, `name()`, `symbol()` | — | SEP-41 metadata getters |
 | `admin()` | — | Query admin address |
+| `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
 | `is_issuer(address)` | — | Query issuer status |
 | `paused()` | — | Query pause state |
 | `compliance_contract()` | — | Query the configured compliance contract |
 | `min_compliance_level()` | — | Query the required verification level |
+| `governance()` | — | Query the address that may approve loosening a supply cap, if any |
+| `pending_cap_increase()` | — | Query the proposed-but-not-yet-approved supply cap, if any |
 
 **Transfer screening.** When `set_compliance` names a contract, `mint`,
 `transfer` and `transfer_from` require every counterparty to hold a valid
@@ -225,15 +252,20 @@ no compliance contract is configured.
 
 ### Compliance
 
+Full reference, including errors and events: [contracts/compliance/README.md](contracts/compliance/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
 | `set_kyc(subject, record)` | admin | Set KYC record; requires level 0–3, an expiry not yet past, and a two-letter ISO 3166-1 jurisdiction |
 | `revoke_kyc(subject)` | admin | Remove KYC record |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `propose_admin(new_admin)` | admin | Propose the next admin |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `is_compliant(subject, min_level)` | — | Check compliance; pure query, no ledger write |
 | `screen(subject, min_level)` | — | As above, but refreshes the record's TTL; bound by `RwaAsset` |
 | `get_kyc(subject)` | — | Read KYC record |
 | `admin()` | — | Query admin address |
+| `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
 
 A compliance contract plugged into `RwaAsset` must implement `screen`, not just
 `is_compliant`. The two return identical answers and differ only in that
@@ -243,15 +275,20 @@ extend its own entries. See [ADR-001](docs/architecture/001-storage-key-design.m
 
 ### Registry
 
+Full reference, including errors and events: [contracts/registry/README.md](contracts/registry/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
 | `register(entry)` | admin | Register a new asset contract, or update a registered one |
 | `set_active(contract, active)` | admin | Activate/deactivate asset |
 | `get_asset(contract)` | — | Look up asset entry |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `propose_admin(new_admin)` | admin | Propose the next admin |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `list_assets(start, limit)` | — | Page through registered contracts in registration order, at most 100 per call, each exactly once |
 | `asset_count()` | — | Count registered contracts |
 | `admin()` | — | Query admin address |
+| `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
 
 **An entry is an assertion, not a verification.** `register` does not check
 that the address is a deployed `rwa-asset` or that `asset_class` matches its
@@ -260,22 +297,32 @@ the admin's directory, not as proof that an asset is genuine or current.
 
 ### Governance
 
+Full reference, including errors and events: [contracts/governance/README.md](contracts/governance/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
-| `propose(proposer, title, hash, period)` | proposer | Create proposal; the period must be 1–90 days in ledgers and the title at most 256 bytes |
+| `propose(proposer, title, hash, period)` | proposer | Create proposal; the period must be 1–90 days in ledgers and the title at most 256 bytes; rejected if an active proposal already has the same title and description hash |
 | `vote(voter, id, support, weight)` | voter | Cast vote |
-| `finalize(id)` | — | Tally and finalize; a tie is rejected |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role; no other admin powers in Phase 1 |
+| `finalize(id)` | — | Tally and finalize against quorum and the pass threshold; a tie, or turnout below quorum, is rejected |
+| `set_quorum(quorum)` | admin | Minimum total votes a proposal needs before `finalize` evaluates it; 0 disables the check |
+| `set_pass_threshold_bps(bps)` | admin | Fraction of cast votes, in basis points, that must be `votes_for` for a proposal to pass; defaults to 5,001 (>50%) |
+| `propose_admin(new_admin)` | admin | Propose the next admin; no other admin powers in Phase 1 |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `get_proposal(id)` | — | Read proposal |
 | `has_voted(id, voter)` | — | Whether an address has voted on a proposal |
 | `proposal_count()` | — | Count proposals |
+| `quorum()` | — | Query the configured quorum |
+| `pass_threshold_bps()` | — | Query the configured pass threshold |
 | `admin()` | — | Query admin address |
+| `pending_admin()` | — | Query the proposed-but-not-yet-accepted admin, if any |
 
 > **Phase 1 caveat.** `vote` accepts a caller-supplied `weight` and does not
-> check it against any token balance or voting-power source, and `finalize`
-> applies no quorum. Governance is a skeleton until the `SFORGE` token and
-> execution hooks land in Phase 3 — do not treat a passed proposal as a
-> trustworthy signal before then.
+> check it against any token balance or voting-power source. `finalize` does
+> now apply quorum and a pass threshold (both admin-configurable), but against
+> that unverified weight: any address can still carry a vote, so the result is
+> advisory, not binding, until the `SFORGE` token and execution hooks land in
+> Phase 3 — do not treat a passed proposal as a trustworthy signal before then.
 
 ### Oracle Adapter (Phase 2)
 
@@ -284,6 +331,8 @@ The read functions are SEP-40's, so anything that reads a SEP-40 oracle reads
 this one. Prices are scaled by `10^decimals()` and timestamped in Unix seconds,
 rounded down to `resolution()`. See [ADR-005](docs/architecture/005-oracle-adapter.md).
 
+Full reference, including errors and events: [contracts/oracle-adapter/README.md](contracts/oracle-adapter/README.md).
+
 | Function | Auth | Description |
 |---|---|---|
 | `report(reporter, asset, price, timestamp)` | reporter | Record a price; the reporter must be authorized for the asset, the tick must be later than the latest, and the move must be within the asset's limit |
@@ -291,12 +340,14 @@ rounded down to `resolution()`. See [ADR-005](docs/architecture/005-oracle-adapt
 | `add_asset(asset, max_deviation_bps)` | admin | List an asset, up to 100 |
 | `set_max_deviation(asset, max_deviation_bps)` | admin | Change an asset's deviation limit |
 | `set_reporter(asset, reporter, allowed)` | admin | Grant or revoke a reporter for one asset |
-| `transfer_admin(new_admin)` | admin + new_admin | Transfer admin role |
+| `propose_admin(new_admin)` | admin | Propose the next admin |
+| `accept_admin()` | new_admin | Complete a proposed handover |
+| `cancel_admin_transfer()` | admin | Withdraw a pending proposal |
 | `lastprice(asset)` | — | Most recent price (SEP-40) |
 | `price(asset, timestamp)` | — | Price in the tick containing `timestamp` (SEP-40) |
 | `prices(asset, records)` | — | Up to 20 most recent prices, newest first (SEP-40) |
 | `base()`, `assets()`, `decimals()`, `resolution()` | — | Feed configuration (SEP-40) |
-| `admin()`, `is_reporter(asset, reporter)`, `asset_config(asset)` | — | Roles and limits |
+| `admin()`, `pending_admin()`, `is_reporter(asset, reporter)`, `asset_config(asset)` | — | Roles and limits |
 
 > **Freshness is the consumer's check.** The feed never refuses to return an
 > old price. Compare `timestamp` against the ledger time before relying on it.
@@ -314,13 +365,23 @@ interface: variants keep their values and new ones are appended.
 
 ---
 
+## Documentation
+
+- [Glossary](docs/GLOSSARY.md) — Definitions of over 50 Real World Asset (RWA), Soroban smart contract, and Stellar terms.
+- [Integrator FAQ](docs/FAQ.md) — Frequently asked questions covering keys, fees, TTL, compliance, and contract upgrades.
+- [Architecture & ADRs](docs/architecture/) — Architectural decision records and protocol designs.
+- [Audit Handover](docs/audits/external-audit-handover-phase1.md) — Phase 1 external audit scope, invariants, and reproduction steps.
+- [Release Guide](docs/RELEASING.md) — SDK trusted publishing, provenance, and byte-for-byte WASM verification.
+
+---
+
 ## Security
 
 StellarForge is pre-audit software. **Do not use on mainnet with real funds until a formal audit is complete.**
 
 - All sensitive operations require Soroban `require_auth()` — no permission can be spoofed at the contract level.
 - The `set_paused` circuit breaker allows emergency halts without upgrading contracts.
-- Admin transfer requires both current and new admin to authenticate.
+- Admin transfer is a two-step handover: the current admin proposes, and only the proposed admin's own signature can accept it (see ADR-006).
 - See [SECURITY.md](docs/SECURITY.md) for the responsible disclosure policy.
 
 ---

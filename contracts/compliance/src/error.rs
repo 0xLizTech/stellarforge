@@ -27,4 +27,17 @@ pub enum ComplianceError {
     AlreadyExpired = 4,
     /// `set_kyc` was given a jurisdiction that is not an ISO 3166-1 alpha-2 code.
     InvalidJurisdiction = 5,
+    /// The contract is paused; state-changing calls are refused.
+    ContractPaused = 6,
+    /// `set_kyc_batch`/`revoke_kyc_batch` was given more records/subjects than
+    /// `MAX_BATCH_SIZE`.
+    BatchTooLarge = 7,
+    /// `accept_admin` was called with no transfer pending, or after it was
+    /// cancelled or already accepted. Previously misnumbered `6`, colliding
+    /// with `ContractPaused` and `BatchTooLarge` (three variants sharing one
+    /// on-chain error code, and a hard `E0081` compile error under current
+    /// Rust). Moved here rather than left colliding: nothing has been
+    /// deployed with the old value, so ADR-003's discriminant freeze (which
+    /// protects a *deployed* contract's clients) does not apply yet.
+    NoPendingAdminTransfer = 8,
 }

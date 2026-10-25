@@ -39,4 +39,24 @@ pub enum GovernanceError {
     InvalidVotingPeriod = 10,
     /// `propose` was given a title longer than `MAX_TITLE_BYTES`.
     TitleTooLong = 11,
+    /// `cancel_proposal` was called by neither the proposer nor the admin.
+    NotAuthorizedToCancel = 12,
+    /// `cancel_proposal` was called after the proposal had already received a
+    /// vote.
+    ProposalAlreadyHasVotes = 13,
+    /// `list_proposals` was given a `limit` above `MAX_PAGE_SIZE`.
+    PageTooLarge = 14,
+    /// `set_proposal_deposit` was given a negative amount.
+    InvalidDepositAmount = 12,
+    /// `accept_admin` was called with no transfer pending, or after it was
+    /// cancelled or already accepted.
+    NoPendingAdminTransfer = 12,
+    /// `set_quorum` was given a negative value.
+    InvalidQuorum = 13,
+    /// `set_pass_threshold_bps` was given a value outside
+    /// `MIN_PASS_THRESHOLD_BPS..=MAX_PASS_THRESHOLD_BPS`.
+    InvalidPassThresholdBps = 14,
+    /// `propose` matches another currently-active proposal's title and
+    /// description hash.
+    DuplicateActiveProposal = 15,
 }
