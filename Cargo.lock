@@ -832,6 +832,7 @@ dependencies = [
 name = "governance"
 version = "0.1.0"
 dependencies = [
+ "rwa-asset",
  "soroban-sdk",
  "stellarforge-common",
 ]
