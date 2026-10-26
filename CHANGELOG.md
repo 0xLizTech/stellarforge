@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `.devcontainer/devcontainer.json` with the pinned Rust toolchain (`rust-toolchain.toml`), `wasm32v1-none`, `stellar-cli` `27.1.0`, and Node.js 22 preinstalled, running `npm ci` in `sdk/` on creation (#81).
+- `.vscode/tasks.json` defining `make build`, `make lint`, `make test`, and `npm test` grouped as build and test tasks (#82).
+- `make doctor` target (`scripts/doctor.sh`) checking `rustc`, `wasm32v1-none`, `stellar-cli`, `node`, and `npm` versions against the repository's pinned expectations (#86).
 - `ci`: Add `contracts/size-budget.json` establishing tracked byte thresholds for each contract, enforced in `.github/workflows/contracts-ci.yml` (#94).
 - `ci`: Add `deny.toml` and `cargo-deny` check in `.github/workflows/security.yml` to enforce license compliance (Apache-2.0, MIT, BSD) and deny unknown registries (#91).
 - Stage 1 developer-experience tooling:

@@ -124,6 +124,9 @@ a weekly schedule.
 git clone https://github.com/0xLizTech/stellarforge.git
 cd stellarforge
 
+# Verify required toolchain versions (rustc, wasm32v1-none, stellar-cli, node, npm)
+make doctor
+
 # Build everything
 make build
 
@@ -136,6 +139,21 @@ make sdk-test
 make sdk-lint
 make sdk-typecheck
 ```
+
+### Devcontainer & Codespaces
+
+If you use GitHub Codespaces or the VS Code Dev Containers extension, `.devcontainer/devcontainer.json` provisions a ready-to-use environment with the pinned Rust toolchain (`rust-toolchain.toml`), the `wasm32v1-none` target, `stellar-cli` (`27.1.0`, matching CI), and Node.js 22 preinstalled, and runs `npm ci` in `sdk/` automatically on container creation so `make test` and `npm test` work immediately without manual setup.
+
+### VS Code Tasks
+
+`.vscode/tasks.json` defines Command Palette tasks (**Terminal: Run Task**) grouped into build and test tasks:
+
+| Task label | Group | Command | Description |
+|---|---|---|---|
+| `make build` | `build` (default) | `make build` | Build all Soroban WASM contracts |
+| `make lint` | `build` | `make lint` | Run Clippy linter across the Rust workspace |
+| `make test` | `test` (default) | `make test` | Run all Rust contract tests |
+| `npm test` | `test` | `npm test` (in `sdk/`) | Run TypeScript SDK unit tests |
 
 ### Running a single contract's tests
 
@@ -173,7 +191,8 @@ stellarforge/
 │   ├── registry/           # Global registry of deployed asset contracts
 │   ├── compliance/         # KYC/AML record management
 │   ├── governance/         # On-chain proposal & voting
-│   └── oracle-adapter/     # SEP-40 NAV price feed (Phase 2)
+│   ├── oracle-adapter/     # SEP-40 NAV price feed (Phase 2)
+│   └── vault/              # Fractionalization vault & SEP-41 share token (Phase 2)
 ├── sdk/                    # @stellarforge-protocol/sdk (TypeScript)
 │   ├── src/
 │   │   ├── client.ts       # RwaAssetClient, ComplianceClient

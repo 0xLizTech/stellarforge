@@ -1,0 +1,46 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "make build",
+      "type": "shell",
+      "command": "make build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$rustc",
+      "detail": "Build all Soroban WASM contracts"
+    },
+    {
+      "label": "make lint",
+      "type": "shell",
+      "command": "make lint",
+      "group": "build",
+      "problemMatcher": "$rustc",
+      "detail": "Run Clippy linter across the Rust workspace"
+    },
+    {
+      "label": "make test",
+      "type": "shell",
+      "command": "make test",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": "$rustc",
+      "detail": "Run all Rust contract tests"
+    },
+    {
+      "label": "npm test",
+      "type": "shell",
+      "command": "npm test",
+      "options": {
+        "cwd": "${workspaceFolder}/sdk"
+      },
+      "group": "test",
+      "problemMatcher": [],
+      "detail": "Run TypeScript SDK unit tests in sdk/"
+    }
+  ]
+}
