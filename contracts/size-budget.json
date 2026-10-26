@@ -1,7 +1,27 @@
-﻿{
-  "rwa_asset": 65536,
-  "registry": 65536,
-  "compliance": 65536,
-  "governance": 65536,
-  "oracle_adapter": 65536
+{
+  "rwa-asset": {
+    "wasm": "rwa_asset.wasm",
+    "baseline_bytes": 35879,
+    "max_bytes": 45056
+  },
+  "registry": {
+    "wasm": "registry.wasm",
+    "baseline_bytes": 11398,
+    "max_bytes": 20480
+  },
+  "compliance": {
+    "wasm": "compliance.wasm",
+    "baseline_bytes": 13355,
+    "max_bytes": 20480
+  },
+  "governance": {
+    "wasm": "governance.wasm",
+    "baseline_bytes": 23399,
+    "max_bytes": 32768
+  },
+  "oracle-adapter": {
+    "wasm": "oracle_adapter.wasm",
+    "baseline_bytes": 20141,
+    "max_bytes": 28672
+  }
 }

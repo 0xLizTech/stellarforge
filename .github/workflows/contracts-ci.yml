@@ -3,21 +3,18 @@ name: Contracts CI
 on:
   push:
     branches: [main, develop]
-    paths:
+    paths: &contracts-paths
       - "contracts/**"
-      - "Cargo.toml"
+      - "**/Cargo.toml"
       - "Cargo.lock"
       - "sdk/tests/fixtures/oracle-parity-table.json"
       - "scripts/generate-oracle-parity-table.cjs"
+      - "scripts/check-soroban-sdk-version.cjs"
+      - "scripts/check-wasm-size.cjs"
       - ".github/workflows/contracts-ci.yml"
   pull_request:
     branches: [main, develop]
-    paths:
-      - "contracts/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "sdk/tests/fixtures/oracle-parity-table.json"
-      - "scripts/generate-oracle-parity-table.cjs"
+    paths: *contracts-paths
 
 env:
   CARGO_TERM_COLOR: always
@@ -44,6 +41,9 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check soroban-sdk version consistency
+        run: node scripts/check-soroban-sdk-version.cjs
 
       - name: cargo fmt check
         run: cargo fmt --all -- --check
@@ -79,6 +79,9 @@ jobs:
   build-wasm:
     name: Build WASM Artifacts
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -110,32 +113,35 @@ jobs:
           stellar contract build --manifest-path contracts/oracle-adapter/Cargo.toml
           stellar contract build --manifest-path contracts/vault/Cargo.toml
 
-      - name: Check WASM size budgets
-        run: |
-          node -e '
-            const fs = require("fs");
-            const path = require("path");
-            const budgets = JSON.parse(fs.readFileSync("contracts/size-budget.json", "utf8"));
-            let failed = false;
-            for (const [name, budget] of Object.entries(budgets)) {
-              const file = path.join("target/wasm32v1-none/release", `${name}.wasm`);
-              if (fs.existsSync(file)) {
-                const size = fs.statSync(file).size;
-                console.log(`[SIZE] ${name}: ${size} bytes (budget: ${budget} bytes)`);
-                if (size > budget) {
-                  console.error(`[ERROR] ${name} exceeds budget (${size} > ${budget})`);
-                  failed = true;
-                }
-              }
-            }
-            if (failed) process.exit(1);
-          '
-
       # Published with the artifacts, so the hash of a deployed contract's wasm
       # can be checked against the commit that built it.
       - name: Record wasm checksums
         working-directory: target/wasm32v1-none/release
         run: sha256sum *.wasm | tee SHA256SUMS
+
+      - name: Extract base size budget for delta calculation
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          if git cat-file -e FETCH_HEAD:contracts/size-budget.json 2>/dev/null; then
+            git show FETCH_HEAD:contracts/size-budget.json > /tmp/base-size-budget.json
+          fi
+
+      - name: Check contract WASM sizes against budget
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BASE_ARG=""
+          if [ -f /tmp/base-size-budget.json ]; then
+            BASE_ARG="--base /tmp/base-size-budget.json"
+          fi
+          node scripts/check-wasm-size.cjs \
+            --budget contracts/size-budget.json \
+            --wasm-dir target/wasm32v1-none/release \
+            --output-markdown target/wasm32v1-none/release/wasm-size-report.md \
+            --output-json target/wasm32v1-none/release/wasm-sizes.json \
+            --post-pr-comment \
+            $BASE_ARG
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf6581a12fe42986043a # v4.4.3
@@ -144,6 +150,8 @@ jobs:
           path: |
             target/wasm32v1-none/release/*.wasm
             target/wasm32v1-none/release/SHA256SUMS
+            target/wasm32v1-none/release/wasm-size-report.md
+            target/wasm32v1-none/release/wasm-sizes.json
           retention-days: 7
 
   reproducible-wasm:

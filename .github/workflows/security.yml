@@ -11,6 +11,7 @@ on:
       - "contracts/**/*.rs"
       - "**/Cargo.toml"
       - "Cargo.lock"
+      - "deny.toml"
       - "sdk/package.json"
       - "sdk/package-lock.json"
       - ".github/workflows/security.yml"
@@ -39,6 +40,19 @@ jobs:
       - name: Run audit
         run: cargo audit
 
+  cargo-deny:
+    name: Cargo Deny (licenses, bans, and sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # Pinned and --locked, matching cargo-audit above.
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked --version 0.20.2
+
+      - name: Check licenses, bans, and sources
+        run: cargo deny check
+
   npm-audit:
     name: npm Audit (SDK runtime dependencies)
     runs-on: ubuntu-latest
@@ -62,12 +76,3 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/dependency-review-action@72eb423297a7cc29376c3e0026574f1a203f9052 # v4.5.0
-
-  cargo-deny:
-    name: Cargo Deny (Licenses & Bans)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check licenses bans sources

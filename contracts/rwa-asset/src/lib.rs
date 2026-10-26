@@ -9,8 +9,8 @@ pub use error::RwaError;
 pub use events::{
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, Approve, Burn,
     CapIncreaseCancelled, CapIncreaseProposed, ComplianceSet, ForcedTransfer, FrozenSet,
-    GovernanceSet, HolderCapSet, IssuerSet, LockupDateSet, MetadataUpdated, Mint, Paused,
-    Transfer, TransferFrom,
+    GovernanceSet, HolderCapSet, IssuerSet, LockupDateSet, MetadataUpdated, Mint, Paused, Transfer,
+    TransferFrom,
 };
 
 use stellarforge_common::{extend_instance, extend_persistent};
@@ -1207,9 +1207,7 @@ impl RwaAssetContract {
             Some(v) => v,
             None => panic_with_error!(env, RwaError::Overflow),
         };
-        env.storage()
-            .persistent()
-            .set(&DataKey::HolderCount, &next);
+        env.storage().persistent().set(&DataKey::HolderCount, &next);
         extend_persistent(env, &DataKey::HolderCount);
     }
 
@@ -1224,9 +1222,7 @@ impl RwaAssetContract {
             .get(&DataKey::HolderCount)
             .unwrap_or(0);
         let next = current.saturating_sub(1);
-        env.storage()
-            .persistent()
-            .set(&DataKey::HolderCount, &next);
+        env.storage().persistent().set(&DataKey::HolderCount, &next);
         extend_persistent(env, &DataKey::HolderCount);
     }
 

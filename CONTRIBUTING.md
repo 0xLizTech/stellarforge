@@ -256,6 +256,11 @@ Branch naming conventions:
 make fmt
 make lint
 
+# Workspace tooling checks (soroban-sdk consistency, WASM size budgets, cargo-deny)
+node scripts/check-soroban-sdk-version.cjs
+node scripts/check-wasm-size.cjs
+cargo deny check
+
 # TypeScript SDK
 make sdk-lint
 make sdk-typecheck
@@ -266,7 +271,36 @@ make all
 
 CI will reject PRs that fail formatting or linting.
 
-### 4. Write tests
+### 4. Upgrading `soroban-sdk` and Managing WASM Budgets
+
+#### Upgrading `soroban-sdk` (#95)
+
+All workspace crates inherit `soroban-sdk` from a single `[workspace.dependencies]` entry in the root [`Cargo.toml`](Cargo.toml). Individual crates must always declare `soroban-sdk = { workspace = true }` (with optional `features = ["testutils"]` in `[dev-dependencies]`) and must never pin a per-crate `version`, `git`, or `path` override. `node scripts/check-soroban-sdk-version.cjs` enforces this rule in CI.
+
+To upgrade `soroban-sdk` across the workspace:
+
+1. **Update the root manifest:** Edit `soroban-sdk = { version = "..." }` under `[workspace.dependencies]` in the root `Cargo.toml`.
+2. **Align `stellar-cli` in CI:** If the major or minor version changes, update `STELLAR_CLI_VERSION` and `STELLAR_CLI_SHA256` in `.github/workflows/contracts-ci.yml` and `.github/workflows/testnet-smoke.yml`.
+3. **Refresh `Cargo.lock` and verify consistency:**
+   ```bash
+   cargo update -p soroban-sdk
+   node scripts/check-soroban-sdk-version.cjs
+   cargo deny check
+   ```
+4. **Rebuild contracts, verify WASM budgets, and run tests:**
+   ```bash
+   make build
+   node scripts/check-wasm-size.cjs
+   node scripts/generate-oracle-parity-table.cjs
+   make test
+   make sdk-test
+   ```
+
+#### Contract WASM Size Budgets (#93, #94)
+
+Each deployable contract (`rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`) has a byte budget tracked in [`contracts/size-budget.json`](contracts/size-budget.json). In CI, `.github/workflows/contracts-ci.yml` builds all five contracts, runs `node scripts/check-wasm-size.cjs` to compare their optimized `.wasm` sizes against `contracts/size-budget.json`, comments the size delta table on pull requests, and fails the build if any contract exceeds its `max_bytes` ceiling. Raising a contract's budget requires an explicit, reviewed edit to `contracts/size-budget.json`.
+
+### 5. Write tests
 
 See [Testing Requirements](#testing-requirements).
 
