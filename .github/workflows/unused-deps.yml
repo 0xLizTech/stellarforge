@@ -1,0 +1,37 @@
+name: Unused Dependencies
+
+# Fails when a Cargo crate declares a dependency it does not use. Unused crates
+# enlarge the compiled WASM and widen the audit surface, so they are caught
+# before merge and on a schedule for crates that drift out of use over time.
+on:
+  schedule:
+    # Weekly, Mondays 09:30 UTC, just after the security audit.
+    - cron: "30 9 * * 1"
+  push:
+    branches: [main]
+    paths: &cargo-paths
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/unused-deps.yml"
+  pull_request:
+    branches: [main, develop]
+    paths: *cargo-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  machete:
+    name: cargo-machete (unused Cargo dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Pinned and --locked, so the checker is the same build on every run,
+      # mirroring how security.yml installs cargo-audit.
+      - name: Install cargo-machete
+        run: cargo install cargo-machete --locked --version 0.9.1
+
+      - name: Run cargo-machete
+        run: cargo machete
