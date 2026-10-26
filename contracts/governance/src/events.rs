@@ -64,10 +64,6 @@ pub struct ProposalDepositRefunded {
     pub amount: i128,
 }
 
-/// Published by `transfer_admin`. The incoming admin is data rather than a
-/// topic, matching `rwa-asset`, so one topic filter on the outgoing address
-/// finds every handover away from a key being watched.
-#[contractevent(topics = ["transfer_admin"], data_format = "single-value")]
 /// Published by `propose_admin`. Distinct from `AdminTransferred`: the role
 /// has not moved yet, only a handover has been proposed. An indexer watching
 /// an admin address for the moment it loses control should key on
@@ -92,6 +88,12 @@ pub struct AdminTransferred {
     pub new_admin: Address,
 }
 
+/// Published by `set_weight_source`, matching `rwa-asset`'s `ComplianceSet`
+/// (no topic, since there is only ever one weight source to watch).
+#[contractevent(topics = ["weight_source"], data_format = "map")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeightSourceSet {
+    pub weight_source: Option<Address>,
 /// Published by `cancel_proposal`. `cancelled_by` is data rather than a
 /// topic: a topic filter on `proposal_id` already finds this alongside every
 /// other event in that proposal's history, and who cancelled it matters far
@@ -102,6 +104,8 @@ pub struct ProposalCancelled {
     #[topic]
     pub proposal_id: u64,
     pub cancelled_by: Address,
+}
+
 /// Published by `set_proposal_deposit` (#134). `token` is `None` when the
 /// admin has disabled the deposit requirement, matching how `rwa-asset`
 /// reports `compliance: None` in `ComplianceSet` for the same "disabled"
@@ -111,6 +115,8 @@ pub struct ProposalCancelled {
 pub struct DepositConfigured {
     pub token: Option<Address>,
     pub amount: i128,
+}
+
 /// Published by `cancel_admin_transfer`.
 #[contractevent(topics = ["cancel_admin_transfer"], data_format = "single-value")]
 #[derive(Clone, Debug, Eq, PartialEq)]

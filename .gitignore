@@ -24,7 +24,8 @@ deployed-contracts.json
 
 # ─── IDE & OS ─────────────────────────────────────────────────────────────────
 .DS_Store
-.vscode/settings.json
+.vscode/*
+!.vscode/settings.json
 !.vscode/extensions.json
 !.vscode/launch.json
 *.swp

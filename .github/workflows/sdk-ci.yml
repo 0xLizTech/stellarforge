@@ -20,13 +20,13 @@ jobs:
     name: Oracle parity fixture (Rust → JSON)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc --version
 
       - name: Cache cargo registry
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ runner.os }}-oracle-parity-${{ hashFiles('**/Cargo.lock') }}
 
@@ -43,13 +43,18 @@ jobs:
     needs: [oracle-parity]
     strategy:
       matrix:
-        node-version: ["22", "24"]
+        # 22.12 is the engines floor (package.json) — tested exactly so a
+        # breaking dependency that raises it fails CI instead of users.
+        # 24 is the current LTS line. Node 20 is below the floor: the
+        # CommonJS build requires ESM-only deps, which Node supports without a
+        # flag only from 22.12.
+        node-version: ["22.12", "24"]
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
@@ -58,6 +63,10 @@ jobs:
       - name: Install dependencies
         working-directory: sdk
         run: npm ci
+
+      - name: Lint
+        working-directory: sdk
+        run: npm run lint
 
       - name: Type check
         working-directory: sdk
@@ -71,9 +80,9 @@ jobs:
     name: Build Package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: "npm"
@@ -88,7 +97,7 @@ jobs:
         run: npm run build
 
       - name: Upload dist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf6581a12fe42986043a # v4.4.3
         with:
           name: sdk-dist
           path: sdk/dist/

@@ -1,0 +1,68 @@
+name: Pull Request Size Labeler
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  size-label:
+    name: Label PR Size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Calculate and apply size label
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const totalChanges = pr.additions + pr.deletions;
+            let sizeLabel = 'size/S';
+
+            if (totalChanges > 1000) {
+              sizeLabel = 'size/XL';
+            } else if (totalChanges > 500) {
+              sizeLabel = 'size/L';
+            } else if (totalChanges > 100) {
+              sizeLabel = 'size/M';
+            }
+
+            const sizeLabels = ['size/S', 'size/M', 'size/L', 'size/XL'];
+            const currentLabels = pr.labels.map(l => l.name);
+
+            for (const label of currentLabels) {
+              if (sizeLabels.includes(label) && label !== sizeLabel) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: context.issue.number,
+                    name: label,
+                  });
+                } catch (e) {
+                  // Ignore if label not found
+                }
+              }
+            }
+
+            if (!currentLabels.includes(sizeLabel)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: [sizeLabel],
+              });
+            }
+
+            if (sizeLabel === 'size/XL') {
+              core.warning(
+                `PR is marked as size/XL (${totalChanges} changes). Please consider breaking it down into smaller, reviewable PRs.`
+              );
+            }

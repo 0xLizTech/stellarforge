@@ -1,0 +1,19 @@
+[package]
+name = "contracts-vault-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+soroban-sdk = { version = "27.0.5", features = ["testutils"] }
+contracts-vault = { path = ".." }
+
+[[bin]]
+name = "vault_fuzz"
+path = "fuzz_targets/vault_fuzz.rs"
+test = false
+doc = false

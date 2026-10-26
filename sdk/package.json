@@ -29,7 +29,7 @@
     "test:watch": "vitest",
     "test:smoke": "vitest run tests/smoke.testnet.test.ts",
     "test:smoke:write": "vitest run tests/smoke.write.testnet.test.ts",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "prepack": "cp ../LICENSE ./LICENSE"
   },
@@ -50,9 +50,15 @@
     "@stellar/stellar-sdk": "^17.0.1"
   },
   "devDependencies": {
+    "@commitlint/config-conventional": "^21.2.4",
+    "@commitlint/lint": "^21.2.4",
+    "@commitlint/load": "^21.2.4",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.5.0",
-    "tsup": "^8.0.0",
+    "eslint": "^10.13.0",
+    "tsup": "^9.0.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.72.0",
     "vitest": "^5.0.0"
   },
   "engines": {
