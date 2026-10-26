@@ -3,7 +3,7 @@
 //! Topic lists and data formats match Stellar token conventions (SEP-41)
 //! and `rwa-asset`, ensuring existing indexers and explorers consume them unmodified.
 
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{contractevent, Address, Vec};
 
 /// Published by `transfer`, in SEP-41's current format: the amount, plus the
 /// recipient's muxed id when `to` was a muxed address.
@@ -56,20 +56,32 @@ pub struct AdminTransferred {
     pub new_admin: Address,
 }
 
-/// Published by `set_compliance`. `compliance` is `None` when screening was
-/// switched off, which is the case ADR-004 singles out for monitoring.
-#[contractevent(topics = ["set_compliance"], data_format = "map")]
+/// Published by `deposit`: `from` as topic, and data `{ amount, shares, locked_until }`.
+#[contractevent(topics = ["deposit"], data_format = "map")]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ComplianceSet {
-    pub compliance: Option<Address>,
-    pub min_level: u32,
+pub struct Deposit {
+    #[topic]
+    pub from: Address,
+    pub amount: i128,
+    pub shares: i128,
+    pub locked_until: u64,
 }
 
-/// Published by `set_max_share_supply`. Carries both the previous and new cap
-/// so a monitor can reconstruct cap changes from the event stream alone.
-#[contractevent(topics = ["set_max_share_supply"], data_format = "map")]
+/// Published by `redeem`: `holder` as topic, and data `{ shares, amount }`.
+#[contractevent(topics = ["redeem"], data_format = "map")]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MaxShareSupplySet {
-    pub previous: i128,
-    pub max_share_supply: i128,
+pub struct Redeem {
+    #[topic]
+    pub holder: Address,
+    pub shares: i128,
+    pub amount: i128,
+}
+
+/// Published by `set_oracles`: `admin` as topic, and data with list of configured oracle addresses.
+#[contractevent(topics = ["set_oracles"], data_format = "map")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetOracles {
+    #[topic]
+    pub admin: Address,
+    pub oracles: Vec<Address>,
 }

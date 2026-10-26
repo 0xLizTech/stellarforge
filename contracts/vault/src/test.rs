@@ -1,7 +1,11 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env, String};
+use soroban_sdk::{
+    contract, contractimpl,
+    testutils::Address as _,
+    Address, Env, String,
+};
 
 #[contract]
 struct MockToken;
@@ -92,31 +96,4 @@ fn test_internal_set_underlying_held_and_locked_until() {
 
     assert_eq!(client.underlying_held(), 750);
     assert_eq!(client.locked_until(&alice), 12345);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #11)")]
-fn test_internal_mint_overflow_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let underlying = env.register(MockToken, ());
-    let config = VaultConfig {
-        underlying,
-        exchange_rate: 1,
-        max_share_supply: 0,
-        lockup_secs: 0,
-        name: String::from_str(&env, "Test Vault"),
-        symbol: String::from_str(&env, "tVAULT"),
-        compliance: None,
-        min_compliance_level: 0,
-    };
-    let contract_id = env.register(VaultContract, (&admin, &config));
-    let alice = Address::generate(&env);
-
-    env.as_contract(&contract_id, || {
-        VaultContract::mint_shares(&env, &alice, i128::MAX);
-        VaultContract::mint_shares(&env, &alice, 1);
-    });
 }

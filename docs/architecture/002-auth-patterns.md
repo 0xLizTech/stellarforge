@@ -201,6 +201,17 @@ changes who authenticates. Two new entry points extend the map:
 |---|---|---|---|
 | `rwa-asset` | `burn_from` | `spender` | Not `from`: as with `transfer_from`, the allowance is the authority |
 | | `decimals`, `name`, `symbol` | nobody | Pure reads of `AssetMetadata` |
+| `vault` | `__constructor` | `admin` | Configuration auth (IR-17) |
+| | `deposit` | `from` | Sub-invokes underlying token transfer into vault |
+| | `redeem` | `holder` | Vault authorizes underlying transfer to holder |
+| | `transfer` | `from` | Shareholder moves own position |
+| | `transfer_from` | `spender` | Allowance is the authority |
+| | `approve` | `owner` | Granting allowance |
+| | `set_paused` | `admin` | Emergency control |
+| | `set_oracles` | `admin` | Multi-source oracle configuration |
+| | `transfer_admin` | `admin` and `new_admin` | Dual-authorization handover (NFR-S-4) |
+| | `balance`, `total_supply`, `allowance`, `decimals`, `name`, `symbol`, `locked_until`, `admin`, `config`, `underlying_held`, `paused`, `redeemable`, `oracles`, `nav`, `nav_per_share` | nobody | Pure state reads |
+| | `balance`, `total_supply`, `balance_at`, `total_supply_at`, `allowance`, `decimals`, `name`, `symbol`, `locked_until`, `admin`, `config`, `underlying_held`, `paused`, `redeemable`, `oracles`, `nav`, `nav_per_share` | nobody | Pure state reads |
 
 That makes `burn_from` a fourth deliberate exception, alongside
 `transfer_from`, `screen` and `finalize`.
@@ -237,19 +248,3 @@ Trying the flow on testnet before building it settled three things:
 - **`authorizeEntry` checks nothing.** It signs with whatever key it is given,
   so the SDK compares the signer with each entry's address before signing,
   instead of leaving the mismatch to surface as a rejected transaction.
-
-## Amendment (2026-10) — Phase 2 `vault` authorization map (#57, #69)
-
-The fractionalization `vault` contract (ADR-006) follows the same explicit-parameter and `require_admin` patterns as `rwa-asset`, with no public `burn` or `burn_from` entry points:
-
-| Contract | Entry point | Must authenticate | Notes |
-|---|---|---|---|
-| `vault` | `__constructor` | the named `admin` | Asserted in `tests/test_constructor_auth.rs` |
-| | `transfer` | `from` | SEP-41 share transfer |
-| | `approve` | `owner` | SEP-41 allowance with `live_until_ledger` |
-| | `transfer_from` | `spender` | Not `from` — the allowance is the authority |
-| | `set_paused` | admin | Same-ledger emergency pause |
-| | `transfer_admin` | admin **and** `new_admin` | NFR-S-4 |
-| | `set_compliance` | admin | Rebinds or clears compliance screening (#69) |
-| | `set_max_share_supply` | admin | Tighten-only share supply cap (#69) |
-| | `balance`, `total_supply`, `allowance`, `decimals`, `name`, `symbol`, `locked_until`, `admin`, `paused`, `config`, `underlying_held` | nobody | Pure reads |

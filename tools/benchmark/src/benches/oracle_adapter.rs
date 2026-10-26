@@ -85,10 +85,8 @@ pub fn run() -> Vec<Row> {
     rows.push(measure(&env, CONTRACT, "set_max_deviation"));
 
     let new_admin = Address::generate(&env);
-    client.propose_admin(&new_admin);
-    rows.push(measure(&env, CONTRACT, "propose_admin"));
-    client.accept_admin();
-    rows.push(measure(&env, CONTRACT, "accept_admin"));
+    client.transfer_admin(&new_admin);
+    rows.push(measure(&env, CONTRACT, "transfer_admin"));
 
     rows
 }

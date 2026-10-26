@@ -47,12 +47,11 @@ const VOTING_PERIOD: u32 = 17_280; // governance::MIN_VOTING_PERIOD_LEDGERS
 const REGRESSION_THRESHOLD_PERCENT: u64 = 20;
 
 // Baselines captured on this development machine's test host (see the module
-// doc comment). Updated after #134 (deposit fields), #135 (quorum and pass
-// threshold evaluation), and #136 (SHA-256 content-hash duplicate check on
-// propose and active-hash removal on finalize).
-const PROPOSE_BASELINE_INSNS: u64 = 194_672;
+// doc comment). Each is the instruction count the matching test below
+// recorded at the time this file was written.
+const PROPOSE_BASELINE_INSNS: u64 = 124_347;
 const VOTE_BASELINE_INSNS: u64 = 179_636;
-const FINALIZE_BASELINE_INSNS: u64 = 145_748;
+const FINALIZE_BASELINE_INSNS: u64 = 113_920;
 
 struct Harness<'a> {
     env: Env,

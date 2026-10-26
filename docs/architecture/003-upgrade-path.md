@@ -38,11 +38,10 @@ Fixing a contract means deploying a new one and moving traffic to it. How well t
 | `registry` | Asset directory | Redeploy, re-`register` each asset. The directory is a convenience index, re-derivable from the operator's records |
 | `governance` | Proposals and votes | Redeploy. History is preserved in events; in-flight proposals are lost |
 | `rwa-asset` | **Holder balances** | **There is none** |
-| `vault` | **Share balances & underlying custody** | **There is none** (every holder would have to redeem and re-deposit) |
 
-That last pair is the important one. Balances live in the asset or vault contract's own persistent storage, keyed by holder address. A redeployed asset or vault contract starts at zero supply with zero holders, and nothing in the protocol can move the old balances across — reading another contract's storage directly is not something Soroban permits, and even a migration entry point on the new contract would need every holder to act.
+That last row is the important one. Balances live in the asset contract's own persistent storage, keyed by holder address. A redeployed asset contract starts at zero supply with zero holders, and nothing in the protocol can move the old balances across — reading another contract's storage directly is not something Soroban permits, and even a migration entry point on the new contract would need every holder to act.
 
-**So `rwa-asset` and `vault` are, for practical purposes, permanent once they have holders.** Not by an explicit decision to make them so, but as a consequence of two decisions taken together: no upgrade entry point, and state that cannot be exported.
+**So `rwa-asset` is, for practical purposes, permanent once it has holders.** Not by an explicit decision to make it so, but as a consequence of two decisions taken together: no upgrade entry point, and state that cannot be exported.
 
 ### Error discriminants are frozen
 
@@ -50,7 +49,8 @@ Every `#[contracterror]` enum pins its variants with `#[repr(u32)]` and explicit
 
 > Discriminants are part of the contract's public interface: clients match on the numeric code, so existing variants must keep their values and new ones must be appended. Renumbering silently changes what a deployed client believes went wrong.
 
-The current allocations are `RwaError` 1–25, `GovernanceError` 1–16, `RegistryError` 1–7, `ComplianceError` 1–8, and for Phase 2 `OracleError` 1–14 and `VaultError` 1–17.
+The current allocations are `RwaError` 1–14, `GovernanceError` 1–11, `RegistryError` 1–5, `ComplianceError` 1–5, and for Phase 2 `OracleError` 1–13 and `VaultError` 1–25.
+The current allocations are `RwaError` 1–14, `GovernanceError` 1–11, `RegistryError` 1–5, `ComplianceError` 1–5, and for Phase 2 `OracleError` 1–13 and `VaultError` 1–26.
 
 The word doing the work is *silently*. A renumbered variant does not break a build or fail a test. A deployed SDK that maps 11 to "not compliant" keeps mapping 11 to "not compliant", and simply starts telling people the wrong thing about why their transfer failed. Nothing anywhere reports an error, which is the property that makes this worth an ADR rather than a comment.
 

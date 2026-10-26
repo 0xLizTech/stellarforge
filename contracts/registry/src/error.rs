@@ -31,5 +31,5 @@ pub enum RegistryError {
     ContractPaused = 6,
     /// `accept_admin` was called with no transfer pending, or after it was
     /// cancelled or already accepted.
-    NoPendingAdminTransfer = 7,
+    NoPendingAdminTransfer = 6,
 }

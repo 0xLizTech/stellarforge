@@ -5,7 +5,10 @@
 //! After any sequence of mints, burns and transfers, the stored `holder_count`
 //! must equal the number of addresses whose `balance` is strictly positive.
 
-use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String};
+use soroban_sdk::{
+    testutils::Address as _,
+    Address, Bytes, Env, String,
+};
 
 use rwa_asset::{AssetMetadata, RwaAssetContract, RwaAssetContractClient, RwaError};
 
@@ -357,7 +360,11 @@ fn test_holder_count_invariant() {
                 // Burn if balance is positive
                 let bal = client.balance(addr);
                 if bal > 0 {
-                    let burn_amount = if bal >= 5 * UNIT { 5 * UNIT } else { bal };
+                    let burn_amount = if bal >= 5 * UNIT {
+                        5 * UNIT
+                    } else {
+                        bal
+                    };
                     client.burn(addr, &burn_amount);
                 }
             }
@@ -365,7 +372,11 @@ fn test_holder_count_invariant() {
                 // Transfer to another holder
                 let bal = client.balance(addr);
                 if bal > 0 {
-                    let transfer_amount = if bal >= 3 * UNIT { 3 * UNIT } else { bal };
+                    let transfer_amount = if bal >= 3 * UNIT {
+                        3 * UNIT
+                    } else {
+                        bal
+                    };
                     client.transfer(addr, other, &transfer_amount);
                 }
             }
@@ -414,14 +425,22 @@ fn test_holder_count_invariant_with_cap() {
             1 => {
                 let bal = client.balance(addr);
                 if bal > 0 {
-                    let burn_amount = if bal >= 5 * UNIT { 5 * UNIT } else { bal };
+                    let burn_amount = if bal >= 5 * UNIT {
+                        5 * UNIT
+                    } else {
+                        bal
+                    };
                     client.burn(addr, &burn_amount);
                 }
             }
             2 => {
                 let bal = client.balance(addr);
                 if bal > 0 {
-                    let transfer_amount = if bal >= 3 * UNIT { 3 * UNIT } else { bal };
+                    let transfer_amount = if bal >= 3 * UNIT {
+                        3 * UNIT
+                    } else {
+                        bal
+                    };
                     // May fail if `other` has zero balance and count is at cap
                     let _ = client.try_transfer(addr, other, &transfer_amount);
                 }

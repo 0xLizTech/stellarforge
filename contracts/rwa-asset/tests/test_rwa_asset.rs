@@ -9,7 +9,7 @@ use soroban_sdk::{
 };
 
 use rwa_asset::{
-    AssetMetadata, DataKey, ForcedTransfer, FrozenSet, LockupDateSet, RwaAssetContract,
+    AssetMetadata, DataKey, FrozenSet, ForcedTransfer, LockupDateSet, RwaAssetContract,
     RwaAssetContractClient, RwaError,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
@@ -1225,6 +1225,84 @@ fn test_sep41_metadata_getters_match_the_metadata() {
     assert_eq!(client.symbol(), meta.symbol);
 }
 
+#[test]
+fn test_allowance_expiry_boundary_conditions() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    fund(&env, &client, &alice, 10_000);
+
+    let expiry_ledger: u32 = 100;
+    client.approve(&alice, &bob, &1_000, &expiry_ledger);
+
+    // Ledger = expiry - 1 (ledger 99)
+    env.ledger().with_mut(|li| li.sequence_number = expiry_ledger - 1);
+    assert_eq!(client.allowance(&alice, &bob), 1_000);
+    client.transfer_from(&bob, &alice, &recipient, &100);
+    assert_eq!(client.allowance(&alice, &bob), 900);
+
+    // Ledger = expiry (ledger 100)
+    env.ledger().with_mut(|li| li.sequence_number = expiry_ledger);
+    assert_eq!(client.allowance(&alice, &bob), 900);
+    client.transfer_from(&bob, &alice, &recipient, &100);
+    assert_eq!(client.allowance(&alice, &bob), 800);
+
+    // Ledger = expiry + 1 (ledger 101)
+    env.ledger().with_mut(|li| li.sequence_number = expiry_ledger + 1);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+    assert_eq!(
+        client.try_transfer_from(&bob, &alice, &recipient, &1),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+}
+
+#[test]
+fn test_allowance_overwriting_and_zeroing() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 5_000);
+
+    // Initial approval
+    client.approve(&alice, &bob, &500, &150);
+    assert_eq!(client.allowance(&alice, &bob), 500);
+
+    // Overwrite with higher amount and extended expiry
+    client.approve(&alice, &bob, &1_200, &200);
+    assert_eq!(client.allowance(&alice, &bob), 1_200);
+
+    // Zero out / revoke
+    client.approve(&alice, &bob, &0, &0);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+    assert_eq!(
+        client.try_transfer_from(&bob, &alice, &bob, &1),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+}
+
+#[test]
+fn test_burn_from_with_expired_allowance_fails() {
+    let (env, _, client) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund(&env, &client, &alice, 1_000);
+
+    client.approve(&alice, &bob, &400, &50);
+
+    // Advance past expiry
+    env.ledger().with_mut(|li| li.sequence_number = 51);
+    assert_eq!(client.allowance(&alice, &bob), 0);
+
+    // burn_from must fail with InsufficientAllowance
+    assert_eq!(
+        client.try_burn_from(&bob, &alice, &100),
+        Err(Ok(RwaError::InsufficientAllowance.into()))
+    );
+
+    // Balances and supply remain intact
+    assert_eq!(client.balance(&alice), 1_000);
+    assert_eq!(client.total_supply(), 1_000);
 // ─── Frozen Address Tests ───────────────────────────────────────────────────
 
 #[test]

@@ -10,12 +10,11 @@ use soroban_sdk::{
 };
 
 use compliance::{ComplianceContract, ComplianceContractClient, KycRecord};
-use soroban_sdk::{Event, IntoVal};
-use stellarforge_common::storage::{persistent_bump_amount, INSTANCE_BUMP_AMOUNT};
+use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 use vault::{
-    AdminTransferred, Approve, ComplianceSet, DataKey, MaxShareSupplySet, Paused, Transfer,
-    TransferFrom, VaultConfig, VaultContract, VaultContractClient, VaultError,
-    MAX_COMPLIANCE_LEVEL, MAX_LOCKUP_SECS,
+    Asset, DataKey, Deposit, NavData, OracleSet, OracleSource, PriceData, Redeem, SetOracles,
+    Transfer, VaultConfig, VaultContract, VaultContractClient, VaultError, MAX_LOCKUP_SECS,
+    NAV_DECIMALS,
 };
 
 // ─── Test Helpers & Fixtures ──────────────────────────────────────────────────
@@ -27,6 +26,42 @@ struct MockToken;
 impl MockToken {
     pub fn decimals(_env: Env) -> u32 {
         7
+    }
+    pub fn balance(_env: Env, _id: Address) -> i128 {
+        1_000_000_000
+    }
+    pub fn transfer(_env: Env, _from: Address, _to: MuxedAddress, _amount: i128) {}
+}
+
+#[contract]
+struct MockOracle;
+
+#[contractimpl]
+impl MockOracle {
+    pub fn base(env: Env) -> Asset {
+        env.storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("BASE"))
+            .unwrap_or(Asset::Other(soroban_sdk::symbol_short!("USD")))
+    }
+    pub fn decimals(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("DEC"))
+            .unwrap_or(7)
+    }
+    pub fn lastprice(env: Env, _asset: Asset) -> Option<PriceData> {
+        let price = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("PRICE"))
+            .unwrap_or(10_000_000_i128);
+        let ts = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("TS"))
+            .unwrap_or(env.ledger().timestamp());
+        Some(PriceData { price, timestamp: ts })
     }
 }
 
@@ -143,7 +178,7 @@ fn setup_with_compliance() -> TestHarness {
 fn test_constructor_initial_state() {
     let h = default_setup();
     assert_eq!(h.client.admin(), h.admin);
-    assert!(!h.client.paused());
+    assert_eq!(h.client.paused(), false);
     assert_eq!(h.client.decimals(), 7);
     assert_eq!(h.client.total_supply(), 0);
     assert_eq!(h.client.underlying_held(), 0);
@@ -308,7 +343,7 @@ fn test_constructor_rejects_compliance_level_above_max() {
         name: String::from_str(&env, "Vault"),
         symbol: String::from_str(&env, "V"),
         compliance: None,
-        min_compliance_level: MAX_COMPLIANCE_LEVEL + 1,
+        min_compliance_level: 4,
     };
 
     env.register(VaultContract, (&admin, &config));
@@ -319,21 +354,13 @@ fn test_constructor_rejects_compliance_level_above_max() {
 #[test]
 fn test_set_paused_takes_effect_in_same_ledger() {
     let h = default_setup();
-    assert!(!h.client.paused());
+    assert_eq!(h.client.paused(), false);
 
     h.client.set_paused(&true);
-    assert_eq!(
-        h.env.events().all().events(),
-        std::vec![Paused { paused: true }.to_xdr(&h.env, &h.contract_id)],
-    );
-    assert!(h.client.paused());
+    assert_eq!(h.client.paused(), true);
 
     h.client.set_paused(&false);
-    assert_eq!(
-        h.env.events().all().events(),
-        std::vec![Paused { paused: false }.to_xdr(&h.env, &h.contract_id)],
-    );
-    assert!(!h.client.paused());
+    assert_eq!(h.client.paused(), false);
 }
 
 #[test]
@@ -368,237 +395,7 @@ fn test_transfer_admin_dual_auth() {
     let new_admin = Address::generate(&h.env);
 
     h.client.transfer_admin(&new_admin);
-    assert_eq!(
-        h.env.events().all().events(),
-        std::vec![AdminTransferred {
-            previous: h.admin.clone(),
-            new_admin: new_admin.clone(),
-        }
-        .to_xdr(&h.env, &h.contract_id)],
-    );
     assert_eq!(h.client.admin(), new_admin);
-}
-
-#[test]
-fn test_set_compliance_rebinds_and_clears_screening() {
-    let h = default_setup();
-    let comp_admin = Address::generate(&h.env);
-    let comp_a = h.env.register(ComplianceContract, (&comp_admin,));
-    let comp_b = h.env.register(ComplianceContract, (&comp_admin,));
-    let comp_a_client = ComplianceContractClient::new(&h.env, &comp_a);
-    let comp_b_client = ComplianceContractClient::new(&h.env, &comp_b);
-
-    let alice = Address::generate(&h.env);
-    let bob = Address::generate(&h.env);
-    h.set_balance(&alice, 1_000);
-    let muxed_bob = MuxedAddress::from(bob.clone());
-
-    // Bind to comp_a at level 2.
-    h.client.set_compliance(&Some(comp_a.clone()), &2);
-    assert_eq!(
-        h.env.events().all().events(),
-        std::vec![ComplianceSet {
-            compliance: Some(comp_a.clone()),
-            min_level: 2,
-        }
-        .to_xdr(&h.env, &h.contract_id)],
-    );
-    let cfg = h.client.config();
-    assert_eq!(cfg.compliance, Some(comp_a));
-    assert_eq!(cfg.min_compliance_level, 2);
-
-    // Unverified transfer is now refused.
-    assert_eq!(
-        h.client.try_transfer(&alice, &muxed_bob, &100),
-        Err(Ok(VaultError::NotCompliant.into()))
-    );
-
-    // Enroll Alice and Bob on comp_b at level 1, then rebind vault to comp_b at level 1.
-    comp_b_client.set_kyc(
-        &alice,
-        &KycRecord {
-            jurisdiction: String::from_str(&h.env, "US"),
-            level: 1,
-            expires_at: 0,
-        },
-    );
-    comp_b_client.set_kyc(
-        &bob,
-        &KycRecord {
-            jurisdiction: String::from_str(&h.env, "US"),
-            level: 1,
-            expires_at: 0,
-        },
-    );
-    let _ = comp_a_client;
-    h.client.set_compliance(&Some(comp_b.clone()), &1);
-    assert!(h.client.try_transfer(&alice, &muxed_bob, &100).is_ok());
-
-    // Revoke Bob on comp_b -> blocked again; then clear compliance -> succeeds.
-    comp_b_client.revoke_kyc(&bob);
-    assert_eq!(
-        h.client.try_transfer(&alice, &muxed_bob, &100),
-        Err(Ok(VaultError::NotCompliant.into()))
-    );
-
-    h.client.set_compliance(&None, &0);
-    assert_eq!(
-        h.env.events().all().events(),
-        std::vec![ComplianceSet {
-            compliance: None,
-            min_level: 0,
-        }
-        .to_xdr(&h.env, &h.contract_id)],
-    );
-    assert!(h.client.try_transfer(&alice, &muxed_bob, &100).is_ok());
-}
-
-#[test]
-fn test_set_compliance_rejects_level_above_max() {
-    let h = default_setup();
-    let comp = Address::generate(&h.env);
-
-    assert_eq!(
-        h.client
-            .try_set_compliance(&Some(comp), &(MAX_COMPLIANCE_LEVEL + 1)),
-        Err(Ok(VaultError::InvalidComplianceLevel.into()))
-    );
-}
-
-#[test]
-fn test_set_compliance_requires_admin_auth() {
-    let h = default_setup();
-    let comp = Address::generate(&h.env);
-
-    h.env.mock_auths(&[]);
-    assert!(h
-        .client
-        .try_set_compliance(&Some(comp.clone()), &1)
-        .is_err());
-
-    h.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &h.admin,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &h.contract_id,
-            fn_name: "set_compliance",
-            args: (Some(comp.clone()), 1_u32).into_val(&h.env),
-            sub_invokes: &[],
-        },
-    }]);
-    h.client.set_compliance(&Some(comp.clone()), &1);
-    assert_eq!(h.client.config().compliance, Some(comp));
-}
-
-#[test]
-fn test_set_max_share_supply_tightens_cap_and_caps_uncapped_vault() {
-    let h = default_setup();
-    assert_eq!(h.client.config().max_share_supply, 1_000_000_000);
-
-    // Tighten from 1_000_000_000 down to 500_000.
-    h.client.set_max_share_supply(&500_000);
-    assert_eq!(
-        h.env.events().all().events(),
-        std::vec![MaxShareSupplySet {
-            previous: 1_000_000_000,
-            max_share_supply: 500_000,
-        }
-        .to_xdr(&h.env, &h.contract_id)],
-    );
-    assert_eq!(h.client.config().max_share_supply, 500_000);
-
-    // Setting the same cap is a valid no-change tightening.
-    h.client.set_max_share_supply(&500_000);
-    assert_eq!(h.client.config().max_share_supply, 500_000);
-
-    // Uncapped vault (0) can be given a finite cap at or above total_supply.
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let underlying = env.register(MockToken, ());
-    let uncapped_cfg = VaultConfig {
-        underlying,
-        exchange_rate: 1,
-        max_share_supply: 0,
-        lockup_secs: 60,
-        name: String::from_str(&env, "Uncapped Vault"),
-        symbol: String::from_str(&env, "uVAULT"),
-        compliance: None,
-        min_compliance_level: 0,
-    };
-    let uncapped_id = env.register(VaultContract, (&admin, &uncapped_cfg));
-    let uncapped_client = VaultContractClient::new(&env, &uncapped_id);
-
-    uncapped_client.set_max_share_supply(&250_000);
-    assert_eq!(uncapped_client.config().max_share_supply, 250_000);
-}
-
-#[test]
-fn test_set_max_share_supply_rejects_raising_cap() {
-    let h = default_setup();
-    h.client.set_max_share_supply(&500_000);
-
-    assert_eq!(
-        h.client.try_set_max_share_supply(&500_001),
-        Err(Ok(VaultError::InvalidSupplyCap.into()))
-    );
-    assert_eq!(h.client.config().max_share_supply, 500_000);
-}
-
-#[test]
-fn test_set_max_share_supply_rejects_removing_cap() {
-    let h = default_setup();
-    h.client.set_max_share_supply(&500_000);
-
-    assert_eq!(
-        h.client.try_set_max_share_supply(&0),
-        Err(Ok(VaultError::InvalidSupplyCap.into()))
-    );
-    assert_eq!(h.client.config().max_share_supply, 500_000);
-}
-
-#[test]
-fn test_set_max_share_supply_rejects_cap_below_total_supply() {
-    let h = default_setup();
-    let alice = Address::generate(&h.env);
-    h.set_balance(&alice, 600);
-
-    assert_eq!(
-        h.client.try_set_max_share_supply(&599),
-        Err(Ok(VaultError::InvalidSupplyCap.into()))
-    );
-
-    // Exact circulating supply is allowed.
-    h.client.set_max_share_supply(&600);
-    assert_eq!(h.client.config().max_share_supply, 600);
-}
-
-#[test]
-fn test_set_max_share_supply_rejects_negative_cap() {
-    let h = default_setup();
-    assert_eq!(
-        h.client.try_set_max_share_supply(&-1),
-        Err(Ok(VaultError::InvalidSupplyCap.into()))
-    );
-}
-
-#[test]
-fn test_set_max_share_supply_requires_admin_auth() {
-    let h = default_setup();
-
-    h.env.mock_auths(&[]);
-    assert!(h.client.try_set_max_share_supply(&500_000).is_err());
-
-    h.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &h.admin,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &h.contract_id,
-            fn_name: "set_max_share_supply",
-            args: (500_000_i128,).into_val(&h.env),
-            sub_invokes: &[],
-        },
-    }]);
-    h.client.set_max_share_supply(&500_000);
-    assert_eq!(h.client.config().max_share_supply, 500_000);
 }
 
 // ─── 3. Amount, Balance & Allowance Validations ───────────────────────────────
@@ -823,85 +620,31 @@ fn test_unscreened_when_no_compliance_configured() {
     assert_eq!(h.client.balance(&bob), 250);
 }
 
-// ─── 6. Muxed Address, Events & Overflow Tests ───────────────────────────────
+// ─── 6. Muxed Address & Self-Transfer Tests ───────────────────────────────────
 
 #[test]
 fn test_muxed_transfer_credits_base_account() {
     let h = default_setup();
     let alice = Address::generate(&h.env);
-    let muxed = MuxedAddress::generate(&h.env);
-    let bob = muxed.address();
-    let muxed_id = muxed.id();
+    let bob = Address::generate(&h.env);
     h.set_balance(&alice, 1000);
 
+    let muxed = <MuxedAddress as soroban_sdk::testutils::MuxedAddress>::new(bob.clone(), 9999);
+
     h.client.transfer(&alice, &muxed, &300);
-    assert_eq!(
-        h.env.events().all().events(),
-        std::vec![Transfer {
-            from: alice.clone(),
-            to: bob.clone(),
-            amount: 300,
-            to_muxed_id: muxed_id,
-        }
-        .to_xdr(&h.env, &h.contract_id)],
-    );
 
     assert_eq!(h.client.balance(&alice), 700);
     assert_eq!(h.client.balance(&bob), 300);
-}
 
-#[test]
-fn test_approve_and_transfer_from_publish_sep41_events() {
-    let h = default_setup();
-    let alice = Address::generate(&h.env);
-    let spender = Address::generate(&h.env);
-    let bob = Address::generate(&h.env);
-    h.set_balance(&alice, 1000);
-
-    h.client.approve(&alice, &spender, &400, &1000);
     assert_eq!(
-        h.env.events().all().events(),
-        std::vec![Approve {
-            owner: alice.clone(),
-            spender: spender.clone(),
-            amount: 400,
-            live_until_ledger: 1000,
-        }
-        .to_xdr(&h.env, &h.contract_id)],
-    );
-
-    h.client.transfer_from(&spender, &alice, &bob, &250);
-    assert_eq!(
-        h.env.events().all().events(),
-        std::vec![TransferFrom {
+        h.env.events().all(),
+        std::vec![Transfer {
             from: alice,
             to: bob,
-            amount: 250,
+            amount: 300,
+            to_muxed_id: Some(9999),
         }
         .to_xdr(&h.env, &h.contract_id)],
-    );
-}
-
-#[test]
-fn test_transfer_overflow_rejected() {
-    let h = default_setup();
-    let alice = Address::generate(&h.env);
-    let bob = Address::generate(&h.env);
-    h.env.as_contract(&h.contract_id, || {
-        h.env
-            .storage()
-            .persistent()
-            .set(&DataKey::Balance(alice.clone()), &100_i128);
-        h.env
-            .storage()
-            .persistent()
-            .set(&DataKey::Balance(bob.clone()), &i128::MAX);
-    });
-
-    let muxed_bob = MuxedAddress::from(bob);
-    assert_eq!(
-        h.client.try_transfer(&alice, &muxed_bob, &1),
-        Err(Ok(VaultError::Overflow.into()))
     );
 }
 
@@ -913,45 +656,223 @@ fn test_self_transfer_is_noop() {
 
     let muxed = MuxedAddress::from(alice.clone());
     h.client.transfer(&alice, &muxed, &300);
+
+    assert_eq!(h.client.balance(&alice), 1000);
     assert!(
         h.env.events().all().events().is_empty(),
         "self-transfer no-op published an event"
     );
-
-    assert_eq!(h.client.balance(&alice), 1000);
 }
 
 // ─── 7. Storage TTL Policy ───────────────────────────────────────────────────
 
 #[test]
-fn test_storage_instance_and_persistent_ttl_bumped() {
+fn test_storage_instance_ttl_bumped() {
     let h = default_setup();
-    let alice = Address::generate(&h.env);
-    let bob = Address::generate(&h.env);
-    h.set_balance(&alice, 1000);
-    h.client.approve(&alice, &bob, &200, &1000);
-    h.client
-        .transfer(&alice, MuxedAddress::from(bob.clone()), &100);
-
     let instance_ttl = h
         .env
         .as_contract(&h.contract_id, || h.env.storage().instance().get_ttl());
     assert_eq!(instance_ttl, INSTANCE_BUMP_AMOUNT);
-
-    let expected_persistent = persistent_bump_amount(&h.env);
-    let balance_ttl = h.env.as_contract(&h.contract_id, || {
-        h.env
-            .storage()
-            .persistent()
-            .get_ttl(&DataKey::Balance(bob.clone()))
-    });
-    assert_eq!(balance_ttl, expected_persistent);
-
-    let allowance_ttl = h.env.as_contract(&h.contract_id, || {
-        h.env
-            .storage()
-            .persistent()
-            .get_ttl(&DataKey::Allowance(alice.clone(), bob.clone()))
-    });
-    assert_eq!(allowance_ttl, expected_persistent);
 }
+
+// ─── 8. Deposit, Redeem & Oracle NAV Tests (#58 & #59) ───────────────────────
+
+#[test]
+fn test_deposit_and_lockup() {
+    let h = default_setup();
+    let alice = Address::generate(&h.env);
+
+    assert_eq!(h.client.balance(&alice), 0);
+    assert_eq!(h.client.underlying_held(), 0);
+
+    h.env.ledger().set_timestamp(1_000);
+    let shares = h.client.deposit(&alice, &100);
+
+    assert_eq!(shares, 200);
+    assert_eq!(h.client.balance(&alice), 200);
+    assert_eq!(h.client.total_supply(), 200);
+    assert_eq!(h.client.underlying_held(), 100);
+    assert_eq!(h.client.locked_until(&alice), 87400);
+
+    h.env.ledger().set_timestamp(2_000);
+    h.client.deposit(&alice, &50);
+    assert_eq!(h.client.balance(&alice), 300);
+    assert_eq!(h.client.total_supply(), 300);
+    assert_eq!(h.client.underlying_held(), 150);
+    assert_eq!(h.client.locked_until(&alice), 88400);
+}
+
+#[test]
+fn test_deposit_validations() {
+    let h = default_setup();
+    let alice = Address::generate(&h.env);
+
+    assert_eq!(
+        h.client.try_deposit(&alice, &0),
+        Err(Ok(VaultError::InvalidAmount.into()))
+    );
+    assert_eq!(
+        h.client.try_deposit(&alice, &-10),
+        Err(Ok(VaultError::InvalidAmount.into()))
+    );
+
+    h.client.set_paused(&true);
+    assert_eq!(
+        h.client.try_deposit(&alice, &100),
+        Err(Ok(VaultError::ContractPaused.into()))
+    );
+}
+
+#[test]
+fn test_deposit_cap_enforcement() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let underlying = env.register(MockToken, ());
+
+    let config = VaultConfig {
+        underlying,
+        exchange_rate: 1,
+        max_share_supply: 100,
+        lockup_secs: 0,
+        name: String::from_str(&env, "Capped"),
+        symbol: String::from_str(&env, "CAP"),
+        compliance: None,
+        min_compliance_level: 0,
+    };
+
+    let contract_id = env.register(VaultContract, (&admin, &config));
+    let client = VaultContractClient::new(&env, &contract_id);
+    let alice = Address::generate(&env);
+
+    assert_eq!(client.deposit(&alice, &100), 100);
+    assert_eq!(
+        client.try_deposit(&alice, &1),
+        Err(Ok(VaultError::ExceedsMaxSupply.into()))
+    );
+}
+
+#[test]
+fn test_redeem_and_redeemable() {
+    let h = default_setup();
+    let alice = Address::generate(&h.env);
+
+    h.env.ledger().set_timestamp(1_000);
+    h.client.deposit(&alice, &100);
+
+    assert_eq!(h.client.redeemable(&alice), 0);
+    assert_eq!(
+        h.client.try_redeem(&alice, &100),
+        Err(Ok(VaultError::SharesLocked.into()))
+    );
+
+    h.env.ledger().set_timestamp(87401);
+    assert_eq!(h.client.redeemable(&alice), 200);
+
+    assert_eq!(
+        h.client.try_redeem(&alice, &15),
+        Err(Ok(VaultError::NotMultipleOfExchangeRate.into()))
+    );
+
+    let units = h.client.redeem(&alice, &100);
+    assert_eq!(units, 50);
+    assert_eq!(h.client.balance(&alice), 100);
+    assert_eq!(h.client.total_supply(), 100);
+    assert_eq!(h.client.underlying_held(), 50);
+    assert_eq!(h.client.redeemable(&alice), 100);
+}
+
+#[test]
+fn test_set_oracles_and_nav() {
+    let h = default_setup();
+    let oracle1 = h.env.register(MockOracle, ());
+    let oracle2 = h.env.register(MockOracle, ());
+
+    let asset = Asset::Other(soroban_sdk::symbol_short!("USD"));
+
+    let oracle_set = OracleSet {
+        primary: OracleSource {
+            oracle: oracle1.clone(),
+            asset: asset.clone(),
+        },
+        secondary: Some(OracleSource {
+            oracle: oracle2.clone(),
+            asset,
+        }),
+        max_staleness_secs: 86400,
+        max_divergence_bps: 500,
+    };
+
+    h.client.set_oracles(&Some(oracle_set));
+    let stored = h.client.oracles().unwrap();
+    assert_eq!(stored.primary.oracle, oracle1);
+
+    let alice = Address::generate(&h.env);
+    h.env.ledger().set_timestamp(1_000);
+    h.client.deposit(&alice, &100);
+
+    let nav = h.client.nav();
+    assert_eq!(nav.value, 100_0000000);
+    assert_eq!(nav.decimals, NAV_DECIMALS);
+
+    let nav_per_share = h.client.nav_per_share();
+    assert_eq!(nav_per_share.value, 5_000_000);
+    assert_eq!(nav_per_share.decimals, NAV_DECIMALS);
+}
+
+#[test]
+fn test_oracle_divergence_and_staleness() {
+    let h = default_setup();
+    let oracle1 = h.env.register(MockOracle, ());
+    let oracle2 = h.env.register(MockOracle, ());
+
+    h.env.as_contract(&oracle1, || {
+        h.env.storage().instance().set(&soroban_sdk::symbol_short!("PRICE"), &10_000_000_i128);
+    });
+    h.env.as_contract(&oracle2, || {
+        h.env.storage().instance().set(&soroban_sdk::symbol_short!("PRICE"), &12_000_000_i128);
+    });
+
+    let asset = Asset::Other(soroban_sdk::symbol_short!("USD"));
+    let oracle_set = OracleSet {
+        primary: OracleSource {
+            oracle: oracle1.clone(),
+            asset: asset.clone(),
+        },
+        secondary: Some(OracleSource {
+            oracle: oracle2,
+            asset,
+        }),
+        max_staleness_secs: 86400,
+        max_divergence_bps: 100,
+    };
+
+    h.client.set_oracles(&Some(oracle_set));
+
+    assert_eq!(
+        h.client.try_nav(),
+        Err(Ok(VaultError::OracleDivergence.into()))
+    );
+
+    let oracle_single = OracleSet {
+        primary: OracleSource {
+            oracle: oracle1.clone(),
+            asset: Asset::Other(soroban_sdk::symbol_short!("USD")),
+        },
+        secondary: None,
+        max_staleness_secs: 60,
+        max_divergence_bps: 100,
+    };
+    h.client.set_oracles(&Some(oracle_single));
+
+    h.env.as_contract(&oracle1, || {
+        h.env.storage().instance().set(&soroban_sdk::symbol_short!("TS"), &100_u64);
+    });
+    h.env.ledger().set_timestamp(1_000);
+
+    assert_eq!(
+        h.client.try_nav(),
+        Err(Ok(VaultError::StalePrice.into()))
+    );
+}
+

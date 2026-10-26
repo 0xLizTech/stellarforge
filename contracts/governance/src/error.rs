@@ -47,16 +47,16 @@ pub enum GovernanceError {
     /// `list_proposals` was given a `limit` above `MAX_PAGE_SIZE`.
     PageTooLarge = 14,
     /// `set_proposal_deposit` was given a negative amount.
-    InvalidDepositAmount = 15,
+    InvalidDepositAmount = 12,
     /// `accept_admin` was called with no transfer pending, or after it was
     /// cancelled or already accepted.
-    NoPendingAdminTransfer = 16,
+    NoPendingAdminTransfer = 12,
     /// `set_quorum` was given a negative value.
-    InvalidQuorum = 17,
+    InvalidQuorum = 13,
     /// `set_pass_threshold_bps` was given a value outside
     /// `MIN_PASS_THRESHOLD_BPS..=MAX_PASS_THRESHOLD_BPS`.
-    InvalidPassThresholdBps = 18,
+    InvalidPassThresholdBps = 14,
     /// `propose` matches another currently-active proposal's title and
     /// description hash.
-    DuplicateActiveProposal = 19,
+    DuplicateActiveProposal = 15,
 }

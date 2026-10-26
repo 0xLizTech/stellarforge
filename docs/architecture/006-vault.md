@@ -35,7 +35,11 @@ Redemption (#58) is the only valid mechanism by which shares leave circulation. 
 *Reasoning:* If deposit and redemption exchange rates are fixed and decoupled from variable market prices, oracle manipulation cannot extract value from the vault. This also inherently eliminates the ERC-4626 first-depositor inflation attack.
 
 ### 3. NAV is reported, never traded on
-Net Asset Value (`nav()` and `nav_per_share()`) is reported by reading primary and secondary SEP-40 oracles (`oracle-adapter`, ADR-005) with staleness validation and divergence circuit breakers. However, `deposit` and `redeem` never query oracle feeds.
+Net Asset Value (`nav()` and `nav_per_share()`) is reported by reading primary and optional secondary SEP-40 oracles (`oracle-adapter`, ADR-005) with staleness validation and divergence circuit breakers. However, `deposit` and `redeem` never query oracle feeds.
+- Normalization: each oracle's price is normalized down to `NAV_DECIMALS` (7).
+- Divergence check: if a secondary oracle is configured, divergence is verified via `|p1 - p2| * 10_000 <= min(p1, p2) * max_divergence_bps`.
+- Conservative valuation: reports the lower price and the older timestamp of the two sources.
+- Fail-closed: if a configured secondary is unavailable or stale, queries fail closed rather than falling back silently.
 
 ### 4. Internal accounting
 `underlying_held` tracks verified contract deposits minus redemptions. Tokens sent directly to the vault contract without invoking `deposit` are treated as uncredited donations and cannot be redeemed.
@@ -50,25 +54,13 @@ Every share transfer screens both the sender and recipient via `screen(subject, 
 ### 7. Balance checkpoints
 Balance mutations route through a single internal write path (`write_balance`), allowing #60 to hook historical snapshots (`balance_at(holder, ledger)`) for `yield-distributor`.
 
-### 8. `VaultConfig` mutability policy (#69)
-Phase 1 and 2 contracts expose no upgrade entry point (ADR-003), so any field without an explicit setter is frozen for the life of the deployment. Each field of `VaultConfig` (plus `decimals`) is ruled on individually:
-
-| Field | Mutability | Setter / Mechanism | Rationale |
-|---|---|---|---|
-| `compliance`, `min_compliance_level` | **Mutable** | `set_compliance(compliance, min_level)` | A deployment-time mistake or a retired compliance contract would otherwise brick all share transfers and redemptions (`NotCompliant`) forever with no recovery path. Matches `rwa-asset::set_compliance`. Both `__constructor` and `set_compliance` reject `min_level > MAX_COMPLIANCE_LEVEL` (`3`, matching `compliance::MAX_LEVEL`) with `VaultError::InvalidComplianceLevel` (`16`). |
-| `max_share_supply` | **Tighten-only** | `set_max_share_supply(max_share_supply)` | Matches `rwa-asset` (#54 / IR-02): the admin may lower a finite cap or introduce a finite cap on an uncapped vault (`0`), provided the new cap is not below `total_supply()`. Raising a finite cap or lifting it to uncapped (`0`) is refused with `VaultError::InvalidSupplyCap` (`17`), letting the cap respond to a downward appraisal with zero dilution risk. |
-| `lockup_secs` | **Immutable** | Set once in `__constructor` | Lock-up is tracked per holder as a single rolling timestamp (`locked_until = max(current, now + lockup_secs)`). Raising `lockup_secs` post-deployment would let an admin trap an existing holder's previously unlocked balance on any follow-on deposit, altering the terms they subscribed under; lowering it mid-flight would weaken the regulatory holding-period guarantee (e.g., SEC Reg D) existing holders relied on. |
-| `underlying`, `exchange_rate`, `decimals` | **Immutable** | Set once in `__constructor` | Define what a share is and anchor the backing invariant (`total_supply() == underlying_held() × exchange_rate`). Changing any of them after a single share exists breaks backing solvency or re-denominates every holder's balance. |
-| `name`, `symbol` | **Immutable** | Set once in `__constructor` | Identify the share token instrument. Unlike `rwa-asset` (which bundles `name` and `symbol` with `legal_doc_hash` and `max_supply` in `update_metadata`), the vault has no `legal_doc_hash` of its own and exposes a dedicated `set_max_share_supply` entry point, so freezing `name` and `symbol` prevents post-issuance ticker spoofing. |
-
-### 9. Architectural conventions
+### 8. Architectural conventions
 - Deployment configuration via `VaultConfig` requiring `admin.require_auth()` (IR-17, ADR-002).
 - Share `decimals` read immutably from the underlying token at construction.
 - Emergency pause (`set_paused`) taking effect in the same ledger (NFR-R-2).
 - Dual-authorization admin handover (`transfer_admin`, NFR-S-4).
-- Admin-authorized `set_compliance` and tighten-only `set_max_share_supply`, emitting `ComplianceSet` and `MaxShareSupplySet` events (#69).
 - Storage TTL policies maintained via `stellarforge-common` (ADR-001).
-- Frozen error discriminants (`VaultError` 1–17, ADR-003).
+- Frozen error discriminants (`VaultError` 1–25, ADR-003).
 
 ### Core Invariants
 - `total_supply() == underlying_held() × exchange_rate` after every state transition.
@@ -102,5 +94,3 @@ Phase 1 and 2 contracts expose no upgrade entry point (ADR-003), so any field wi
 - **SEP-41 Deviation:** Deliberate omission of public `burn` and `burn_from` preserves backing solvency.
 - **Vault KYC Requirement:** The vault contract address must be registered and verified in the underlying compliance contract before accepting deposits.
 - **Lapsed-KYC Holders:** A holder whose KYC expires cannot transfer or redeem. Unlike `rwa-asset.burn` (which stays open for uncompliant holders), the vault cannot offer a burn without stranding underlying assets. Lapsed holders must renew compliance or undergo legal off-chain settlement.
-- **Compliance Rebinding Trust Assumption (#69):** As on `rwa-asset`, `set_compliance` lets the admin re-point the vault at a replacement compliance contract or pass `None` to disable screening. Every change publishes `ComplianceSet` so monitors can detect when screening is altered or disabled.
-- **One-Way Supply Cap Tightening (#69):** `set_max_share_supply` can only lower a finite cap or cap a previously uncapped vault at or above `total_supply()`. A cap lowered in error cannot be raised on the same vault deployment, and `lockup_secs` cannot be adjusted after deployment without redeploying a new vault.

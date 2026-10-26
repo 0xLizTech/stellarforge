@@ -6,7 +6,7 @@
 //! follow the same convention as `rwa-asset`: the entry point name first, then
 //! the address acted on, with the record as the payload.
 
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{contractevent, Address, String};
 
 use crate::KycRecord;
 
@@ -52,6 +52,13 @@ pub struct AdminTransferred {
     pub new_admin: Address,
 }
 
+/// Published by `set_jurisdiction_denied` (#141).
+#[contractevent(topics = ["jurisdiction_denied"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JurisdictionDeniedSet {
+    #[topic]
+    pub jurisdiction: String,
+    pub denied: bool,
 /// Published by `set_paused`, matching `rwa-asset::events::Paused`.
 #[contractevent(topics = ["paused"], data_format = "single-value")]
 #[derive(Clone, Debug, Eq, PartialEq)]

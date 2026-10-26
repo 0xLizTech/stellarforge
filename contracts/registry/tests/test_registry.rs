@@ -10,8 +10,10 @@ use soroban_sdk::{
 };
 
 use registry::{
+    ActiveSet, AdminTransferred, AssetEntry, AssetRegistered, DataKey, Paused, RegistryContract,
+    RegistryContractClient, RegistryError, MAX_PAGE_SIZE,
     ActiveSet, AdminTransferCancelled, AdminTransferProposed, AdminTransferred, AssetEntry,
-    AssetRegistered, DataKey, Paused, RegistryContract, RegistryContractClient, RegistryError,
+    AssetRegistered, DataKey, RegistryContract, RegistryContractClient, RegistryError,
     MAX_PAGE_SIZE,
 };
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
@@ -459,8 +461,7 @@ fn test_transfer_admin_extends_the_instance() {
     let new_admin = Address::generate(&h.env);
     h.env.ledger().with_mut(|li| li.sequence_number += IDLE);
 
-    h.client.propose_admin(&new_admin);
-    h.client.accept_admin();
+    h.client.transfer_admin(&new_admin);
 
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
@@ -763,8 +764,7 @@ fn test_paused_does_not_block_transfer_admin() {
     let new_admin = Address::generate(&h.env);
     h.client.set_paused(&true);
 
-    h.client.propose_admin(&new_admin);
-    h.client.accept_admin();
+    h.client.transfer_admin(&new_admin);
 
     assert_eq!(h.client.admin(), new_admin);
 }

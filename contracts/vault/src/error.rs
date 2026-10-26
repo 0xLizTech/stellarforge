@@ -40,10 +40,26 @@ pub enum VaultError {
     SharesLocked = 14,
     /// Minting shares would exceed `max_share_supply`.
     ExceedsMaxSupply = 15,
-    /// `min_compliance_level` in `VaultConfig` or `set_compliance` exceeded
-    /// `MAX_COMPLIANCE_LEVEL` (3, matching `compliance::MAX_LEVEL`).
+    /// Minimum compliance level configured was above MAX_LEVEL (3).
     InvalidComplianceLevel = 16,
-    /// `set_max_share_supply` tried to raise or remove a supply cap, set a
-    /// negative cap, or set a cap below the circulating share supply.
-    InvalidSupplyCap = 17,
+    /// Redeemed share amount was not a whole multiple of exchange_rate.
+    NotMultipleOfExchangeRate = 17,
+    /// Base assets of primary and secondary oracles do not match.
+    OracleBaseMismatch = 18,
+    /// Price was unavailable from oracle feed.
+    PriceUnavailable = 19,
+    /// Oracle returned zero or negative price.
+    InvalidPrice = 20,
+    /// Oracle price timestamp was in the future.
+    PriceInFuture = 21,
+    /// Oracle price was older than max_staleness_secs.
+    StalePrice = 22,
+    /// Primary and secondary oracle prices diverged beyond max_divergence_bps.
+    OracleDivergence = 23,
+    /// Primary and secondary oracle cannot be the same contract address.
+    IdenticalOracleSources = 24,
+    /// Oracle configuration has not been set.
+    OracleNotConfigured = 25,
+    /// Queried ledger sequence has not yet closed (ledger >= current ledger sequence).
+    LedgerNotClosed = 26,
 }

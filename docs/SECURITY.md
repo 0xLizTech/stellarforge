@@ -246,3 +246,34 @@ detail and the regression tests.
 | SF-2026-017 | IR-15 | A self-`transfer_from` emitted a phantom `Transfer` event (info) | `0e7b905` |
 | SF-2026-018 | IR-16 | Registry entries were not documented as unverified (info) | `4f04c60` |
 | SF-2026-019 | IR-17 | Constructor `require_auth` was asserted by no test (info) | `d9fc624` |
+
+## Static Analysis (CodeQL)
+
+`.github/workflows/codeql.yml` runs GitHub CodeQL on the TypeScript SDK
+(`sdk/**`) with the `security-and-quality` query suite. It triggers on pull
+requests touching `sdk/**`, on pushes to `main`, and weekly so newly published
+queries reach code that has not changed.
+
+Findings appear under the repository's **Security → Code scanning** tab. A pull
+request that introduces an alert in a changed file fails the
+`Analyze JavaScript/TypeScript` check.
+
+### Triage
+
+1. An alert on a pull request is triaged by the reviewer before merge: fix it,
+   or dismiss it with a written reason (false positive, won't fix, used in
+   tests).
+2. Alerts found by the weekly run against unmodified code are triaged by a
+   maintainer within 5 business days.
+3. A dismissed `security`-severity alert is recorded in `docs/audits/` with the
+   evidence for the dismissal.
+
+### Assumptions and residual risk
+
+- The analysis covers the SDK's JavaScript/TypeScript only. Contract code is
+  Rust, whose CodeQL support was still public preview at the time of writing;
+  this workflow deliberately does not enable it. Rust analysis stays with
+  clippy, the threat models in `docs/threat-models/`, and the external audit.
+- Taint tracking through the SDK's generated `ScVal` codecs is best-effort.
+  CodeQL is a net for common classes (injection, prototype pollution, weak
+  crypto), not a substitute for the audit.
