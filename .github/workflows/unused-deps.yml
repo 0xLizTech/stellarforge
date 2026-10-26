@@ -1,55 +1,37 @@
 name: Unused Dependencies
 
+# Fails when a Cargo crate declares a dependency it does not use. Unused crates
+# enlarge the compiled WASM and widen the audit surface, so they are caught
+# before merge and on a schedule for crates that drift out of use over time.
 on:
   schedule:
-    # Weekly on Mondays at 07:00 UTC. A dependency can become unused without a
-    # Cargo.toml change (a refactor that drops the last `use`), so the check
-    # also runs on a clock.
-    - cron: "0 7 * * 1"
-  workflow_dispatch:
+    # Weekly, Mondays 09:30 UTC, just after the security audit.
+    - cron: "30 9 * * 1"
   push:
     branches: [main]
-    paths: &unused-deps-paths
-      - "contracts/**"
-      - "tools/**"
-      - "Cargo.toml"
+    paths: &cargo-paths
+      - "**/Cargo.toml"
       - "Cargo.lock"
-      - "scripts/check-unused-deps.sh"
       - ".github/workflows/unused-deps.yml"
   pull_request:
     branches: [main, develop]
-    paths: *unused-deps-paths
+    paths: *cargo-paths
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  # Pinned so the check is the same build on every run. Keep in step with
-  # MACHETE_VERSION in scripts/check-unused-deps.sh.
-  CARGO_MACHETE_VERSION: "0.7.0"
-
 jobs:
-  cargo-machete:
-    name: cargo-machete (unused Rust dependencies)
+  machete:
+    name: cargo-machete (unused Cargo dependencies)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Install Rust toolchain
-        run: rustup toolchain install && rustc --version
-
-      # Also caches ~/.cargo/bin, so cargo-machete is compiled once, not per run.
-      - name: Cache cargo registry and binaries
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: ${{ runner.os }}-machete-${{ env.CARGO_MACHETE_VERSION }}
-
+      # Pinned and --locked, so the checker is the same build on every run,
+      # mirroring how security.yml installs cargo-audit.
       - name: Install cargo-machete
-        run: cargo install cargo-machete --locked --version "$CARGO_MACHETE_VERSION"
+        run: cargo install cargo-machete --locked --version 0.9.1
 
-      # Proves the job can fail: an unused dependency must exit non-zero.
-      - name: Self-test
-        run: bash scripts/check-unused-deps.sh --self-test
-
-      - name: Check workspace for unused dependencies
-        run: bash scripts/check-unused-deps.sh
+      - name: Run cargo-machete
+        run: cargo machete

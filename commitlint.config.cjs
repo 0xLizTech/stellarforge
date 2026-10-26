@@ -1,46 +1,41 @@
-// Enforces the commit style documented in CONTRIBUTING.md ("Commit Style").
-// Self-contained on purpose: no `extends`, so it resolves the same way from the
-// repo root, from sdk/ (where the CLI is installed) and inside CI.
-//
-// When you change the type or scope lists, update CONTRIBUTING.md too; a test
-// in sdk/tests/tooling/commitlint.test.ts fails if the two drift apart.
-
-const types = ["feat", "fix", "docs", "test", "refactor", "chore", "perf"];
-
-const scopes = [
-  // Documented in CONTRIBUTING.md
-  "rwa-asset",
-  "registry",
-  "compliance",
-  "governance",
-  "oracle-adapter",
-  "sdk",
-  "ci",
-  "docs",
-  // Parts of the repo that are not one of the contracts above
-  "common",
-  "benchmark",
-  "readme",
-];
-
+// Commitlint configuration enforcing the Conventional Commits style that
+// CONTRIBUTING.md documents ("Commit Style" section). The CI job in
+// .github/workflows/commitlint.yml runs this against every commit in a pull
+// request, so a non-conforming subject line fails the check.
 module.exports = {
-  // `type(scope)!: subject`, the `!` marks a breaking change.
-  parserPreset: {
-    parserOpts: {
-      headerPattern: /^(\w*)(?:\((.*)\))?!?: (.*)$/,
-      headerCorrespondence: ["type", "scope", "subject"],
-    },
-  },
+  extends: ["@commitlint/config-conventional"],
   rules: {
-    "type-enum": [2, "always", types],
-    "type-case": [2, "always", "lower-case"],
-    "type-empty": [2, "never"],
-    "scope-enum": [2, "always", scopes],
-    "scope-case": [2, "always", "kebab-case"],
-    "subject-empty": [2, "never"],
-    "subject-full-stop": [2, "never", "."],
+    // Types, verbatim from CONTRIBUTING.md.
+    "type-enum": [
+      2,
+      "always",
+      ["feat", "fix", "docs", "test", "refactor", "chore", "perf"],
+    ],
+    // Scopes documented in CONTRIBUTING.md, plus the contract crates that have
+    // since been added to the workspace (common, vault) and the conventional
+    // "deps"/"release" scopes used by automation. A scope is optional, but when
+    // present it must be one of these.
+    "scope-enum": [
+      2,
+      "always",
+      [
+        "rwa-asset",
+        "registry",
+        "compliance",
+        "governance",
+        "oracle-adapter",
+        "vault",
+        "common",
+        "sdk",
+        "ci",
+        "docs",
+        "deps",
+        "release",
+      ],
+    ],
+    // CONTRIBUTING.md: "Keep the subject line under 72 characters."
     "header-max-length": [2, "always", 72],
-    "body-leading-blank": [2, "always"],
-    "footer-leading-blank": [2, "always"],
   },
+  // Ignore bot-generated merge commits, which do not follow the convention.
+  ignores: [(message) => /^Merge /.test(message)],
 };

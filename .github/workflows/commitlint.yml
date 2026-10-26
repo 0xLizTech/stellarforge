@@ -1,7 +1,7 @@
 name: Commitlint
 
-# Lints every commit a pull request adds against commitlint.config.cjs, which
-# implements the "Commit Style" section of CONTRIBUTING.md.
+# Enforces the Conventional Commits style documented in CONTRIBUTING.md.
+# A pull request whose commits do not conform fails this check.
 on:
   pull_request:
     branches: [main, develop]
@@ -11,34 +11,26 @@ permissions:
 
 jobs:
   commitlint:
-    name: Conventional Commits
+    name: Lint PR commit messages
     runs-on: ubuntu-latest
-    # Dependabot titles its own commits ("Bump x from 1 to 2").
-    if: github.actor != 'dependabot[bot]'
     steps:
-      - uses: actions/checkout@v7
+      # fetch-depth 0 so the full PR commit range is available to lint.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # The range base..head needs the PR's history, not a shallow clone.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-          cache: "npm"
-          cache-dependency-path: sdk/package-lock.json
 
-      - name: Install dependencies
-        working-directory: sdk
-        run: npm ci
+      # Pinned versions so the linter is identical on every run. These are dev
+      # tools only and are not added to any package manifest.
+      - name: Install commitlint
+        run: npm install --no-save @commitlint/cli@19.8.1 @commitlint/config-conventional@19.8.1
 
-      - name: Lint pull request commits
-        working-directory: sdk
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - name: Lint commits in range
         run: |
-          npx --no-install commitlint \
-            --config ../commitlint.config.cjs \
-            --from "$BASE_SHA" \
-            --to "$HEAD_SHA" \
+          npx commitlint \
+            --from "${{ github.event.pull_request.base.sha }}" \
+            --to "${{ github.event.pull_request.head.sha }}" \
             --verbose

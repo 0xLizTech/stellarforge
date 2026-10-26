@@ -51,6 +51,15 @@ Serious or repeated violations may result in removal from the project. Report is
 
 **Experienced contributor?** Jump straight into the [Roadmap](ROADMAP.md) and pick up a Phase 2 or 3 task that excites you, then open a discussion before building.
 
+### Issue Label Taxonomy
+
+We organize issues using structured label prefixes defined in `.github/labels.yml`:
+
+- **Type (`type/*`)**: `type/bug`, `type/feature`, `type/docs`, `type/refactor`, `type/security`
+- **Area (`area/*`)**: `area/contracts` (Soroban crates), `area/sdk` (TypeScript SDK), `area/docs` (architecture & guides), `area/ci` (workflows & release automation)
+- **Phase (`phase/*`)**: `phase/1-foundation`, `phase/2-fractionalization`, `phase/3-defi`
+- **Difficulty (`difficulty/*`)**: `difficulty/starter`, `difficulty/medium`, `difficulty/advanced`
+
 ---
 
 ## Development Setup
@@ -72,7 +81,42 @@ cargo install --locked stellar-cli
 
 # Optional but recommended
 cargo install cargo-watch    # auto-rerun tests on save
+
+# Developer tooling checked in CI (see "Local Git hooks" below)
+pip install pre-commit                              # or pipx/brew
+cargo install cargo-machete --locked --version 0.9.1 # unused-dependency finder
 ```
+
+### Local Git hooks
+
+StellarForge ships a [pre-commit](https://pre-commit.com) configuration
+(`.pre-commit-config.yaml`) that mirrors the CI gates, so formatting, lint, and
+commit-message failures surface before you push. Install it once per clone:
+
+```bash
+make sdk-install        # the ESLint hook needs the SDK dependencies
+make hooks              # installs the pre-commit and commit-msg hooks
+```
+
+`make hooks` runs `pre-commit install` and `pre-commit install --hook-type
+commit-msg`. From then on, every commit runs, on staged files:
+
+- **LF line endings** — rewrites any CRLF to LF, matching `.gitattributes`.
+- **`cargo fmt --check`** — rejects unformatted Rust.
+- **ESLint** — lints the SDK when a staged `.ts` file changes.
+- **commitlint** — rejects a commit message that is not a valid Conventional Commit.
+
+Run everything against the whole tree at any time with `pre-commit run
+--all-files`.
+
+### Finding unused dependencies
+
+```bash
+make udeps        # runs cargo-machete across the Cargo workspace
+```
+
+The **Unused Dependencies** workflow runs the same check on pull requests and on
+a weekly schedule.
 
 ### Initial Setup
 
@@ -89,49 +133,8 @@ make test
 # Set up SDK
 make sdk-install
 make sdk-test
-```
-
-### Git hooks (recommended)
-
-Formatting failures should never reach CI. `.pre-commit-config.yaml` runs
-`cargo fmt --all -- --check` when you stage a `.rs` file and `eslint` when you
-stage a file under `sdk/src/`, and rejects the commit if either fails.
-
-```bash
-pipx install pre-commit      # or: pip install --user pre-commit
-make hooks                   # npm ci in sdk/, then `pre-commit install`
-```
-
-Run the hooks on the whole tree with `pre-commit run --all-files`. Skip them
-once with `git commit --no-verify`; CI runs the same checks, so a skipped hook
-only moves the failure to your pull request.
-
-### Unused dependencies
-
-An unused crate grows the WASM and the audit surface. CI runs
-[cargo-machete](https://github.com/bnjbvr/cargo-machete) on every pull request
-that touches Rust code or a manifest, and weekly on `main`
-(`.github/workflows/unused-deps.yml`).
-
-```bash
-cargo install cargo-machete --locked --version 0.7.0
-make unused-deps             # fails and lists the crate if a dependency is unused
-make unused-deps-selftest    # proves the check can fail
-```
-
-If cargo-machete reports a false positive (a crate used only through a macro it
-cannot see), list it under `[package.metadata.cargo-machete] ignored = ["name"]`
-in that crate's `Cargo.toml` and say why in the pull request.
-
-### Line endings
-
-`.gitattributes` forces LF for `*.sh`, `*.rs`, `*.ts`, `*.md` and the other
-files the repo executes or parses, whatever your `core.autocrlf` is. Windows
-contributors do not need to configure anything. To check a clone:
-
-```bash
-git ls-files --eol           # the i/ column must never say crlf or mixed
-git add --renormalize .      # re-normalizes files committed before .gitattributes
+make sdk-lint
+make sdk-typecheck
 ```
 
 ### Running a single contract's tests
@@ -234,12 +237,12 @@ Branch naming conventions:
 make fmt
 make lint
 
-# TypeScript — checks src/ and tests/
-cd sdk && npm run typecheck
-cd sdk && npm run lint       # eslint, config in sdk/eslint.config.mjs
+# TypeScript SDK
+make sdk-lint
+make sdk-typecheck
 
-# Unused Rust dependencies
-make unused-deps
+# Or run all formatting, linting, tests, and builds
+make all
 ```
 
 CI will reject PRs that fail formatting or linting.
@@ -264,26 +267,13 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 **Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`
 
-**Scopes:** `rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`, `sdk`, `ci`, `docs`, `common`, `benchmark`, `readme`
+**Scopes:** `rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`, `vault`, `common`, `sdk`, `ci`, `docs`, `deps`, `release`
 
-The scope is optional, but if you give one it must be on this list. Use the
-contract's name for a change to that contract, `common` for `contracts/common`,
-`benchmark` for `tools/benchmark`, `sdk` for `sdk/`, `ci` for workflows and
-tooling, and `docs` or `readme` for documentation. Add `!` before the colon for a
-breaking change (`feat(sdk)!: ...`).
-
-**Enforced:** the `Commitlint` workflow lints every commit in a pull request
-against `commitlint.config.cjs` and fails the check on a type or scope outside
-these lists, a subject over 72 characters, an empty subject or a trailing full
-stop. Check your branch before pushing:
-
-```bash
-make commitlint              # lints commits on your branch that are not on origin/main
-```
-
-Fix a bad message with `git commit --amend` (last commit) or
-`git rebase -i origin/main` (older ones), then force-push your branch. Merge
-commits and `Revert "..."` commits are ignored.
+This style is enforced. The **Commitlint** CI job runs `commitlint.config.cjs`
+against every commit in a pull request, and the local `commit-msg` hook runs the
+same check (see [Local Git hooks](#local-git-hooks)). A non-conforming commit
+fails the check. The scope is optional, but when present it must be one of the
+list above.
 
 **Examples:**
 
@@ -304,12 +294,18 @@ Keep the subject line under 72 characters. Use the body for _why_, not _what_.
 1. **Open a draft PR early** if you want design feedback before finishing.
 2. **Fill in the PR template** — describe what changed, why, and how to test it.
 3. **Ensure CI is green** — all checks must pass before review.
-4. **Request a review** from a maintainer (listed in [CODEOWNERS](.github/CODEOWNERS) once it exists).
+4. **Request a review** from the appropriate area maintainer as defined in [CODEOWNERS](.github/CODEOWNERS) (reviews are routed specifically for `contracts/`, `sdk/`, `docs/`, and `.github/workflows/`).
 5. **Address review comments** — update the branch; do not open a new PR.
 6. **Squash or rebase** messy commit history before final merge if asked.
-7. A maintainer will merge once at least **one approval** is received and all checks pass.
+7. A maintainer will merge once at least **one approval** is received and all checks pass. PRs modifying workflows require a security reviewer approval.
 
 ### PR size guidelines
+
+PRs are automatically labeled by total lines changed:
+- `size/S`: 0–100 lines changed (ideal for fast review)
+- `size/M`: 101–500 lines changed
+- `size/L`: 501–1,000 lines changed
+- `size/XL`: >1,000 lines changed (automated warning; strongly consider splitting into smaller pull requests)
 
 - **Small PRs merge faster.** Keep each PR focused on a single concern.
 - If a feature naturally requires multiple contracts or layers, split it across linked PRs.
@@ -384,6 +380,45 @@ npm run test:smoke:write
 
 The **Testnet Smoke** workflow runs it on every dispatch, against a fresh deployment it configures through `SMOKE_WRITE_SETUP`.
 
+#### Step-by-Step Guide for New Contributors
+
+To run the smoke tests locally against testnet for the first time:
+
+1. **Generate and Fund Testnet Accounts with Friendbot**:
+   ```bash
+   # Generate keypairs for deployer/issuer and spender
+   stellar keys generate testnet-issuer --network testnet
+   stellar keys fund testnet-issuer --network testnet
+
+   stellar keys generate testnet-spender --network testnet
+   stellar keys fund testnet-spender --network testnet
+
+   # Generate a recipient address (needs no XLM funding)
+   stellar keys generate testnet-recipient --network testnet
+   ```
+
+2. **Friendbot Rate Limits**:
+   > **Note on Friendbot Rate Limits**: Stellar Friendbot enforces rate limits per IP address and account.
+   > - If you receive an HTTP 429 (Too Many Requests), wait 60 seconds before retrying.
+   > - Reuse existing funded testnet keypairs (`stellar keys list`) rather than generating new keys for each test run.
+   > - You can check your account balance anytime with: `stellar keys fund <account-name> --network testnet`.
+
+3. **Deploy Contracts and Run Smoke Tests**:
+   ```bash
+   # Extract secrets
+   export SMOKE_WRITE_ISSUER_SECRET=$(stellar keys secret testnet-issuer)
+   export SMOKE_WRITE_SPENDER_SECRET=$(stellar keys secret testnet-spender)
+   export SMOKE_WRITE_RECIPIENT_ADDRESS=$(stellar keys address testnet-recipient)
+
+   # Deploy contracts or use deployed-contracts.json
+   make deploy-testnet
+
+   # Run test suites
+   cd sdk
+   npm run test:smoke
+   npm run test:smoke:write
+   ```
+
 ### Coverage targets (aspirational, not enforced in CI yet)
 
 | Layer | Target |
@@ -397,6 +432,7 @@ The **Testnet Smoke** workflow runs it on every dispatch, against a fresh deploy
 ## Documentation Standards
 
 - **ADRs (Architecture Decision Records):** For any significant architectural decision, create a new ADR in `docs/architecture/` using the template at `docs/architecture/000-template.md`. ADRs are immutable once merged; superseded ADRs are marked as such.
+- **RFCs (protocol changes):** For significant protocol-level changes, write an RFC in `docs/rfcs/` using the template at `docs/rfcs/0000-template.md`. When an RFC is required and how it is reviewed is described in `docs/rfcs/README.md`.
 - **Contract changes:** Update the relevant section in `README.md`'s Contract Reference table.
 - **New modules:** Add a brief description to the README architecture diagram.
 - **Breaking changes:** Document in `CHANGELOG.md` and flag `BREAKING CHANGE:` in the commit footer.

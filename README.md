@@ -135,11 +135,26 @@ make sdk-test
 stellar keys generate mykey --network testnet
 stellar keys fund mykey --network testnet
 
-# Deploy
-STELLAR_ACCOUNT=mykey make deploy-testnet
+# Deploy deterministically with bytecode verification
+STELLAR_ACCOUNT=mykey DEPLOY_NAMESPACE=my-deployment make deploy-testnet
+
+# Verify on-chain bytecode provenance
+./scripts/verify-deployment.sh deployed-contracts.json target/wasm32v1-none/release/SHA256SUMS
 ```
 
-### 6. Use the SDK
+For operational procedures, parameter sizing, and troubleshooting, see the [Vault Operations Guide](docs/guides/vault-operations.md).
+
+### 6. NAV Appraisal Reporter CLI
+
+Appraisers and operators publish audited NAV reports via `tools/nav-reporter`:
+
+```bash
+cd tools/nav-reporter
+npm ci && npm run build
+stellarforge-nav-reporter --appraisal path/to/appraisal.json --oracle <ORACLE_ID> --dry-run
+```
+
+### 7. Use the SDK
 
 ```typescript
 import { RwaAssetClient, toStroops, TESTNET_CONFIG } from "@stellarforge-protocol/sdk";
@@ -347,6 +362,16 @@ can be followed without re-reading contract state.
 **Error codes.** Every contract returns a typed `contracterror` enum, so
 clients match on a stable numeric code. Discriminants are part of the public
 interface: variants keep their values and new ones are appended.
+
+---
+
+## Documentation
+
+- [Glossary](docs/GLOSSARY.md) — Definitions of over 50 Real World Asset (RWA), Soroban smart contract, and Stellar terms.
+- [Integrator FAQ](docs/FAQ.md) — Frequently asked questions covering keys, fees, TTL, compliance, and contract upgrades.
+- [Architecture & ADRs](docs/architecture/) — Architectural decision records and protocol designs.
+- [Audit Handover](docs/audits/external-audit-handover-phase1.md) — Phase 1 external audit scope, invariants, and reproduction steps.
+- [Release Guide](docs/RELEASING.md) — SDK trusted publishing, provenance, and byte-for-byte WASM verification.
 
 ---
 

@@ -8,12 +8,20 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      soroban-dependencies:
+        patterns:
+          - "soroban-*"
+          - "stellar-*"
 
   - package-ecosystem: "npm"
     directory: "/sdk"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      sdk-dev-dependencies:
+        dependency-type: "development"
     ignore:
       # TypeScript 7 is the new native compiler; tsup + rollup-plugin-dts do not
       # support it yet (both `tsc` typecheck and `--dts` generation break).

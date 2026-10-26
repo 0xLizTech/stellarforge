@@ -16,3 +16,6 @@ stellarforge-common = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+# Registered in the integration tests to cap vote weight against a real
+# token's balances rather than a hand-rolled stub.
+rwa-asset = { path = "../rwa-asset" }

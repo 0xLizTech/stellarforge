@@ -7,6 +7,7 @@ mod error;
 mod events;
 
 pub use error::ComplianceError;
+pub use events::{AdminTransferred, JurisdictionDeniedSet, KycRevoked, KycSet};
 pub use events::{
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, KycRevoked, KycSet, Paused,
 };
@@ -36,6 +37,10 @@ pub const MAX_BATCH_SIZE: u32 = 50;
 #[derive(Clone)]
 pub enum DataKey {
     KycStatus(Address),
+    /// Present and `true` when transfers to or from this ISO 3166-1 alpha-2
+    /// jurisdiction are blocked regardless of verification level. Absent
+    /// (not merely `false`) is the default, unblocked state.
+    JurisdictionDenied(String),
 }
 
 #[contracttype]
@@ -183,6 +188,44 @@ impl ComplianceContract {
         env.storage().persistent().get(&DataKey::KycStatus(subject))
     }
 
+    /// Block or unblock an entire jurisdiction, regardless of any individual
+    /// holder's verification level there.
+    ///
+    /// Issuers must be able to exclude a jurisdiction outright (sanctions, a
+    /// market they are not licensed in) rather than only gate it by level,
+    /// since a denied jurisdiction can hold verified, high-level KYC records
+    /// and still need blocking (#141). This lives here, not in `rwa-asset`,
+    /// for the reason ADR-004 gives for keeping jurisdictional rules out of
+    /// the asset contract: they are the most change-prone rule in the
+    /// protocol, and the asset contract has no upgrade path.
+    pub fn set_jurisdiction_denied(env: Env, jurisdiction: String, denied: bool) {
+        Self::require_admin(&env);
+        Self::validate_jurisdiction_shape(&env, &jurisdiction);
+
+        let key = DataKey::JurisdictionDenied(jurisdiction.clone());
+        if denied {
+            env.storage().persistent().set(&key, &true);
+            extend_persistent(&env, &key);
+        } else {
+            env.storage().persistent().remove(&key);
+        }
+        extend_instance(&env);
+
+        events::JurisdictionDeniedSet {
+            jurisdiction,
+            denied,
+        }
+        .publish(&env);
+    }
+
+    pub fn is_jurisdiction_denied(env: Env, jurisdiction: String) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::JurisdictionDenied(jurisdiction))
+            .unwrap_or(false)
+    }
+
+    /// Hands the admin role to `new_admin`.
     /// Proposes `new_admin` as the next admin. Only the current admin may
     /// call this; `new_admin` has not authorized anything yet.
     ///
@@ -316,9 +359,16 @@ impl ComplianceContract {
             panic_with_error!(env, ComplianceError::AlreadyExpired);
         }
 
-        // ISO 3166-1 alpha-2: exactly two ASCII uppercase letters. This checks
-        // shape, not membership, so a well-formed but unassigned code passes.
-        let jurisdiction = &record.jurisdiction;
+        Self::validate_jurisdiction_shape(env, &record.jurisdiction);
+    }
+
+    /// ISO 3166-1 alpha-2: exactly two ASCII uppercase letters. This checks
+    /// shape, not membership, so a well-formed but unassigned code passes.
+    ///
+    /// Shared by `set_kyc`'s record validation and `set_jurisdiction_denied`,
+    /// so a deny-list entry can never be stored in a shape `evaluate` could
+    /// never match against a real record's `jurisdiction` field.
+    fn validate_jurisdiction_shape(env: &Env, jurisdiction: &String) {
         let mut code = [0u8; 2];
         if jurisdiction.len() != 2 {
             panic_with_error!(env, ComplianceError::InvalidJurisdiction);
@@ -337,7 +387,9 @@ impl ComplianceContract {
             None => false,
             Some(r) => {
                 let not_expired = r.expires_at == 0 || r.expires_at > env.ledger().timestamp();
-                r.level >= min_level && not_expired
+                let jurisdiction_allowed =
+                    !Self::is_jurisdiction_denied(env.clone(), r.jurisdiction.clone());
+                r.level >= min_level && not_expired && jurisdiction_allowed
             }
         }
     }
