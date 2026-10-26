@@ -1,0 +1,8 @@
+# Lychee ignore list
+https://github.com/0xLizTech/stellarforge/pull/*
+https://github.com/0xLizTech/stellarforge/issues/*
+https://github.com/0xLizTech/stellarforge/actions/*
+https://crates.io/*
+https://registry.npmjs.org/*
+https://npmjs.com/*
+https://www.npmjs.com/*

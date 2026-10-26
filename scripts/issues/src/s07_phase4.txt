@@ -1,0 +1,67 @@
+#STAGE Stage 7: Phase 4 - Privacy and Cross-Chain
+#PHASE phase-4
+#CONTEXT Phase 4 (target Q3 2027) adds ZK compliance proofs with an on-chain verifier, a Stellar to Ethereum lock-and-mint bridge, a Cosmos IBC bridge and retirement of the multisig guardian. See ROADMAP.md Phase 4 and PRD sections 5.8, 5.9, 12 and 14.
+#OOS Insurance, treasury and the full DAO migration (Phase 5).
+Write ADR-012: ZK proof system selection | docs,contracts,research | hard | Groth16 and PLONK differ in setup, proof size and Soroban verification cost. | Benchmark verification cost on Soroban; Compare trusted setup needs; Decide and record | ADR merged with benchmark data
+Prototype a Groth16 verifier in Soroban | contracts,research | hard | Verification cost decides feasibility. | Implement pairing checks using host crypto primitives; Measure instructions; Document limits | Prototype verifies a known proof
+Prototype a PLONK verifier in Soroban | contracts,research | hard | Compare with Groth16. | Implement the verifier; Measure instructions; Document limits | Prototype verifies a known proof
+Scaffold the zk-verifier crate | contracts | gfi | No crate exists. | Create crate files; Add to workspace; Add a constructor test | Crate builds
+Define the KYC circuit statement | research,docs | hard | The proof must state what is proven. | Specify public inputs: level at least N, not expired, issuer key; Private inputs: identity attributes; Write the spec | Spec reviewed by a cryptographer
+Implement the KYC circuit in Circom or Noir | research | hard | Circuit implementation. | Implement the spec; Add unit tests for the circuit; Document constraints count | Circuit tests pass
+Add a trusted setup or universal setup plan | research,security | hard | Groth16 needs a ceremony. | Design a multi-party ceremony or choose a universal setup; Document verification | Plan merged
+Implement on-chain verifying key storage and rotation | contracts,security | med | Keys may need updating. | Store keys by circuit id; Allow admin or governance rotation; Add tests | Rotation emits an event
+Implement verify_proof entry point | contracts | hard | Core feature. | Accept proof and public inputs; Return bool or error; Add tests | Valid proof passes, tampered proof fails
+Bind proofs to a ledger sequence for replay protection | contracts,security | med | PRD requires replay protection. | Include ledger window in public inputs; Reject old proofs; Add tests | Expired proof is rejected
+Add a nullifier set to prevent proof reuse | contracts,security | med | Prevent double use where required. | Store nullifiers with TTL; Reject duplicates; Add tests | Reuse fails
+Integrate ZK proofs into the compliance contract | contracts | hard | Proofs replace plain KYC records optionally. | Add `is_compliant_zk`; Cache verified status with expiry; Add tests | Verified holder can transfer
+Allow rwa-asset to accept ZK compliance | contracts | med | Asset contracts need the option. | Add a compliance mode flag; Choose plain or ZK; Add tests | Both modes work
+Build an off-chain proof generation service | tooling,research | hard | Identity providers must generate proofs. | Create a CLI and library; Read attestations; Output proofs | CLI outputs a valid proof
+Add Semaphore compatibility research | research | med | PRD lists Semaphore and zkPassport. | Evaluate group membership proofs for eligibility; Write findings | Findings doc merged
+Add zkPassport compatibility research | research | med | Same. | Evaluate passport proofs as KYC input; Write findings | Findings doc merged
+Benchmark verification latency against the 100 ms target | contracts,testing | med | Phase 4 exit criterion. | Measure simulated latency; Report percentiles; Optimize hot paths | Report published
+Add ZK verifier to the SDK | sdk | med | SDK parity. | Add client; Add a proof submission helper; Add tests | Covers the ABI
+Add the ZK threat model | docs,security | hard | New attack surface. | Cover soundness bugs, key compromise and metadata leaks; Store in `docs/threat-models/` | Merged
+Commission a cryptography review of the circuit | security,docs | hard | Specialized review. | Write scope and shortlist reviewers; Set a timeline | Scope doc merged
+Write the privacy design guide for issuers | docs | gfi | Issuers must choose settings. | Explain what is private and what leaks on-chain; Add examples | Guide merged
+Write ADR-013: cross-chain bridge architecture | docs,contracts,security | hard | Bridges are the highest risk component. | Compare lock-and-mint with message-passing; Define trust model, relayer bonding and dispute window | ADR merged
+Scaffold the bridge crate | contracts | gfi | No crate exists. | Create crate files; Add to workspace | Crate builds
+Implement lock on Stellar | contracts | hard | Lock side. | Lock tokens; Emit a message event with nonce; Add tests | Lock emits the event
+Implement unlock on Stellar with proof of burn | contracts | hard | Return side. | Verify an attestation of burn; Unlock tokens; Add tests | Unlock requires a valid attestation
+Define the cross-chain message format | contracts,docs | med | Both sides must agree. | Specify fields, encoding and versioning; Add test vectors | Test vectors pass on both sides
+Implement relayer registration with economic bonds | contracts,security | hard | PRD requires bonded relayers. | Add bond deposit; Track relayer status; Add tests | Unbonded relayer cannot attest
+Implement threshold attestation by relayers | contracts,security | hard | Prevent single relayer fraud. | Require M of N signatures; Verify signatures; Add tests | M minus 1 signatures fail
+Implement the 7-day dispute window | contracts,security | hard | PRD requires fraud proofs. | Delay finality; Allow disputes with evidence; Add tests | Disputed message is blocked
+Implement relayer slashing | contracts,security | hard | Penalty for fraud. | Slash bonds on proven fraud; Pay challengers; Add tests | Slash flows reconcile
+Add bridge rate limits and caps | contracts,security | med | Limits reduce loss in exploits. | Add per-window and per-asset caps; Add tests | Over-cap transfers are queued or rejected
+Add a bridge emergency pause with guardian | contracts,security | med | Incident response. | Add pause; Define who can resume; Add tests | Pause blocks lock and unlock
+Gate bridge transfers through compliance | contracts | med | RWA transfers stay regulated across chains. | Check compliance on lock; Document receiving side rules | Non-compliant lock fails
+Write the Ethereum ERC-20 wrapper contract | contracts | hard | EVM side, separate repo per roadmap. | Create the repo layout and Solidity contract; Add mint and burn by the bridge; Add Foundry tests | Foundry tests pass
+Add transfer restrictions to the ERC-20 wrapper | contracts | hard | Wrapped RWA tokens still need compliance. | Add an allowlist hook; Document trust assumptions | Tests pass
+Write the Ethereum bridge verifier contract | contracts,security | hard | Verifies relayer attestations. | Implement threshold checks; Add Foundry tests | Tests pass
+Run the relayer node reference implementation | tooling | hard | Needed to operate the bridge. | Watch Stellar events and submit to Ethereum; Persist state; Add tests | Relays a testnet transfer
+Add relayer monitoring and slashing watcher | tooling,security | med | Watchers detect fraud. | Compare both chains; Raise disputes; Add alerts | Watcher flags a forged message in a test
+Test 100 round-trip transfers on testnets | contracts,testing | hard | Phase 4 exit criterion. | Script round trips between Stellar testnet and Sepolia; Record failures; Publish results | 100 successful round trips documented
+Fuzz bridge message handling | contracts,testing,security | hard | Parsing bugs are fatal. | Fuzz decoding and validation; Run nightly | No panics found
+Add the bridge to the SDK | sdk | med | SDK parity. | Add lock and status helpers; Add tests | Covers the ABI
+Add a bridge status page | frontend | med | Users track transfers. | Show state, confirmations and dispute window | Page shows a test transfer
+Write the bridge threat model | docs,security | hard | Mandatory. | Cover relayer collusion, replay and chain reorgs; Store in `docs/threat-models/` | Merged
+Commission a dedicated bridge audit | security,docs | hard | Beyond the Phase 4 audit. | Write scope and shortlist; Set timeline | Scope doc merged
+Write ADR-014: Cosmos IBC integration | docs,research | hard | Soroban has no native IBC. | Evaluate light client approaches; Decide on interchain accounts; Document risks | ADR merged
+Prototype an IBC light client verifier in Soroban | research,contracts | hard | Feasibility. | Verify a Tendermint header; Measure cost; Document | Prototype verifies a header
+Define the IBC channel handshake handling | contracts | hard | Channel lifecycle. | Implement connection and channel state machines; Add tests | Handshake test passes
+Implement the Stellar to Cosmos transfer packet | contracts | hard | Core flow. | Define the packet; Send and acknowledge; Add timeouts | Packet round trip works against a local chain
+Implement packet timeout and refund | contracts | med | Failure path. | Refund on timeout; Add tests | Timed out packet refunds
+Add interchain account support for multi-step settlement | contracts,research | hard | PRD lists it. | Design the account model; Prototype; Document | Prototype executes one remote call
+Run a local Cosmos test chain in CI | ci,testing | med | Integration tests need a chain. | Use a containerized chain; Cache images | CI job starts the chain
+Write the Cosmos side contract or module | contracts | hard | Receiving side. | Implement a CosmWasm contract for wrapped tokens; Add tests | Tests pass
+Document the cross-chain user flow | docs | gfi | Users need a guide. | Explain lock, wait, claim and failure cases | Guide merged
+Research Pedersen commitment balances | research | hard | Roadmap marks privacy transfers as a research track. | Survey designs; Estimate Soroban costs; Write recommendation | Report merged
+Prototype a confidential transfer with range proofs | research | hard | Feasibility study. | Implement a minimal prototype off-chain; Estimate verification cost on-chain | Prototype and report merged
+Define the guardian retirement plan | docs,security | med | Phase 4 retires the multisig guardian. | List every guardian power; Map each to governance; Order the steps | Plan merged
+Move rwa-asset admin to governance on testnet | contracts,testing | med | Proof of the migration. | Use dual-auth rotation; Execute a parameter change by proposal; Record | Evidence published
+Move registry admin to governance on testnet | contracts,testing | gfi | Same. | Rotate admin; Run a delist via proposal | Evidence published
+Move compliance admin to governance with delegated operators | contracts,security | hard | Compliance needs day-to-day operators. | Split governance and operator roles; Add tests | Operators act, governance rotates
+Move oracle-adapter admin to governance | contracts,testing | gfi | Same. | Rotate admin; Run a config change by proposal | Evidence published
+Add an admin key inventory and verification script | tooling,security | med | Exit criteria require no multisig admin keys. | Query every contract admin; Report non-governance admins | Script outputs a clean report on testnet
+Write the Phase 4 external audit scope | docs,security | med | ROADMAP lists it. | List contracts and commits; Include ZK and bridge; Estimate effort | Scope doc merged
+Prepare the Phase 3 mainnet deployment plan | docs | med | ROADMAP lists it. | Define order and checks; Reuse prior checklists | Plan merged

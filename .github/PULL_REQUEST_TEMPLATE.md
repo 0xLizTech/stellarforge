@@ -23,6 +23,7 @@ Read CONTRIBUTING.md first if you haven't already.
 - [ ] (SDK) `npm run typecheck` and `npm test` pass
 - [ ] New public functions have both a positive and a negative test
 - [ ] Docs updated (README / ADR / CHANGELOG) where relevant
+- [ ] (Release) Required reviewers for npm-publish environment confirmed
 
 ## Type
 
