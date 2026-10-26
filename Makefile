@@ -1,4 +1,4 @@
-.PHONY: all build test fmt lint clean deploy-testnet help
+.PHONY: all build test fmt lint clean sdk-install sdk-build sdk-test sdk-lint sdk-typecheck deploy-testnet udeps hooks doctor help
 
 # ─── Variables ────────────────────────────────────────────────────────────────
 NETWORK        ?= testnet
@@ -6,64 +6,72 @@ STELLAR_CLI    := stellar
 CARGO          := cargo
 
 # ─── Default ──────────────────────────────────────────────────────────────────
-all: fmt lint test build
+all: fmt lint test build sdk-lint sdk-typecheck sdk-test sdk-build ## Run formatters, linters, tests, and builds across contracts and SDK
 
-# ─── Rust Contracts ───────────────────────────────────────────────────────────
-build:
+##@ Contracts
+build: ## Build all Soroban WASM contracts
 	@echo "Building all Soroban contracts..."
 	$(STELLAR_CLI) contract build --manifest-path contracts/rwa-asset/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/registry/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/compliance/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/governance/Cargo.toml
 	$(STELLAR_CLI) contract build --manifest-path contracts/oracle-adapter/Cargo.toml
+	$(STELLAR_CLI) contract build --manifest-path contracts/vault/Cargo.toml
 	@echo "Build complete. Artifacts in target/wasm32v1-none/release/"
 
-test:
+test: ## Run all Rust contract tests
 	@echo "Running contract tests..."
 	$(CARGO) test --all --features testutils
 
-fmt:
+fmt: ## Format Rust source code
 	@echo "Formatting Rust code..."
 	$(CARGO) fmt --all
 
-lint:
+lint: ## Run Clippy linter
 	@echo "Running Clippy..."
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
-clean:
+clean: ## Remove build artifacts
 	$(CARGO) clean
 	rm -rf sdk/dist sdk/node_modules
 
-# ─── SDK ──────────────────────────────────────────────────────────────────────
-sdk-install:
+##@ SDK
+sdk-install: ## Install SDK dependencies
 	cd sdk && npm ci
 
-sdk-build: sdk-install
+sdk-build: sdk-install ## Build the TypeScript SDK
 	cd sdk && npm run build
 
-sdk-test: sdk-install
+sdk-test: sdk-install ## Run SDK unit tests
 	cd sdk && npm test
 
-# ─── Deployment ───────────────────────────────────────────────────────────────
-# scripts/deploy.sh builds, deploys all four contracts with their constructor
-# arguments, and writes deployed-contracts.json. Deploying one wasm here with no
-# constructor arguments could only ever fail.
-deploy-testnet:
+sdk-lint: sdk-install ## Run ESLint on the SDK
+	cd sdk && npm run lint
+
+sdk-typecheck: sdk-install ## Run TypeScript typecheck on the SDK
+	cd sdk && npm run typecheck
+
+##@ Tooling
+udeps: ## Find unused Cargo dependencies (install: cargo install cargo-machete --locked)
+	@echo "Scanning for unused Cargo dependencies..."
+	cargo machete
+
+hooks: ## Install the pre-commit Git hooks (install: pip install pre-commit)
+	pre-commit install
+	pre-commit install --hook-type commit-msg
+	@echo "Pre-commit hooks installed. Run 'pre-commit run --all-files' to check the tree."
+
+doctor: ## Check local Rust, stellar-cli, and Node toolchain against pinned versions
+	./scripts/doctor.sh
+
+##@ Release
+deploy-testnet: ## Deploy all four contracts to Stellar testnet
 	@echo "Deploying all four contracts to Stellar testnet..."
 	@echo "Ensure STELLAR_ACCOUNT env var is set to a funded testnet keypair."
 	NETWORK=testnet ./scripts/deploy.sh
 
-# ─── Help ─────────────────────────────────────────────────────────────────────
-help:
-	@echo ""
-	@echo "StellarForge — Makefile targets"
-	@echo "─────────────────────────────────────────"
-	@echo "  make build          Build all Soroban WASM contracts"
-	@echo "  make test           Run all Rust contract tests"
-	@echo "  make fmt            Format Rust source code"
-	@echo "  make lint           Run Clippy linter"
-	@echo "  make clean          Remove build artifacts"
-	@echo "  make sdk-build      Build the TypeScript SDK"
-	@echo "  make sdk-test       Run SDK unit tests"
-	@echo "  make deploy-testnet Deploy all four contracts to Stellar testnet"
-	@echo ""
+##@ Help
+help: ## Display this help message
+	@awk 'BEGIN {FS = ":.*##"} \
+		/^##@/ { printf "\n%s:\n", substr($$0, 5) } \
+		/^[a-zA-Z_-]+:.*?##/ { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)

@@ -1,0 +1,65 @@
+# StellarForge Label Taxonomy
+
+# Type labels
+- name: "type/bug"
+  color: "d73a4a"
+  description: "Something isn't working as expected"
+
+- name: "type/feature"
+  color: "a2eeef"
+  description: "New feature or enhancement request"
+
+- name: "type/docs"
+  color: "0075ca"
+  description: "Improvements or additions to documentation"
+
+- name: "type/refactor"
+  color: "cfd3d7"
+  description: "Code refactoring or tech debt cleanup"
+
+- name: "type/security"
+  color: "b60205"
+  description: "Security fixes, audits, and hardening"
+
+# Area labels
+- name: "area/contracts"
+  color: "0e8a16"
+  description: "Soroban smart contracts in contracts/*"
+
+- name: "area/sdk"
+  color: "1d76db"
+  description: "TypeScript SDK in sdk/*"
+
+- name: "area/docs"
+  color: "5319e7"
+  description: "Architecture, specifications, and user docs"
+
+- name: "area/ci"
+  color: "fbca04"
+  description: "GitHub Actions workflows and release tooling"
+
+# Phase labels
+- name: "phase/1-foundation"
+  color: "bfdadc"
+  description: "Phase 1: Foundation (core contracts, SDK, compliance)"
+
+- name: "phase/2-fractionalization"
+  color: "c5def5"
+  description: "Phase 2: Vault contract and NAV tranching"
+
+- name: "phase/3-defi"
+  color: "bfd4f2"
+  description: "Phase 3: Liquidity pools and orderbook integration"
+
+# Difficulty labels
+- name: "difficulty/starter"
+  color: "7057ff"
+  description: "Good for newcomers and first-time contributors"
+
+- name: "difficulty/medium"
+  color: "008672"
+  description: "Requires moderate understanding of Soroban or TypeScript SDK"
+
+- name: "difficulty/advanced"
+  color: "e99695"
+  description: "Deep protocol, cryptography, or security expertise needed"

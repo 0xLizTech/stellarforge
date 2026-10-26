@@ -15,6 +15,7 @@ on:
       - "sdk/package.json"
       - "sdk/package-lock.json"
       - ".github/workflows/security.yml"
+  workflow_dispatch:
   # Audit before merge, not only after. Without this trigger the
   # dependency-review job could never run, since it is gated on pull_request.
   pull_request:
@@ -23,13 +24,14 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   cargo-audit:
     name: Cargo Audit (Rust advisory database)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Pinned and --locked, so the auditor is the same build on every run.
       - name: Install cargo-audit
@@ -42,7 +44,7 @@ jobs:
     name: Cargo Deny (licenses, bans, and sources)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Pinned and --locked, matching cargo-audit above.
       - name: Install cargo-deny
@@ -55,9 +57,9 @@ jobs:
     name: npm Audit (SDK runtime dependencies)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
@@ -72,5 +74,5 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/dependency-review-action@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/dependency-review-action@72eb423297a7cc29376c3e0026574f1a203f9052 # v4.5.0

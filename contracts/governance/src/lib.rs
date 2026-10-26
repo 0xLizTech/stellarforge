@@ -10,16 +10,32 @@
 //! any proposal. Results are advisory until Phase 3 supplies a voting-power
 //! source; nothing here should gate a privileged action.
 //!
-//! Weight is deliberately left unverified rather than wired to a token
-//! balance, because reading a live balance at vote time is worse than not
-//! checking at all: a holder could vote, transfer the same tokens onward and
-//! vote again from the recipient. Correct weighting needs balances snapshotted
-//! at proposal creation, which is Phase 2/3 work alongside `SFORGE`.
+//! # Declared weight is capped, not verified, against a balance
+//!
+//! A live balance read at vote time does not fully verify weight either: a
+//! holder can vote, transfer the same tokens onward, and vote again from the
+//! recipient, since neither read sees the other's point in time. Fully
+//! closing that needs balances snapshotted at proposal creation, which in
+//! turn needs the weight-source contract to support a historical balance
+//! query it does not have today (`rwa-asset::balance` returns only the
+//! current balance). That is Phase 2/3 work alongside `SFORGE`.
+//!
+//! Capping is still worth doing now: it turns "declare any weight, with no
+//! tie to a real holding at all" into "declare at most what you currently
+//! hold," which is a real restriction even though it does not close the
+//! transfer-and-vote-again path above. When no weight source is configured,
+//! `vote` accepts the declared weight uncapped, matching `rwa-asset`'s own
+//! fail-open-when-unconfigured precedent (ADR-004) so this contract stays
+//! usable and testable without a deployed token. `finalize` still applies no
+//! quorum, and outcomes remain advisory in Phase 1.
 
 mod error;
 mod events;
+mod weight_source;
 
 pub use error::GovernanceError;
+pub use events::{AdminTransferred, ProposalCreated, ProposalFinalized, VoteCast, WeightSourceSet};
+pub use weight_source::{WeightSourceClient, WeightSourceInterface};
 pub use events::{
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, DepositConfigured,
     PassThresholdSet, ProposalCancelled, ProposalCreated, ProposalDepositRefunded,
@@ -35,6 +51,9 @@ use stellarforge_common::{extend_instance, extend_persistent, storage::DAY_IN_LE
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
 const PROP_COUNT: Symbol = symbol_short!("PCOUNT");
+/// Address of the contract `vote` queries to cap declared weight, absent when
+/// capping is disabled.
+const WEIGHT_SOURCE_KEY: Symbol = symbol_short!("WSRC");
 const DEPOSIT_TOKEN_KEY: Symbol = symbol_short!("DEP_TOKEN");
 const DEPOSIT_AMOUNT_KEY: Symbol = symbol_short!("DEP_AMT");
 const QUORUM_KEY: Symbol = symbol_short!("QUORUM");
@@ -281,6 +300,19 @@ impl GovernanceContract {
         let already_voted: bool = env.storage().persistent().get(&vote_key).unwrap_or(false);
         if already_voted {
             panic_with_error!(&env, GovernanceError::AlreadyVoted);
+        }
+
+        // Cap the declared weight at the voter's current balance in the
+        // configured weight source, so a vote can carry at most what the
+        // voter demonstrably holds right now. Uncapped when no source is
+        // configured (module docs explain why, and ADR-004 is the precedent).
+        // A voter capped to zero or less holds nothing to vote with, so this
+        // is the same InvalidWeight rejection as a non-positive declared
+        // weight, not a zero-weight vote that silently consumes their one
+        // shot at this proposal.
+        let weight = Self::capped_weight(&env, &voter, weight);
+        if weight <= 0 {
+            panic_with_error!(&env, GovernanceError::InvalidWeight);
         }
 
         let tally = if support {
@@ -585,6 +617,26 @@ impl GovernanceContract {
         }
     }
 
+    /// Point `vote` at a contract to query for a weight cap, or pass `None`
+    /// to vote uncapped again.
+    ///
+    /// Mirrors `rwa-asset::set_compliance` (ADR-004): a structural binding to
+    /// whatever address is given, not a dependency on a specific crate, so
+    /// the weight source can be swapped (a different token, a mock in tests)
+    /// without rebuilding this contract.
+    pub fn set_weight_source(env: Env, weight_source: Option<Address>) {
+        Self::require_admin(&env);
+        match &weight_source {
+            Some(addr) => env.storage().instance().set(&WEIGHT_SOURCE_KEY, addr),
+            None => env.storage().instance().remove(&WEIGHT_SOURCE_KEY),
+        }
+        extend_instance(&env);
+
+        events::WeightSourceSet { weight_source }.publish(&env);
+    }
+
+    pub fn weight_source(env: Env) -> Option<Address> {
+        env.storage().instance().get(&WEIGHT_SOURCE_KEY)
     // ── Proposal Deposit Configuration (#134) ───────────────────────────────
 
     /// Configures the proposal deposit, or pass `token = None` to disable it.
@@ -617,6 +669,8 @@ impl GovernanceContract {
         }
         .publish(&env);
     }
+
+    // ── Quorum and Pass Threshold (#135) ────────────────────────────────────
 
     /// Sets the minimum total votes (`votes_for + votes_against`) a proposal
     /// needs before `finalize` will even evaluate its threshold (#135). Zero
@@ -679,6 +733,8 @@ impl GovernanceContract {
         Self::admin(env.clone()).require_auth();
     }
 
+    /// The share of cast votes, in basis points, `finalize` requires to be
+    /// `votes_for` (#135).
     pub fn pass_threshold_bps(env: Env) -> u32 {
         env.storage()
             .instance()
@@ -711,6 +767,24 @@ impl GovernanceContract {
         {
             Some(p) => p,
             None => panic_with_error!(env, GovernanceError::ProposalNotFound),
+        }
+    }
+
+    /// `weight`, capped at `voter`'s current balance in the configured
+    /// weight source. Returns `weight` unchanged when no source is
+    /// configured, matching `rwa-asset::require_compliant`'s fail-open
+    /// behaviour for the same reason: this contract must stay usable before
+    /// an operator has wired up a weight source.
+    fn capped_weight(env: &Env, voter: &Address, weight: i128) -> i128 {
+        let Some(source) = Self::weight_source(env.clone()) else {
+            return weight;
+        };
+        let client = WeightSourceClient::new(env, &source);
+        let balance = client.balance(voter);
+        if balance < weight {
+            balance.max(0)
+        } else {
+            weight
         }
     }
 }

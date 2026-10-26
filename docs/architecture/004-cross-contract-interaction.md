@@ -64,12 +64,15 @@ The reasoning is ADR-001's, applied: a KYC record is written once and read forev
 
 | Operation | Screened |
 |---|---|
-| `mint` | `to` |
-| `transfer` | `from` and `to` |
-| `transfer_from` | `from` and `to` |
-| `burn` | nobody |
-| `burn_from` | nobody |
-| `approve` | nobody |
+| `rwa-asset.mint` | `to` |
+| `rwa-asset.transfer` | `from` and `to` |
+| `rwa-asset.transfer_from` | `from` and `to` |
+| `rwa-asset.burn` | nobody |
+| `rwa-asset.burn_from` | nobody |
+| `rwa-asset.approve` | nobody |
+| `vault.transfer` | `from` and `to` |
+| `vault.transfer_from` | `from` and `to` |
+| `vault.approve` | nobody |
 
 `transfer_from` screens the owner and the recipient, not the spender. The spender moves value it does not own; the parties to the movement are the ones a regulator cares about.
 
@@ -106,7 +109,7 @@ The exposure is the obvious one: an asset that was never configured transfers fr
 
 ## Consequences
 
-- **The compliance contract is a hard dependency at runtime once configured.** If its address is wrong, if it does not implement `screen`, or if it panics, every `mint`, `transfer` and `transfer_from` fails. `burn` and `approve` keep working, so holders can still exit. Recovery is an admin call to `set_compliance` pointing at a working contract — which is available precisely because ADR-003 kept that indirection.
+- **The compliance contract is a hard dependency at runtime once configured.** If its address is wrong, if it does not implement `screen`, or if it panics, every `mint`, `transfer` and `transfer_from` fails. `burn` and `approve` keep working, so holders can still exit. Recovery is an admin call to `set_compliance` pointing at a working contract — which is available precisely because ADR-003 kept that indirection. `contracts/rwa-asset/tests/test_compliance_failure_modes.rs` proves this with a deliberately panicking stand-in contract, a contract that does not implement `screen` at all, and a plain address with nothing deployed behind it: all three fail every screened operation closed, and the only way out is `set_compliance` again (#143).
 
 - **`min_level = 0` does not mean "allow everyone".** `evaluate` returns `false` for a subject with no record at all, before it ever compares levels. So a compliance contract configured at level 0 requires every party to hold *some* record, not none. This is the most likely operational surprise in the whole design: the configuration that reads like "screening off" is in fact "everyone must be enrolled". Screening off is `set_compliance(None, _)`.
 

@@ -266,3 +266,34 @@ In addition to `cargo audit` (RustSec vulnerability advisories) and `npm audit -
 
 - **`RUSTSEC-2024-0436` (`paste 1.0.15`).** Because `paste` is pinned inside `soroban-sdk` 27's own host dependency tree and has no known security or soundness vulnerability (it is an archived proc-macro crate), `deny.toml` records a scoped ignore for `RUSTSEC-2024-0436` until an upstream `soroban-sdk` release drops `paste` from `ark-ff` / `wasmi_core`.
 - **Transitive duplicate versions (`multiple-versions = "allow"`).** `soroban-sdk` 27 transitively depends on two versions of `syn`, `darling`, and `stellar-strkey`. `deny.toml` allows duplicate versions to accommodate the upstream SDK graph while rejecting any unapproved license or registry across all resolved versions.
+
+## Static Analysis (CodeQL)
+
+`.github/workflows/codeql.yml` runs GitHub CodeQL on the TypeScript SDK
+(`sdk/**`) with the `security-and-quality` query suite. It triggers on pull
+requests touching `sdk/**`, on pushes to `main`, and weekly so newly published
+queries reach code that has not changed.
+
+Findings appear under the repository's **Security → Code scanning** tab. A pull
+request that introduces an alert in a changed file fails the
+`Analyze JavaScript/TypeScript` check.
+
+### Triage
+
+1. An alert on a pull request is triaged by the reviewer before merge: fix it,
+   or dismiss it with a written reason (false positive, won't fix, used in
+   tests).
+2. Alerts found by the weekly run against unmodified code are triaged by a
+   maintainer within 5 business days.
+3. A dismissed `security`-severity alert is recorded in `docs/audits/` with the
+   evidence for the dismissal.
+
+### Assumptions and residual risk
+
+- The analysis covers the SDK's JavaScript/TypeScript only. Contract code is
+  Rust, whose CodeQL support was still public preview at the time of writing;
+  this workflow deliberately does not enable it. Rust analysis stays with
+  clippy, the threat models in `docs/threat-models/`, and the external audit.
+- Taint tracking through the SDK's generated `ScVal` codecs is best-effort.
+  CodeQL is a net for common classes (injection, prototype pollution, weak
+  crypto), not a substitute for the audit.
