@@ -43,7 +43,12 @@ jobs:
     needs: [oracle-parity]
     strategy:
       matrix:
-        node-version: ["22", "24"]
+        # 22.12 is the engines floor (package.json) — tested exactly so a
+        # breaking dependency that raises it fails CI instead of users.
+        # 24 is the current LTS line. Node 20 is below the floor: the
+        # CommonJS build requires ESM-only deps, which Node supports without a
+        # flag only from 22.12.
+        node-version: ["22.12", "24"]
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
