@@ -33,7 +33,7 @@ jobs:
     name: Check & Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # rustup installs the exact toolchain, target and components pinned in
       # rust-toolchain.toml, so CI builds what a release is reproduced from.
@@ -55,7 +55,7 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # rustup installs the exact toolchain, target and components pinned in
       # rust-toolchain.toml, so CI builds what a release is reproduced from.
@@ -80,7 +80,7 @@ jobs:
     name: Build WASM Artifacts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # rustup installs the exact toolchain, target and components pinned in
       # rust-toolchain.toml, so CI builds what a release is reproduced from.
@@ -129,7 +129,7 @@ jobs:
     name: Verify WASM Reproducibility
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4.4.0
 
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc --version
