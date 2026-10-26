@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ci`: Add `deny.toml` and `cargo-deny` check in `.github/workflows/security.yml` to enforce license compliance (Apache-2.0, MIT, BSD) and deny unknown registries (#91).
 - Stage 1 developer-experience tooling:
   - `.gitattributes` normalizing all tracked text to LF (`*.sh`, `*.rs`, `*.ts`, `*.md`, and the other text formats in the tree) and marking `Cargo.lock` and `package-lock.json` as generated. The tree was re-normalized once, and a new **Line Endings** workflow fails any pull request that reintroduces CRLF into the index (#85).
   - A **Commitlint** workflow and `commitlint.config.cjs` enforcing the Conventional Commits style documented in `CONTRIBUTING.md`; a pull request with a non-conforming commit now fails the check. Allowed scopes are documented and now include the `vault` and `common` crates (#90).
