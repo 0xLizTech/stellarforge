@@ -1,0 +1,34 @@
+# Normalize line endings across platforms.
+#
+# Windows contributors otherwise commit CRLF into shell scripts, which breaks
+# scripts/deploy.sh when Linux CI executes it. Declaring the canonical form here
+# makes the result independent of each contributor's core.autocrlf setting.
+
+# Default: let Git decide what is text and normalize it to LF in the repository.
+* text=auto eol=lf
+
+# Source and documentation are always text, stored with LF.
+*.sh    text eol=lf
+*.rs    text eol=lf
+*.ts    text eol=lf
+*.md    text eol=lf
+
+# Other text formats in the tree, kept LF for the same reason.
+*.toml  text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.cjs   text eol=lf
+*.mjs   text eol=lf
+
+# Lockfiles are tool-generated. Mark them so GitHub collapses them in diffs and
+# reviewers are not asked to read machine output, while still storing LF.
+Cargo.lock        linguist-generated=true text eol=lf
+**/package-lock.json linguist-generated=true text eol=lf
+
+# Binary assets must never be line-ending converted.
+*.wasm  binary
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.ico   binary

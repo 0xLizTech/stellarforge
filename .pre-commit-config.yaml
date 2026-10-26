@@ -1,0 +1,49 @@
+# Local Git hooks for StellarForge, run by https://pre-commit.com.
+#
+# Install once per clone (see CONTRIBUTING.md "Development Setup"):
+#   pip install pre-commit        # or: pipx install pre-commit / brew install pre-commit
+#   pre-commit install            # formatting + lint hooks (pre-commit stage)
+#   pre-commit install --hook-type commit-msg   # Conventional Commits check
+#
+# These mirror the CI gates so failures surface locally instead of after push.
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  # Line-ending hygiene, matching .gitattributes. Rewrites any CRLF in staged
+  # text files to LF so a bad checkout cannot reach the repository.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  # Conventional Commits, matching .github/workflows/commitlint.yml and the
+  # commit-msg check below. Config is read from commitlint.config.cjs.
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.22.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies: ["@commitlint/config-conventional@19.8.1"]
+
+  # Project-local hooks run against tools already required for development.
+  - repo: local
+    hooks:
+      # Rejects a commit with unformatted Rust. `cargo fmt --check` makes no
+      # changes; it exits non-zero when formatting is needed.
+      - id: cargo-fmt
+        name: cargo fmt (check)
+        entry: cargo fmt --all --
+        args: ["--check"]
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # Runs ESLint over the SDK when a staged TypeScript file changes. Requires
+      # the SDK dependencies to be installed (`make sdk-install`).
+      - id: eslint-sdk
+        name: eslint (SDK)
+        entry: npm --prefix sdk run lint
+        language: system
+        files: '^sdk/.*\.ts$'
+        pass_filenames: false

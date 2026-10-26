@@ -81,7 +81,42 @@ cargo install --locked stellar-cli
 
 # Optional but recommended
 cargo install cargo-watch    # auto-rerun tests on save
+
+# Developer tooling checked in CI (see "Local Git hooks" below)
+pip install pre-commit                              # or pipx/brew
+cargo install cargo-machete --locked --version 0.9.1 # unused-dependency finder
 ```
+
+### Local Git hooks
+
+StellarForge ships a [pre-commit](https://pre-commit.com) configuration
+(`.pre-commit-config.yaml`) that mirrors the CI gates, so formatting, lint, and
+commit-message failures surface before you push. Install it once per clone:
+
+```bash
+make sdk-install        # the ESLint hook needs the SDK dependencies
+make hooks              # installs the pre-commit and commit-msg hooks
+```
+
+`make hooks` runs `pre-commit install` and `pre-commit install --hook-type
+commit-msg`. From then on, every commit runs, on staged files:
+
+- **LF line endings** — rewrites any CRLF to LF, matching `.gitattributes`.
+- **`cargo fmt --check`** — rejects unformatted Rust.
+- **ESLint** — lints the SDK when a staged `.ts` file changes.
+- **commitlint** — rejects a commit message that is not a valid Conventional Commit.
+
+Run everything against the whole tree at any time with `pre-commit run
+--all-files`.
+
+### Finding unused dependencies
+
+```bash
+make udeps        # runs cargo-machete across the Cargo workspace
+```
+
+The **Unused Dependencies** workflow runs the same check on pull requests and on
+a weekly schedule.
 
 ### Initial Setup
 
@@ -232,7 +267,13 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 **Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`
 
-**Scopes:** `rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`, `sdk`, `ci`, `docs`
+**Scopes:** `rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`, `vault`, `common`, `sdk`, `ci`, `docs`, `deps`, `release`
+
+This style is enforced. The **Commitlint** CI job runs `commitlint.config.cjs`
+against every commit in a pull request, and the local `commit-msg` hook runs the
+same check (see [Local Git hooks](#local-git-hooks)). A non-conforming commit
+fails the check. The scope is optional, but when present it must be one of the
+list above.
 
 **Examples:**
 

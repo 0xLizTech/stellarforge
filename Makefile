@@ -1,4 +1,4 @@
-.PHONY: all build test fmt lint clean sdk-install sdk-build sdk-test sdk-lint sdk-typecheck deploy-testnet help
+.PHONY: all build test fmt lint clean sdk-install sdk-build sdk-test sdk-lint sdk-typecheck deploy-testnet udeps hooks help
 
 # ─── Variables ────────────────────────────────────────────────────────────────
 NETWORK        ?= testnet
@@ -50,6 +50,16 @@ sdk-lint: sdk-install ## Run ESLint on the SDK
 
 sdk-typecheck: sdk-install ## Run TypeScript typecheck on the SDK
 	cd sdk && npm run typecheck
+
+##@ Tooling
+udeps: ## Find unused Cargo dependencies (install: cargo install cargo-machete --locked)
+	@echo "Scanning for unused Cargo dependencies..."
+	cargo machete
+
+hooks: ## Install the pre-commit Git hooks (install: pip install pre-commit)
+	pre-commit install
+	pre-commit install --hook-type commit-msg
+	@echo "Pre-commit hooks installed. Run 'pre-commit run --all-files' to check the tree."
 
 ##@ Release
 deploy-testnet: ## Deploy all four contracts to Stellar testnet

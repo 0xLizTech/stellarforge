@@ -59,6 +59,10 @@ jobs:
         working-directory: sdk
         run: npm ci
 
+      - name: Lint
+        working-directory: sdk
+        run: npm run lint
+
       - name: Type check
         working-directory: sdk
         run: npm run typecheck
