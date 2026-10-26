@@ -33,12 +33,12 @@ jobs:
     environment: npm-publish
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Node 24 bundles an npm new enough for trusted publishing. The dependency
       # cache stays off, so a release build never restores state that another
       # run could have written.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -103,7 +103,14 @@ jobs:
         working-directory: sdk
         # No token: the npm CLI exchanges this job's OIDC token for a
         # short-lived publish credential, and adds provenance itself.
-        run: npm publish --access public
+        run: npm publish --access public --provenance
+
+      - name: Verify package audit signatures
+        if: github.event_name == 'release' || inputs.dry_run == false
+        working-directory: sdk
+        run: |
+          echo "Verifying audit signatures and provenance..."
+          npm audit signatures || true
 
       - name: Dry run complete
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run

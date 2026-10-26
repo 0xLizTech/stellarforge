@@ -1,0 +1,6 @@
+{
+  "rust-analyzer.cargo.features": [
+    "testutils"
+  ],
+  "rust-analyzer.check.command": "clippy"
+}
