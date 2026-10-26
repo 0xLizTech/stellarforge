@@ -201,6 +201,17 @@ changes who authenticates. Two new entry points extend the map:
 |---|---|---|---|
 | `rwa-asset` | `burn_from` | `spender` | Not `from`: as with `transfer_from`, the allowance is the authority |
 | | `decimals`, `name`, `symbol` | nobody | Pure reads of `AssetMetadata` |
+| `vault` | `__constructor` | `admin` | Configuration auth (IR-17) |
+| | `deposit` | `from` | Sub-invokes underlying token transfer into vault |
+| | `redeem` | `holder` | Vault authorizes underlying transfer to holder |
+| | `transfer` | `from` | Shareholder moves own position |
+| | `transfer_from` | `spender` | Allowance is the authority |
+| | `approve` | `owner` | Granting allowance |
+| | `set_paused` | `admin` | Emergency control |
+| | `set_oracles` | `admin` | Multi-source oracle configuration |
+| | `transfer_admin` | `admin` and `new_admin` | Dual-authorization handover (NFR-S-4) |
+| | `balance`, `total_supply`, `allowance`, `decimals`, `name`, `symbol`, `locked_until`, `admin`, `config`, `underlying_held`, `paused`, `redeemable`, `oracles`, `nav`, `nav_per_share` | nobody | Pure state reads |
+| | `balance`, `total_supply`, `balance_at`, `total_supply_at`, `allowance`, `decimals`, `name`, `symbol`, `locked_until`, `admin`, `config`, `underlying_held`, `paused`, `redeemable`, `oracles`, `nav`, `nav_per_share` | nobody | Pure state reads |
 
 That makes `burn_from` a fourth deliberate exception, alongside
 `transfer_from`, `screen` and `finalize`.

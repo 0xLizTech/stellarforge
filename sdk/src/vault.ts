@@ -5,7 +5,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 
-import type { Transaction, rpc } from "@stellar/stellar-sdk";
+import type { Transaction } from "@stellar/stellar-sdk";
 
 import { ContractClient } from "./base.js";
 import type { SponsoredTransaction } from "./sponsored.js";

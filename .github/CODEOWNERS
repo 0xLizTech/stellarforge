@@ -1,2 +1,15 @@
 # Global default — route all reviews to the core maintainers.
 * @Elizabethxxx @promisszn
+
+# Smart Contracts (Soroban/Rust)
+/contracts/ @Elizabethxxx @promisszn
+
+# TypeScript SDK
+/sdk/ @Elizabethxxx @promisszn
+
+# Documentation & Specifications
+/docs/ @Elizabethxxx @promisszn
+
+# GitHub Actions, Tooling & Security Review
+/.github/workflows/ @Elizabethxxx @promisszn
+/.github/ @Elizabethxxx @promisszn
