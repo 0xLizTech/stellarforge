@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A recipe guide for issuing a tokenized bond ([docs/guides/issue-tokenized-bond.md](docs/guides/issue-tokenized-bond.md)) with a runnable companion script (`sdk/examples/issue-tokenized-bond.ts`), covering compliance setup (KYC levels, `setCompliance`, issuer authorisation), bond terms as asset metadata, registry registration, and minting a first tranche on testnet (#209).
 - `deny.toml` and a `cargo-deny` job in `.github/workflows/security.yml` (#91), enforcing permissive dependency licenses (`Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Unicode-3.0`), rejecting copyleft/GPL dependencies, and denying unknown registries and git sources. Findings, assumptions, and residual risks are documented in `docs/SECURITY.md`.
 - `contracts/size-budget.json` (#94) and `scripts/check-wasm-size.cjs` wired into `.github/workflows/contracts-ci.yml` (#93), recording the compiled `.wasm` byte size of all five contracts (`rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`), posting a size delta report on pull requests, and failing CI if any contract exceeds its configured byte budget.
 - `scripts/check-soroban-sdk-version.cjs`, run in `.github/workflows/contracts-ci.yml`, rejecting per-crate `soroban-sdk` version overrides or duplicate `soroban-sdk` lockfile versions, plus the workspace SDK upgrade procedure in `CONTRIBUTING.md` (#95).
