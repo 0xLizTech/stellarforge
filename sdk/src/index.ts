@@ -7,3 +7,4 @@ export * from "./governance.js";
 export * from "./vault.js";
 export * from "./oracle.js";
 export * from "./utils.js";
+export * from "./deprecation.js";
