@@ -23,6 +23,8 @@ Soroban provides three storage tiers: `instance`, `persistent`, and `temporary`.
 | Per-proposal voting records | `persistent` | Historical; must be queryable post-deadline |
 | Asset metadata | `persistent` | Rarely changes; needs to be available for indexers |
 | Allowances | `persistent` | Must persist across transactions |
+| Vault balance checkpoints | `persistent` | Historical holder/supply snapshots for yield distribution |
+| Vault lockup records | `persistent` | Per-holder lockup expiration timestamps |
 | Temporary nonces | `temporary` | Short-lived; auto-expiry reduces state rent costs |
 
 ### Key naming convention
