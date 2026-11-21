@@ -55,6 +55,8 @@ export interface StellarForgeConfig extends NetworkConfig {
   contracts: ContractAddresses;
   /** Optional signing keypair (StrKey secret, `S...`) — only for server-side use */
   signerSecret?: string;
+  /** Pluggable logger instance (defaults to SilentLogger) */
+  logger?: import("./logger.js").Logger;
 }
 
 /** Outcome of a write transaction that was submitted and confirmed. */
