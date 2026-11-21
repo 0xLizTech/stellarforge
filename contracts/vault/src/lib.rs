@@ -380,6 +380,14 @@ impl VaultContract {
 
         Self::write_balance(&env, &from, from_bal - amount);
         Self::write_balance(&env, &to_addr, to_new);
+
+        // Propagate lock-up timestamp to recipient if sender has an active lock (#224, #223)
+        let from_lock = Self::locked_until(env.clone(), from.clone());
+        let to_lock = Self::locked_until(env.clone(), to_addr.clone());
+        if from_lock > to_lock {
+            env.storage().persistent().set(&DataKey::LockedUntil(to_addr.clone()), &from_lock);
+        }
+
         extend_instance(&env);
 
         events::Transfer {
