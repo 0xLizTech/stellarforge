@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { Address, nativeToScVal, Networks, rpc, Transaction, xdr } from "@stellar/stellar-sdk";
+import { Account, Address, Keypair, MuxedAccount, nativeToScVal, Networks, rpc, Transaction, xdr } from "@stellar/stellar-sdk";
 
 import { RwaAssetClient, ComplianceClient } from "../src/client.js";
 import { TransactionExpiredError, TransactionOutcomeUnknownError } from "../src/errors.js";
@@ -221,6 +221,26 @@ describe("RwaAssetClient.metadata", () => {
   });
 });
 
+describe("RwaAssetClient SEP-41 metadata queries (#180)", () => {
+  it("reads decimals via `decimals`", async () => {
+    const spy = stubSimulation(succeeds(u32(7)));
+    await expect(new RwaAssetClient(rwaConfig).decimals()).resolves.toBe(7);
+    expect(invocation(spy)).toEqual({ fn: "decimals", args: [] });
+  });
+
+  it("reads name via `name`", async () => {
+    const spy = stubSimulation(succeeds(str("Manhattan REIT")));
+    await expect(new RwaAssetClient(rwaConfig).name()).resolves.toBe("Manhattan REIT");
+    expect(invocation(spy)).toEqual({ fn: "name", args: [] });
+  });
+
+  it("reads symbol via `symbol`", async () => {
+    const spy = stubSimulation(succeeds(str("REIT-NYC-001")));
+    await expect(new RwaAssetClient(rwaConfig).symbol()).resolves.toBe("REIT-NYC-001");
+    expect(invocation(spy)).toEqual({ fn: "symbol", args: [] });
+  });
+});
+
 describe("RwaAssetClient simulation failures", () => {
   it("surfaces the simulation error message", async () => {
     stubSimulation(fails("HostError: Error(Contract, #8)"));
@@ -426,6 +446,19 @@ describe("RwaAssetClient write builders", () => {
     expect(tx.signatures).toHaveLength(0);
   });
 
+  it("buildTransferTx accepts M-addresses and encodes them correctly (#179)", async () => {
+    stubWritePath();
+    const kp = Keypair.random();
+    const muxed = new MuxedAccount(new Account(kp.publicKey(), "0"), "999");
+    const mAddr = muxed.accountId();
+
+    const tx = await new RwaAssetClient(rwaConfig).buildTransferTx(HOLDER, mAddr, 50n);
+    expect(builtInvocation(tx)).toEqual({
+      fn: "transfer",
+      args: [HOLDER, mAddr, 50n],
+    });
+  });
+
   it("prepares the transaction before returning it", async () => {
     const stubs = stubWritePath();
     await new RwaAssetClient(rwaConfig).buildMintTx(ISSUER, HOLDER, 1n);
@@ -593,6 +626,19 @@ describe("RwaAssetClient write submission", () => {
   ])("$name submits and reports the settled transaction", async ({ call }) => {
     stubWritePath();
     await expect(call(new RwaAssetClient(signerConfig))).resolves.toEqual({
+      hash: SUBMITTED_HASH,
+      ledger: 42,
+    });
+  });
+
+  it("transfer to an M-address succeeds and reports the settled transaction (#179)", async () => {
+    stubWritePath();
+    const kp = Keypair.random();
+    const muxed = new MuxedAccount(new Account(kp.publicKey(), "0"), "42");
+    const mAddr = muxed.accountId();
+
+    const client = new RwaAssetClient(signerConfig);
+    await expect(client.transfer(ISSUER, mAddr, 100n)).resolves.toEqual({
       hash: SUBMITTED_HASH,
       ledger: 42,
     });

@@ -34,16 +34,55 @@ function kycRecordToScVal(record: KycRecord): xdr.ScVal {
   ]);
 }
 
+// ─── SEP-41 Interface ────────────────────────────────────────────────────────
+
+/**
+ * Generic interface for Stellar Soroban tokens complying with SEP-41 (Token Interface).
+ */
+export interface Sep41TokenClient {
+  /** Balance of ownerAddress in base units (stroops). */
+  balance(ownerAddress: string): Promise<bigint>;
+  /** Remaining allowance granted to spender by owner. */
+  allowance(ownerAddress: string, spenderAddress: string): Promise<bigint>;
+  /** Set allowance for spender live through liveUntilLedger. */
+  approve(
+    owner: string,
+    spender: string,
+    amount: bigint,
+    liveUntilLedger: number,
+  ): Promise<TxResult>;
+  /** Transfer amount from from to to (accepts standard and MuxedAccount addresses). */
+  transfer(from: string, to: string, amount: bigint): Promise<TxResult>;
+  /** Transfer amount from from to to drawing on spender's allowance. */
+  transferFrom(
+    spender: string,
+    from: string,
+    to: string,
+    amount: bigint,
+  ): Promise<TxResult>;
+  /** Burn amount from from's balance. */
+  burn(from: string, amount: bigint): Promise<TxResult>;
+  /** Burn amount from from drawing on spender's allowance. */
+  burnFrom(spender: string, from: string, amount: bigint): Promise<TxResult>;
+  /** Decimals used by this token (0 to 18). */
+  decimals(): Promise<number>;
+  /** Human-readable asset name. */
+  name(): Promise<string>;
+  /** Asset ticker symbol. */
+  symbol(): Promise<string>;
+}
+
 // ─── RwaAssetClient ───────────────────────────────────────────────────────────
 
 /**
  * Minimal client for interacting with a deployed RwaAsset Soroban contract.
+ * Conforms to the standard SEP-41 Token Interface.
  *
  * For production use, transactions should be signed by a wallet (Freighter,
  * hardware wallet, etc.) rather than a raw secret. This client accepts an
  * optional `signerSecret` for automated/server contexts only.
  */
-export class RwaAssetClient extends ContractClient {
+export class RwaAssetClient extends ContractClient implements Sep41TokenClient {
   constructor(config: StellarForgeConfig) {
     super(config, config.contracts.rwaAsset, "rwaAsset");
   }
@@ -60,6 +99,24 @@ export class RwaAssetClient extends ContractClient {
   async totalSupply(): Promise<bigint> {
     const result = await this.simulateReadOnly("total_supply", []);
     return scValToNative(result) as bigint;
+  }
+
+  /** The asset's decimal places (SEP-41). */
+  async decimals(): Promise<number> {
+    const result = await this.simulateReadOnly("decimals", []);
+    return scValToNative(result) as number;
+  }
+
+  /** The asset's display name (SEP-41). */
+  async name(): Promise<string> {
+    const result = await this.simulateReadOnly("name", []);
+    return scValToNative(result) as string;
+  }
+
+  /** The asset's ticker symbol (SEP-41). */
+  async symbol(): Promise<string> {
+    const result = await this.simulateReadOnly("symbol", []);
+    return scValToNative(result) as string;
   }
 
   async metadata(): Promise<AssetMetadata> {
@@ -175,7 +232,14 @@ export class RwaAssetClient extends ContractClient {
     return this.submit(await this.buildBurnFromTx(spender, from, amount), spender);
   }
 
-  /** Transfer `amount` from `from` to `to`. */
+  /**
+   * Transfer `amount` from `from` to `to`.
+   *
+   * Accepts standard Stellar addresses (G-address or contract C-address) as well as
+   * multiplexed addresses (M-address, SEP-23). When transferring to an M-address,
+   * funds are credited to the underlying G-address and the 64-bit muxed ID travels
+   * in the contract event for recipient routing.
+   */
   async buildTransferTx(from: string, to: string, amount: bigint): Promise<Transaction> {
     return this.buildWriteTx(from, "transfer", [
       nativeToScVal(from, { type: "address" }),
@@ -184,6 +248,10 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /**
+   * Transfer `amount` from `from` to `to`.
+   * Accepts standard addresses (G... or C...) and multiplexed addresses (M..., SEP-23).
+   */
   async transfer(from: string, to: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildTransferTx(from, to, amount), from);
   }
@@ -289,7 +357,10 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
-  /** `transfer`, authorized by `from` and paid for by `feeSource`. */
+  /**
+   * `transfer`, authorized by `from` and paid for by `feeSource`.
+   * Accepts standard addresses (G... or C...) and multiplexed addresses (M..., SEP-23) for `to`.
+   */
   async buildSponsoredTransferTx(
     from: string,
     to: string,
