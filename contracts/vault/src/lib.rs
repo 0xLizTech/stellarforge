@@ -380,14 +380,6 @@ impl VaultContract {
 
         Self::write_balance(&env, &from, from_bal - amount);
         Self::write_balance(&env, &to_addr, to_new);
-
-        // Propagate lock-up timestamp to recipient if sender has an active lock (#224, #223)
-        let from_lock = Self::locked_until(env.clone(), from.clone());
-        let to_lock = Self::locked_until(env.clone(), to_addr.clone());
-        if from_lock > to_lock {
-            env.storage().persistent().set(&DataKey::LockedUntil(to_addr.clone()), &from_lock);
-        }
-
         extend_instance(&env);
 
         events::Transfer {
@@ -554,28 +546,24 @@ impl VaultContract {
         bal - (bal % cfg.exchange_rate)
     }
 
-    /// Returns the maximum deposit amount accepted from `_user`.
-    /// Accounts for vault pause state and remaining capacity under the cap.
-    pub fn max_deposit(env: Env, _user: Address) -> i128 {
-        if Self::paused(env.clone()) {
-            return 0;
-        }
-        let cfg = Self::config(env.clone());
-        if cfg.cap <= 0 {
-            return i128::MAX;
-        }
-        let held = Self::underlying_held(env);
-        if held >= cfg.cap {
+    /// Returns the number of shares minted for a given `amount` of underlying asset (#220, #218).
+    pub fn preview_deposit(env: Env, amount: i128) -> i128 {
+        let cfg = Self::config(env);
+        if cfg.exchange_rate <= 0 || amount <= 0 {
             0
         } else {
-            cfg.cap - held
+            amount * cfg.exchange_rate
         }
     }
 
-    /// Returns the maximum number of shares redeemable by `holder`.
-    /// Accounts for lockups and pause state.
-    pub fn max_redeem(env: Env, holder: Address) -> i128 {
-        Self::redeemable(env, holder)
+    /// Returns the underlying units redeemed for a given number of `shares` (#220).
+    pub fn preview_redeem(env: Env, shares: i128) -> i128 {
+        let cfg = Self::config(env);
+        if cfg.exchange_rate <= 0 || shares <= 0 {
+            0
+        } else {
+            shares / cfg.exchange_rate
+        }
     }
 
     // ── Multi-Source NAV & Oracles (#59) ───────────────────────────────────────
@@ -631,21 +619,6 @@ impl VaultContract {
     /// Reads the configured oracle set, if set.
     pub fn oracles(env: Env) -> Option<OracleSet> {
         env.storage().instance().get(&ORACLES_KEY)
-    }
-
-    /// Checks whether the primary oracle price is stale according to configured max_staleness_secs (#226, #225).
-    pub fn is_oracle_stale(env: Env) -> bool {
-        let oracle_set: OracleSet = match env.storage().instance().get(&ORACLES_KEY) {
-            Some(s) => s,
-            None => return true,
-        };
-        let client = Sep40OracleClient::new(&env, &oracle_set.primary.oracle);
-        let price_data = match client.try_lastprice(&oracle_set.primary.asset) {
-            Ok(Ok(Some(p))) => p,
-            _ => return true,
-        };
-        let now = env.ledger().timestamp();
-        now.saturating_sub(price_data.timestamp) > oracle_set.max_staleness_secs
     }
 
     /// Pure query returning the total Net Asset Value of `underlying_held` in base asset terms.

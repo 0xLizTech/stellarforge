@@ -540,6 +540,22 @@ export class VaultClient extends ContractClient {
     return scValToNative(result) as bigint;
   }
 
+  /** Preview shares minted for underlying deposit amount. */
+  async previewDeposit(amount: bigint): Promise<bigint> {
+    const result = await this.simulateReadOnly("preview_deposit", [
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
+  /** Preview underlying amount redeemed for share count. */
+  async previewRedeem(shares: bigint): Promise<bigint> {
+    const result = await this.simulateReadOnly("preview_redeem", [
+      nativeToScVal(shares, { type: "i128" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
   /** Maximum deposit amount accepted from `userAddress`. */
   async maxDeposit(userAddress: string): Promise<bigint> {
     const result = await this.simulateReadOnly("max_deposit", [
@@ -573,12 +589,6 @@ export class VaultClient extends ContractClient {
     const result = await this.simulateReadOnly("oracles", []);
     const native = scValToNative(result) as unknown[];
     return native.map(String);
-  }
-
-  /** Checks whether the primary oracle price is stale (#226, #225). */
-  async isOracleStale(): Promise<boolean> {
-    const result = await this.simulateReadOnly("is_oracle_stale", []);
-    return scValToNative(result) as boolean;
   }
 
   /**
