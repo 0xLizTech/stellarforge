@@ -1,13 +1,13 @@
 #![cfg(test)]
 
-use contracts_vault::{
-    Sep40OracleInterface, UnderlyingTokenClient, UnderlyingTokenInterface, VaultConfig,
-    VaultContract, VaultContractClient, VaultError,
-};
 use soroban_sdk::{
     contract, contractimpl,
     testutils::{Address as _, Ledger},
     Address, Env, MuxedAddress, String, Vec,
+};
+use vault::{
+    Sep40OracleInterface, UnderlyingTokenClient, UnderlyingTokenInterface, VaultConfig,
+    VaultContract, VaultContractClient, VaultError,
 };
 
 #[contract]

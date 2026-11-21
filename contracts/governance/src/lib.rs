@@ -34,13 +34,12 @@ mod events;
 mod weight_source;
 
 pub use error::GovernanceError;
-pub use events::{AdminTransferred, ProposalCreated, ProposalFinalized, VoteCast, WeightSourceSet};
-pub use weight_source::{WeightSourceClient, WeightSourceInterface};
 pub use events::{
     AdminTransferCancelled, AdminTransferProposed, AdminTransferred, DepositConfigured,
     PassThresholdSet, ProposalCancelled, ProposalCreated, ProposalDepositRefunded,
-    ProposalFinalized, QuorumSet, VoteCast,
+    ProposalFinalized, QuorumSet, VoteCast, WeightSourceSet,
 };
+pub use weight_source::{WeightSourceClient, WeightSourceInterface};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Bytes,
@@ -637,6 +636,8 @@ impl GovernanceContract {
 
     pub fn weight_source(env: Env) -> Option<Address> {
         env.storage().instance().get(&WEIGHT_SOURCE_KEY)
+    }
+
     // ── Proposal Deposit Configuration (#134) ───────────────────────────────
 
     /// Configures the proposal deposit, or pass `token = None` to disable it.

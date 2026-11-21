@@ -36,6 +36,12 @@ Redemption (#58) is the only valid mechanism by which shares leave circulation. 
 
 ### 3. NAV is reported, never traded on
 Net Asset Value (`nav()` and `nav_per_share()`) is reported by reading primary and optional secondary SEP-40 oracles (`oracle-adapter`, ADR-005) with staleness validation and divergence circuit breakers. However, `deposit` and `redeem` never query oracle feeds.
+
+### Vault fees
+
+The admin may configure deposit, redemption, and annual management rates through `set_fees`. Each rate is capped at 500 basis points and all fee revenue goes to the configured recipient. Deposit and redemption fees are calculated in underlying-token units with integer rounding down; the vault retains only the net deposit and pays out the net redemption. Management fees accrue linearly by elapsed seconds at the annual rate and mint shares to the recipient when a deposit or redemption next runs. Fee changes first accrue management shares under the prior rate. All rates default to zero.
+
+`OracleSet.secondary` is a Soroban vector containing zero or one source. This keeps the optional nested contract type representable by the current SDK; configuration rejects vectors longer than one.
 - Normalization: each oracle's price is normalized down to `NAV_DECIMALS` (7).
 - Divergence check: if a secondary oracle is configured, divergence is verified via `|p1 - p2| * 10_000 <= min(p1, p2) * max_divergence_bps`.
 - Conservative valuation: reports the lower price and the older timestamp of the two sources.

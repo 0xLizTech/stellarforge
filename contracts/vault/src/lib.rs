@@ -21,7 +21,10 @@ mod token;
 
 pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::VaultError;
-pub use events::{AdminTransferred, Approve, Deposit, Paused, Redeem, SetOracles, Transfer, TransferFrom};
+pub use events::{
+    AdminTransferred, Approve, Deposit, FeesConfigured, ManagementFee, Paused, Redeem, SetOracles,
+    Transfer, TransferFrom, VaultFee,
+};
 pub use oracle::{
     Asset, NavData, OracleSet, OracleSource, PriceData, Sep40OracleClient, Sep40OracleInterface,
     BPS_DENOMINATOR, NAV_DECIMALS,
@@ -42,6 +45,21 @@ const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 const CONFIG_KEY: Symbol = symbol_short!("CONFIG");
 const DECIMALS_KEY: Symbol = symbol_short!("DECIMALS");
 const ORACLES_KEY: Symbol = symbol_short!("ORACLES");
+const FEES_KEY: Symbol = symbol_short!("FEES");
+const LAST_FEE_TIME_KEY: Symbol = symbol_short!("FEE_TIME");
+const FEE_REMAINDER_KEY: Symbol = symbol_short!("FEE_REM");
+const MAX_FEE_BPS: u32 = 500;
+const SECONDS_PER_YEAR: u64 = 31_536_000;
+
+/// Fee rates and the shared recipient configured for a vault.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FeeConfig {
+    pub deposit_bps: u32,
+    pub redemption_bps: u32,
+    pub management_bps: u32,
+    pub recipient: Option<Address>,
+}
 
 /// Upper bound on `VaultConfig::lockup_secs`: 10 years (315,360,000 seconds).
 /// Beyond this, positions are effectively locked indefinitely.
@@ -435,8 +453,12 @@ impl VaultContract {
         Self::require_not_paused(&env);
         Self::require_positive(&env, amount);
 
+        Self::accrue_management_fee(&env);
         let cfg = Self::config(env.clone());
-        let shares = match amount.checked_mul(cfg.exchange_rate) {
+        let fees = Self::fee_config(env.clone());
+        let fee = Self::fee_amount(&env, amount, fees.deposit_bps);
+        let net_amount = amount - fee;
+        let shares = match net_amount.checked_mul(cfg.exchange_rate) {
             Some(s) => s,
             None => panic_with_error!(&env, VaultError::Overflow),
         };
@@ -450,12 +472,27 @@ impl VaultContract {
         // Pull underlying tokens to the vault contract address
         UnderlyingTokenClient::new(&env, &cfg.underlying).transfer(
             &from,
-            &MuxedAddress::from(env.current_contract_address()),
+            MuxedAddress::from(env.current_contract_address()),
             &amount,
         );
+        if fee > 0 {
+            let recipient = fees.recipient.clone().unwrap();
+            UnderlyingTokenClient::new(&env, &cfg.underlying).transfer(
+                &env.current_contract_address(),
+                MuxedAddress::from(recipient.clone()),
+                &fee,
+            );
+            events::VaultFee {
+                payer: from.clone(),
+                recipient,
+                amount: fee,
+                operation: Symbol::new(&env, "deposit"),
+            }
+            .publish(&env);
+        }
 
         let current_held = Self::underlying_held(env.clone());
-        let new_held = Self::checked_add(&env, current_held, amount);
+        let new_held = Self::checked_add(&env, current_held, net_amount);
         Self::set_underlying_held(&env, new_held);
 
         Self::mint_shares(&env, &from, shares);
@@ -466,9 +503,7 @@ impl VaultContract {
             Some(t) => t,
             None => panic_with_error!(&env, VaultError::Overflow),
         };
-        let final_lock = if cfg.lockup_secs == 0 {
-            current_lock
-        } else if current_lock > new_lock_target {
+        let final_lock = if cfg.lockup_secs == 0 || current_lock > new_lock_target {
             current_lock
         } else {
             new_lock_target
@@ -495,6 +530,7 @@ impl VaultContract {
         Self::require_not_paused(&env);
         Self::require_positive(&env, shares);
 
+        Self::accrue_management_fee(&env);
         let cfg = Self::config(env.clone());
         if shares % cfg.exchange_rate != 0 {
             panic_with_error!(&env, VaultError::NotMultipleOfExchangeRate);
@@ -503,6 +539,9 @@ impl VaultContract {
         Self::require_unlocked(&env, &holder);
 
         let units = shares / cfg.exchange_rate;
+        let fees = Self::fee_config(env.clone());
+        let fee = Self::fee_amount(&env, units, fees.redemption_bps);
+        let payout = units - fee;
         let current_held = Self::underlying_held(env.clone());
         if current_held < units {
             panic_with_error!(&env, VaultError::InsufficientBalance);
@@ -514,18 +553,33 @@ impl VaultContract {
         // Vault transfers underlying to holder (authorizes as itself)
         UnderlyingTokenClient::new(&env, &cfg.underlying).transfer(
             &env.current_contract_address(),
-            &MuxedAddress::from(holder.clone()),
-            &units,
+            MuxedAddress::from(holder.clone()),
+            &payout,
         );
+        if fee > 0 {
+            let recipient = fees.recipient.clone().unwrap();
+            UnderlyingTokenClient::new(&env, &cfg.underlying).transfer(
+                &env.current_contract_address(),
+                MuxedAddress::from(recipient.clone()),
+                &fee,
+            );
+            events::VaultFee {
+                payer: holder.clone(),
+                recipient,
+                amount: fee,
+                operation: Symbol::new(&env, "redeem"),
+            }
+            .publish(&env);
+        }
 
         events::Redeem {
             holder,
             shares,
-            amount: units,
+            amount: payout,
         }
         .publish(&env);
 
-        units
+        payout
     }
 
     /// Returns the maximum number of shares currently redeemable by `holder`.
@@ -559,7 +613,10 @@ impl VaultContract {
             }
             oracles_list.push_back(cfg.primary.oracle.clone());
 
-            if let Some(ref sec) = cfg.secondary {
+            if cfg.secondary.len() > 1 {
+                panic_with_error!(&env, VaultError::InvalidMetadata);
+            }
+            if let Some(sec) = cfg.secondary.first() {
                 if cfg.max_divergence_bps < 1 {
                     panic_with_error!(&env, VaultError::InvalidMetadata);
                 }
@@ -661,6 +718,62 @@ impl VaultContract {
             Some(c) => c,
             None => panic_with_error!(&env, VaultError::NotInitialized),
         }
+    }
+
+    /// Returns the configured deposit, redemption, and annual management rates.
+    pub fn fee_config(env: Env) -> FeeConfig {
+        env.storage()
+            .instance()
+            .get(&FEES_KEY)
+            .unwrap_or(FeeConfig {
+                deposit_bps: 0,
+                redemption_bps: 0,
+                management_bps: 0,
+                recipient: None,
+            })
+    }
+
+    /// Set vault fees in basis points (maximum 500 each) and their recipient.
+    /// Management fees accrue linearly by elapsed seconds and are minted as shares.
+    pub fn set_fees(
+        env: Env,
+        deposit_bps: u32,
+        redemption_bps: u32,
+        management_bps: u32,
+        recipient: Option<Address>,
+    ) {
+        Self::require_admin(&env);
+        if deposit_bps > MAX_FEE_BPS || redemption_bps > MAX_FEE_BPS || management_bps > MAX_FEE_BPS
+        {
+            panic_with_error!(&env, VaultError::InvalidFeeRate);
+        }
+        if (deposit_bps > 0 || redemption_bps > 0 || management_bps > 0) && recipient.is_none() {
+            panic_with_error!(&env, VaultError::MissingFeeRecipient);
+        }
+        if recipient.as_ref() == Some(&env.current_contract_address()) {
+            panic_with_error!(&env, VaultError::InvalidFeeRecipient);
+        }
+        Self::accrue_management_fee(&env);
+        env.storage().instance().set(
+            &FEES_KEY,
+            &FeeConfig {
+                deposit_bps,
+                redemption_bps,
+                management_bps,
+                recipient: recipient.clone(),
+            },
+        );
+        env.storage()
+            .instance()
+            .set(&LAST_FEE_TIME_KEY, &env.ledger().timestamp());
+        extend_instance(&env);
+        events::FeesConfigured {
+            deposit_bps,
+            redemption_bps,
+            management_bps,
+            recipient,
+        }
+        .publish(&env);
     }
 
     pub fn underlying_held(env: Env) -> i128 {
@@ -855,6 +968,61 @@ impl VaultContract {
         Self::admin(env.clone()).require_auth();
     }
 
+    fn fee_amount(env: &Env, amount: i128, bps: u32) -> i128 {
+        amount
+            .checked_mul(bps as i128)
+            .map(|v| v / BPS_DENOMINATOR)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::Overflow))
+    }
+
+    fn accrue_management_fee(env: &Env) {
+        let now = env.ledger().timestamp();
+        let last: u64 = env
+            .storage()
+            .instance()
+            .get(&LAST_FEE_TIME_KEY)
+            .unwrap_or(now);
+        let elapsed = now.saturating_sub(last);
+        env.storage().instance().set(&LAST_FEE_TIME_KEY, &now);
+        if elapsed == 0 {
+            return;
+        }
+        let fees = Self::fee_config(env.clone());
+        if fees.management_bps == 0 {
+            return;
+        }
+        let Some(recipient) = fees.recipient else {
+            return;
+        };
+        let prior_remainder: i128 = env
+            .storage()
+            .instance()
+            .get(&FEE_REMAINDER_KEY)
+            .unwrap_or(0);
+        let numerator = match Self::total_supply(env.clone())
+            .checked_mul(fees.management_bps as i128)
+            .and_then(|v| v.checked_mul(elapsed as i128))
+            .and_then(|v| v.checked_add(prior_remainder))
+        {
+            Some(v) => v,
+            None => panic_with_error!(env, VaultError::Overflow),
+        };
+        let denominator = BPS_DENOMINATOR * SECONDS_PER_YEAR as i128;
+        let shares = numerator / denominator;
+        env.storage()
+            .instance()
+            .set(&FEE_REMAINDER_KEY, &(numerator % denominator));
+        if shares > 0 {
+            Self::mint_shares(env, &recipient, shares);
+            events::ManagementFee {
+                recipient,
+                shares,
+                elapsed_secs: elapsed,
+            }
+            .publish(env);
+        }
+    }
+
     fn require_not_paused(env: &Env) {
         if Self::paused(env.clone()) {
             panic_with_error!(env, VaultError::ContractPaused);
@@ -952,7 +1120,8 @@ impl VaultContract {
             panic_with_error!(env, VaultError::StalePrice);
         }
 
-        let normalized = Self::normalize_decimals(env, price_data.price, oracle_decimals, NAV_DECIMALS);
+        let normalized =
+            Self::normalize_decimals(env, price_data.price, oracle_decimals, NAV_DECIMALS);
         (normalized, price_data.timestamp)
     }
 
@@ -985,10 +1154,11 @@ impl VaultContract {
             None => panic_with_error!(env, VaultError::OracleNotConfigured),
         };
 
-        let (p1, t1) = Self::fetch_source_price(env, &oracle_set.primary, oracle_set.max_staleness_secs);
+        let (p1, t1) =
+            Self::fetch_source_price(env, &oracle_set.primary, oracle_set.max_staleness_secs);
 
-        if let Some(ref sec) = oracle_set.secondary {
-            let (p2, t2) = Self::fetch_source_price(env, sec, oracle_set.max_staleness_secs);
+        if let Some(sec) = oracle_set.secondary.first() {
+            let (p2, t2) = Self::fetch_source_price(env, &sec, oracle_set.max_staleness_secs);
 
             let diff = if p1 >= p2 { p1 - p2 } else { p2 - p1 };
             let min_p = if p1 <= p2 { p1 } else { p2 };

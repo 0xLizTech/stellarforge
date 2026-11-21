@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Admin-configurable deposit and redemption fees (maximum 500 bps), management share accrual, fee events, and accounting tests in the vault (#230, #231).
+- Soroban-compatible representation and validation of the optional secondary vault oracle source; dual-admin authorization regression coverage for the vault (#232, #233).
 
 - `deny.toml` and a `cargo-deny` job in `.github/workflows/security.yml` (#91), enforcing permissive dependency licenses (`Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Unicode-3.0`), rejecting copyleft/GPL dependencies, and denying unknown registries and git sources. Findings, assumptions, and residual risks are documented in `docs/SECURITY.md`.
 - `contracts/size-budget.json` (#94) and `scripts/check-wasm-size.cjs` wired into `.github/workflows/contracts-ci.yml` (#93), recording the compiled `.wasm` byte size of all five contracts (`rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`), posting a size delta report on pull requests, and failing CI if any contract exceeds its configured byte budget.

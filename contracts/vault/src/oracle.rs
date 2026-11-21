@@ -37,7 +37,9 @@ pub struct OracleSource {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleSet {
     pub primary: OracleSource,
-    pub secondary: Option<OracleSource>,
+    /// Zero or one additional source. Kept as a Soroban vector because the
+    /// SDK cannot encode `Option` around this nested contract type.
+    pub secondary: soroban_sdk::Vec<OracleSource>,
     pub max_staleness_secs: u64,
     pub max_divergence_bps: u32,
 }
