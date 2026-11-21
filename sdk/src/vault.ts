@@ -540,6 +540,22 @@ export class VaultClient extends ContractClient {
     return scValToNative(result) as bigint;
   }
 
+  /** Maximum deposit amount accepted from `userAddress`. */
+  async maxDeposit(userAddress: string): Promise<bigint> {
+    const result = await this.simulateReadOnly("max_deposit", [
+      nativeToScVal(userAddress, { type: "address" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
+  /** Maximum shares redeemable by `holderAddress`. */
+  async maxRedeem(holderAddress: string): Promise<bigint> {
+    const result = await this.simulateReadOnly("max_redeem", [
+      nativeToScVal(holderAddress, { type: "address" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
   /** Whether vault operations are currently paused. */
   async paused(): Promise<boolean> {
     const result = await this.simulateReadOnly("paused", []);

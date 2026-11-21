@@ -546,6 +546,30 @@ impl VaultContract {
         bal - (bal % cfg.exchange_rate)
     }
 
+    /// Returns the maximum deposit amount accepted from `_user`.
+    /// Accounts for vault pause state and remaining capacity under the cap.
+    pub fn max_deposit(env: Env, _user: Address) -> i128 {
+        if Self::paused(env.clone()) {
+            return 0;
+        }
+        let cfg = Self::config(env.clone());
+        if cfg.cap <= 0 {
+            return i128::MAX;
+        }
+        let held = Self::underlying_held(env);
+        if held >= cfg.cap {
+            0
+        } else {
+            cfg.cap - held
+        }
+    }
+
+    /// Returns the maximum number of shares redeemable by `holder`.
+    /// Accounts for lockups and pause state.
+    pub fn max_redeem(env: Env, holder: Address) -> i128 {
+        Self::redeemable(env, holder)
+    }
+
     // ── Multi-Source NAV & Oracles (#59) ───────────────────────────────────────
 
     /// Configures the primary and optional secondary SEP-40 oracle sources (admin only).
