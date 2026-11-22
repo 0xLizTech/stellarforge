@@ -294,6 +294,59 @@ would be worse: a holder could vote, transfer the same tokens onward, and vote
 again from the recipient. Correct weighting needs balances snapshotted at
 proposal creation, which arrives with `SFORGE` in Phase 2/3.
 
+## Subpath Exports & Tree-Shaking
+
+The SDK is marked with `"sideEffects": false` and provides dedicated subpath exports so modern bundlers can shake out unreferenced modules. Importing a specific client or utility bundle ensures unneeded contract clients (such as governance or vault logic) are omitted from your application bundle.
+
+Available export paths:
+- `@stellarforge-protocol/sdk` (full bundle with all clients and utilities)
+- `@stellarforge-protocol/sdk/client` (`RwaAssetClient`, `ComplianceClient`)
+- `@stellarforge-protocol/sdk/governance` (`GovernanceClient`, types)
+- `@stellarforge-protocol/sdk/registry` (`RegistryClient`, types)
+- `@stellarforge-protocol/sdk/vault` (`VaultClient`, pure helpers, event decoders)
+- `@stellarforge-protocol/sdk/oracle` (`OracleAdapterClient`, pure helpers, codecs)
+- `@stellarforge-protocol/sdk/sponsored` (sponsored write auth entry helpers)
+- `@stellarforge-protocol/sdk/errors` (structured error classes)
+- `@stellarforge-protocol/sdk/types` (type definitions and network configurations)
+- `@stellarforge-protocol/sdk/utils` (pure decimal and address utilities)
+
+```typescript
+// Granular subpath import - pulls in only the RWA client
+import { RwaAssetClient } from "@stellarforge-protocol/sdk/client";
+import { toStroops } from "@stellarforge-protocol/sdk/utils";
+```
+
+## Bundle Size Tracking & Budgets
+
+Bundle sizes are tracked with `size-limit` to prevent bundle bloat in browser dApps. Budgets are strictly enforced in CI:
+- Full SDK (CJS): `<= 100 KB`
+- Full SDK (ESM index): `<= 5 KB`
+- RWA Client (CJS): `<= 40 KB`
+- Vault Client (CJS): `<= 45 KB`
+- Oracle Client (CJS): `<= 40 KB`
+- Governance Client (CJS): `<= 30 KB`
+
+Run `npm run size` locally to measure and verify bundles against the configured limits.
+
+## Browser Support & Compatibility
+
+The SDK is designed to run in both Node.js (22.12+) and modern browser environments without requiring Node built-ins or silent polyfills.
+
+### Supported Browsers
+- **Chrome / Chromium** 109+
+- **Edge** 109+
+- **Firefox** 115+ (ESR)
+- **Safari / WebKit** 16.4+
+
+### Browser Environment Principles
+- **No Silent Polyfills:** The SDK avoids Node-specific APIs (`fs`, `child_process`, `net`, `Buffer`). It relies on standard Web Platform APIs (`fetch`, Web Crypto via `crypto.subtle`, `BigInt`).
+- **Wallet-Centric Signing:** Browsers should never handle raw signer secrets. Instead, use the unsigned `build*Tx` methods (e.g. `client.buildTransferTx`, `client.buildSponsoredDepositTx`) to prepare transactions, and pass the resulting XDR to browser extension wallets (such as Freighter) for user approval and signing:
+  ```typescript
+  const tx = await client.buildTransferTx(from, to, amount);
+  const signedXdr = await window.freighter.signTransaction(tx.toXdr(), { networkPassphrase });
+  ```
+- **Automated Verification:** The browser suite runs under a DOM/Web runner (`happy-dom`) via `npm run test:browser` to catch regressions where Node-only APIs might slip in.
+
 ## Status
 
 Phase 1. The contracts are unaudited and not deployed to mainnet. See the

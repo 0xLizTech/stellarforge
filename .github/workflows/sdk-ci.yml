@@ -76,6 +76,10 @@ jobs:
         working-directory: sdk
         run: npm test
 
+      - name: Run browser compatibility tests
+        working-directory: sdk
+        run: npm run test:browser
+
   build:
     name: Build Package
     runs-on: ubuntu-latest
@@ -96,9 +100,38 @@ jobs:
         working-directory: sdk
         run: npm run build
 
+      - name: Enforce bundle size budget
+        working-directory: sdk
+        run: npm run size
+
       - name: Upload dist
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf6581a12fe42986043a # v4.4.3
         with:
           name: sdk-dist
           path: sdk/dist/
           retention-days: 7
+
+  package-imports:
+    name: Package Import Verification (ESM & CJS)
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Install dependencies
+        working-directory: sdk
+        run: npm ci
+
+      - name: Build
+        working-directory: sdk
+        run: npm run build
+
+      - name: Verify ESM and CJS imports from packed tarball
+        working-directory: sdk
+        run: npm run test:imports

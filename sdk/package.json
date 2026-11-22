@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "import": {
@@ -15,6 +16,106 @@
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
       }
+    },
+    "./client": {
+      "import": {
+        "types": "./dist/client.d.mts",
+        "default": "./dist/client.mjs"
+      },
+      "require": {
+        "types": "./dist/client.d.ts",
+        "default": "./dist/client.js"
+      }
+    },
+    "./governance": {
+      "import": {
+        "types": "./dist/governance.d.mts",
+        "default": "./dist/governance.mjs"
+      },
+      "require": {
+        "types": "./dist/governance.d.ts",
+        "default": "./dist/governance.js"
+      }
+    },
+    "./registry": {
+      "import": {
+        "types": "./dist/registry.d.mts",
+        "default": "./dist/registry.mjs"
+      },
+      "require": {
+        "types": "./dist/registry.d.ts",
+        "default": "./dist/registry.js"
+      }
+    },
+    "./vault": {
+      "import": {
+        "types": "./dist/vault.d.mts",
+        "default": "./dist/vault.mjs"
+      },
+      "require": {
+        "types": "./dist/vault.d.ts",
+        "default": "./dist/vault.js"
+      }
+    },
+    "./oracle": {
+      "import": {
+        "types": "./dist/oracle.d.mts",
+        "default": "./dist/oracle.mjs"
+      },
+      "require": {
+        "types": "./dist/oracle.d.ts",
+        "default": "./dist/oracle.js"
+      }
+    },
+    "./sponsored": {
+      "import": {
+        "types": "./dist/sponsored.d.mts",
+        "default": "./dist/sponsored.mjs"
+      },
+      "require": {
+        "types": "./dist/sponsored.d.ts",
+        "default": "./dist/sponsored.js"
+      }
+    },
+    "./errors": {
+      "import": {
+        "types": "./dist/errors.d.mts",
+        "default": "./dist/errors.mjs"
+      },
+      "require": {
+        "types": "./dist/errors.d.ts",
+        "default": "./dist/errors.js"
+      }
+    },
+    "./types": {
+      "import": {
+        "types": "./dist/types.d.mts",
+        "default": "./dist/types.mjs"
+      },
+      "require": {
+        "types": "./dist/types.d.ts",
+        "default": "./dist/types.js"
+      }
+    },
+    "./utils": {
+      "import": {
+        "types": "./dist/utils.d.mts",
+        "default": "./dist/utils.mjs"
+      },
+      "require": {
+        "types": "./dist/utils.d.ts",
+        "default": "./dist/utils.js"
+      }
+    },
+    "./base": {
+      "import": {
+        "types": "./dist/base.d.mts",
+        "default": "./dist/base.mjs"
+      },
+      "require": {
+        "types": "./dist/base.d.ts",
+        "default": "./dist/base.js"
+      }
     }
   },
   "files": [
@@ -24,15 +125,50 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "build": "tsup src/index.ts src/client.ts src/governance.ts src/registry.ts src/vault.ts src/oracle.ts src/sponsored.ts src/errors.ts src/types.ts src/utils.ts src/base.ts --format cjs,esm --dts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "vitest run tests/smoke.testnet.test.ts",
     "test:smoke:write": "vitest run tests/smoke.write.testnet.test.ts",
+    "test:browser": "vitest run tests/browser-compatibility.test.ts",
+    "test:imports": "node scripts/test-package-imports.mjs",
+    "size": "size-limit",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "prepack": "cp ../LICENSE ./LICENSE"
   },
+  "size-limit": [
+    {
+      "name": "Full SDK (CJS)",
+      "path": "dist/index.js",
+      "limit": "100 KB"
+    },
+    {
+      "name": "Full SDK (ESM index)",
+      "path": "dist/index.mjs",
+      "limit": "5 KB"
+    },
+    {
+      "name": "RWA & Compliance Client (CJS)",
+      "path": "dist/client.js",
+      "limit": "40 KB"
+    },
+    {
+      "name": "Vault Client (CJS)",
+      "path": "dist/vault.js",
+      "limit": "45 KB"
+    },
+    {
+      "name": "Oracle Adapter Client (CJS)",
+      "path": "dist/oracle.js",
+      "limit": "40 KB"
+    },
+    {
+      "name": "Governance Client (CJS)",
+      "path": "dist/governance.js",
+      "limit": "30 KB"
+    }
+  ],
   "keywords": [
     "stellar",
     "soroban",
@@ -54,8 +190,11 @@
     "@commitlint/lint": "^21.2.4",
     "@commitlint/load": "^21.2.4",
     "@eslint/js": "^10.0.1",
+    "@size-limit/file": "^14.3.0",
     "@types/node": "^26.5.0",
     "eslint": "^10.13.0",
+    "happy-dom": "^21.0.4",
+    "size-limit": "^14.3.0",
     "tsup": "^9.0.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.72.0",

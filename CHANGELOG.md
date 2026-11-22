@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Stage 3 SDK maturity enhancements (#181, #182, #183, #184):
+  - ESM and CommonJS import and type resolution tests from packed tarball (`scripts/test-package-imports.mjs`, `tests/package-import.test.ts`), wired into `.github/workflows/sdk-ci.yml` and `.github/workflows/publish-sdk.yml` (#181).
+  - Bundle size tracking via `size-limit` with configured budgets and regression checks (`tests/bundle-size.test.ts`, `npm run size`), integrated into the SDK build CI workflow (#182).
+  - Tree-shakeable SDK packaging with `"sideEffects": false`, granular subpath exports (`./client`, `./governance`, `./registry`, `./vault`, `./oracle`, `./sponsored`, `./errors`, `./types`, `./utils`, `./base`), multi-entrypoint `tsup` build, and esbuild bundler verification (`tests/treeshaking.test.ts`) (#183).
+  - Browser compatibility test suite (`tests/browser-compatibility.test.ts`) using `happy-dom`, verifying all client instantiations and pure utilities in browser runtimes with zero silent polyfills, and browser support documentation in `sdk/README.md` (#184).
 - `deny.toml` and a `cargo-deny` job in `.github/workflows/security.yml` (#91), enforcing permissive dependency licenses (`Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Unicode-3.0`), rejecting copyleft/GPL dependencies, and denying unknown registries and git sources. Findings, assumptions, and residual risks are documented in `docs/SECURITY.md`.
 - `contracts/size-budget.json` (#94) and `scripts/check-wasm-size.cjs` wired into `.github/workflows/contracts-ci.yml` (#93), recording the compiled `.wasm` byte size of all five contracts (`rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`), posting a size delta report on pull requests, and failing CI if any contract exceeds its configured byte budget.
 - `scripts/check-soroban-sdk-version.cjs`, run in `.github/workflows/contracts-ci.yml`, rejecting per-crate `soroban-sdk` version overrides or duplicate `soroban-sdk` lockfile versions, plus the workspace SDK upgrade procedure in `CONTRIBUTING.md` (#95).
