@@ -105,8 +105,31 @@ Two things worth knowing before you use either:
   its signature satisfies the contract's `require_auth`. To have another account
   pay, see [Sponsored writes](#sponsored-writes).
 - **Building simulates.** A call the contract would reject — a bad amount, a
-  paused asset, a party failing compliance — fails while building, with the
-  contract's own error, before anything is signed or submitted.
+  paused asset, a party failing compliance — fails while building, with a typed
+  contract error, before anything is signed or submitted.
+
+## Typed Contract Errors
+
+Contract rejections (`Error(Contract, #N)`) are mapped to a typed error class
+per contract — `RwaAssetError`, `ComplianceError`, `RegistryError`,
+`GovernanceError`, `OracleAdapterError`, and `VaultContractError` — all
+extending `ContractError`. Each exposes the numeric discriminant (`code`) and
+its readable enum variant name (`codeName`):
+
+```typescript
+import { RwaAssetError, RwaAssetErrorCode } from "@stellarforge-protocol/sdk";
+
+try {
+  await client.transfer(from, to, amount);
+} catch (err) {
+  if (err instanceof RwaAssetError) {
+    console.error(`${err.codeName} (#${err.code})`);
+    if (err.code === RwaAssetErrorCode.ContractPaused) {
+      // handle paused contract
+    }
+  }
+}
+```
 
 ## Clients
 
