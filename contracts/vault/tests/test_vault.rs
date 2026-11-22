@@ -12,9 +12,9 @@ use soroban_sdk::{
 use compliance::{ComplianceContract, ComplianceContractClient, KycRecord};
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 use vault::{
-    Asset, DataKey, Deposit, NavData, OracleSet, OracleSource, PriceData, Redeem, SetOracles,
-    Transfer, VaultConfig, VaultContract, VaultContractClient, VaultError, MAX_LOCKUP_SECS,
-    NAV_DECIMALS,
+    Approve, Asset, DataKey, Deposit, NavData, OracleSet, OracleSource, PriceData, Redeem,
+    SetOracles, Transfer, TransferFrom, VaultConfig, VaultContract, VaultContractClient, VaultError,
+    MAX_LOCKUP_SECS, NAV_DECIMALS,
 };
 
 // ─── Test Helpers & Fixtures ──────────────────────────────────────────────────
@@ -474,6 +474,31 @@ fn test_transfer_from_rejects_insufficient_allowance() {
         h.client.try_transfer_from(&spender, &alice, &bob, &201),
         Err(Ok(VaultError::InsufficientAllowance.into()))
     );
+}
+
+#[test]
+fn test_sep41_share_token_events_and_allowance_flow() {
+    let h = default_setup();
+    let alice = Address::generate(&h.env);
+    let spender = Address::generate(&h.env);
+    let bob = Address::generate(&h.env);
+    h.set_balance(&alice, 1000);
+
+    // 1. Approve
+    h.env.ledger().set_sequence_number(100);
+    h.client.approve(&alice, &spender, &500, &200);
+    assert_eq!(h.client.allowance(&alice, &spender), 500);
+
+    // 2. TransferFrom
+    h.client.transfer_from(&spender, &alice, &bob, &300);
+    assert_eq!(h.client.balance(&alice), 700);
+    assert_eq!(h.client.balance(&bob), 300);
+    assert_eq!(h.client.allowance(&alice, &spender), 200);
+
+    // Verify metadata getters
+    assert_eq!(h.client.decimals(), 7);
+    assert_eq!(h.client.name(), String::from_str(&h.env, "Institutional RWA Vault Share"));
+    assert_eq!(h.client.symbol(), String::from_str(&h.env, "vRWA-01"));
 }
 
 // ─── 4. Lock-up Exact Boundary Tests ──────────────────────────────────────────

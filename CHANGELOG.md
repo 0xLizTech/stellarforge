@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `contracts/vault`: verified SEP-41 share token interface entry points (`balance`, `transfer`, `approve`, `transfer_from`, `decimals`, `name`, `symbol`), added `test_sep41_share_token_events_and_allowance_flow` test, and confirmed protocol invariant on share redemption as sole exit mechanism (#217).
 - `contracts/vault`: constructor authorization validation and configuration coverage ensuring admin authentication and share cap validation (#216).
 - `docs/guides/tokenized-real-estate.md` and runnable companion script `sdk/examples/tokenized-real-estate.ts` (#210), demonstrating end-to-end tokenized commercial real estate issuance with KYC compliance screening and registry listing.
 - `testnet-smoke` workflow: added nightly cron schedule (`0 2 * * *`) and live read and write smoke test coverage for `OracleAdapterClient` against testnet deployments (#207).
