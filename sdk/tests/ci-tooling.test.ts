@@ -289,12 +289,13 @@ describe("Stage 1 repository and CI tooling (#91, #93, #94, #95)", () => {
       const res = sdkCheck.checkWorkspaceSorobanSdk(REPO_ROOT);
       expect(res.ok).toBe(true);
       expect(res.errors).toEqual([]);
-      expect(res.workspaceVersion).toBe("27.0.5");
+      expect(res.workspaceVersion).toBe("29.0.1");
       expect(res.checkedMembers).toContain("contracts/rwa-asset");
       expect(res.checkedMembers).toContain("contracts/registry");
       expect(res.checkedMembers).toContain("contracts/compliance");
       expect(res.checkedMembers).toContain("contracts/governance");
       expect(res.checkedMembers).toContain("contracts/oracle-adapter");
+      expect(res.checkedMembers).toContain("contracts/vault");
     });
 
     it("fails when a workspace crate pins its own soroban-sdk version", () => {

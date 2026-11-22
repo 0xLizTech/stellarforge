@@ -32,12 +32,21 @@ pub struct OracleSource {
     pub asset: Asset,
 }
 
+/// Explicit optional wrapper used because Soroban test utilities cannot derive
+/// ScVal conversions for `Option<OracleSource>` inside a contract type.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OptionalOracleSource {
+    Absent,
+    Present(OracleSource),
+}
+
 /// Multi-source oracle configuration.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleSet {
     pub primary: OracleSource,
-    pub secondary: Option<OracleSource>,
+    pub secondary: OptionalOracleSource,
     pub max_staleness_secs: u64,
     pub max_divergence_bps: u32,
 }

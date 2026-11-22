@@ -1,13 +1,10 @@
 #![cfg(test)]
 
-use contracts_vault::{
-    Sep40OracleInterface, UnderlyingTokenClient, UnderlyingTokenInterface, VaultConfig,
-    VaultContract, VaultContractClient, VaultError,
-};
+use contracts_vault::{VaultConfig, VaultContract, VaultContractClient};
 use soroban_sdk::{
     contract, contractimpl,
     testutils::{Address as _, Ledger},
-    Address, Env, MuxedAddress, String, Vec,
+    Address, Env, MuxedAddress, String,
 };
 
 #[contract]
@@ -30,7 +27,6 @@ struct VaultShadowModel {
     pub balances: [(Address, i128); 3],
     pub underlying_held: i128,
     pub total_supply: i128,
-    pub paused: bool,
 }
 
 impl VaultShadowModel {
@@ -44,7 +40,6 @@ impl VaultShadowModel {
             ],
             underlying_held: 0,
             total_supply: 0,
-            paused: false,
         }
     }
 
@@ -66,7 +61,7 @@ impl VaultShadowModel {
         }
     }
 
-    pub fn assert_invariants(&self, env: &Env, client: &VaultContractClient) {
+    pub fn assert_invariants(&self, client: &VaultContractClient) {
         // Invariant 1: total_supply == underlying_held * exchange_rate
         let contract_total = client.total_supply();
         let contract_held = client.underlying_held();
@@ -140,41 +135,41 @@ fn test_stateful_vault_invariants() {
     let mut shadow = VaultShadowModel::new(&actors, exchange_rate);
 
     // Initial check
-    shadow.assert_invariants(&env, &client);
+    shadow.assert_invariants(&client);
 
     // Step 1: Actor 0 deposits 10 units -> 100 shares
     client.deposit(&actors[0], &10);
     shadow.set_balance(&actors[0], 100);
     shadow.underlying_held += 10;
     shadow.total_supply += 100;
-    shadow.assert_invariants(&env, &client);
+    shadow.assert_invariants(&client);
 
     // Step 2: Actor 1 deposits 25 units -> 250 shares
     client.deposit(&actors[1], &25);
     shadow.set_balance(&actors[1], 250);
     shadow.underlying_held += 25;
     shadow.total_supply += 250;
-    shadow.assert_invariants(&env, &client);
+    shadow.assert_invariants(&client);
 
     // Step 3: Actor 1 transfers 50 shares to Actor 2
     client.transfer(&actors[1], &MuxedAddress::from(actors[2].clone()), &50);
     shadow.set_balance(&actors[1], 200);
     shadow.set_balance(&actors[2], 50);
-    shadow.assert_invariants(&env, &client);
+    shadow.assert_invariants(&client);
 
     // Step 4: Actor 0 redeems 30 shares -> receives 3 underlying units
     client.redeem(&actors[0], &30);
     shadow.set_balance(&actors[0], 70);
     shadow.underlying_held -= 3;
     shadow.total_supply -= 30;
-    shadow.assert_invariants(&env, &client);
+    shadow.assert_invariants(&client);
 
     // Step 5: Actor 2 approves Actor 0 for 20 shares, Actor 0 transfers from Actor 2 to Actor 1
     client.approve(&actors[2], &actors[0], &20, &500);
     client.transfer_from(&actors[0], &actors[2], &actors[1], &20);
     shadow.set_balance(&actors[2], 30);
     shadow.set_balance(&actors[1], 220);
-    shadow.assert_invariants(&env, &client);
+    shadow.assert_invariants(&client);
 
     // Step 6: Advance ledger and verify historical checkpoints match shadow model
     env.ledger().set_sequence_number(200);
@@ -193,5 +188,5 @@ fn test_stateful_vault_invariants() {
     shadow.set_balance(&actors[2], 0);
     shadow.underlying_held = 0;
     shadow.total_supply = 0;
-    shadow.assert_invariants(&env, &client);
+    shadow.assert_invariants(&client);
 }

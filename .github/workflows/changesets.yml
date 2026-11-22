@@ -1,0 +1,48 @@
+name: Changesets
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdk/.changeset/**"
+      - "sdk/package.json"
+      - "sdk/package-lock.json"
+      - "sdk/CHANGELOG.md"
+      - ".github/workflows/changesets.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: changesets-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Create or update the SDK version PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: npm ci
+
+      - name: Open or update a Version Packages pull request
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          cwd: sdk
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: version SDK packages"
+          pr-title: "chore: version SDK packages"
+          # Publishing stays on publish-sdk.yml's release/manual path.
+          publish-script: echo "SDK publishing is handled by publish-sdk.yml."
+          create-github-releases: false
+          push-git-tags: false

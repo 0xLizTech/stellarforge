@@ -21,10 +21,12 @@ mod token;
 
 pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::VaultError;
-pub use events::{AdminTransferred, Approve, Deposit, Paused, Redeem, SetOracles, Transfer, TransferFrom};
+pub use events::{
+    AdminTransferred, Approve, Deposit, Paused, Redeem, SetOracles, Transfer, TransferFrom,
+};
 pub use oracle::{
-    Asset, NavData, OracleSet, OracleSource, PriceData, Sep40OracleClient, Sep40OracleInterface,
-    BPS_DENOMINATOR, NAV_DECIMALS,
+    Asset, NavData, OptionalOracleSource, OracleSet, OracleSource, PriceData, Sep40OracleClient,
+    Sep40OracleInterface, BPS_DENOMINATOR, NAV_DECIMALS,
 };
 pub use token::{UnderlyingTokenClient, UnderlyingTokenInterface};
 
@@ -436,6 +438,7 @@ impl VaultContract {
         Self::require_positive(&env, amount);
 
         let cfg = Self::config(env.clone());
+        Self::require_compliant(&env, &from);
         let shares = match amount.checked_mul(cfg.exchange_rate) {
             Some(s) => s,
             None => panic_with_error!(&env, VaultError::Overflow),
@@ -559,7 +562,7 @@ impl VaultContract {
             }
             oracles_list.push_back(cfg.primary.oracle.clone());
 
-            if let Some(ref sec) = cfg.secondary {
+            if let OptionalOracleSource::Present(ref sec) = cfg.secondary {
                 if cfg.max_divergence_bps < 1 {
                     panic_with_error!(&env, VaultError::InvalidMetadata);
                 }
@@ -629,17 +632,27 @@ impl VaultContract {
 
     /// Pure query returning the Net Asset Value of one whole fractional share.
     pub fn nav_per_share(env: Env) -> NavData {
-        let (price, timestamp) = Self::get_effective_price_and_timestamp(&env);
-        let cfg = Self::config(env.clone());
-        if cfg.exchange_rate <= 0 {
-            panic_with_error!(&env, VaultError::InvalidExchangeRate);
-        }
-        let value = price / cfg.exchange_rate;
+        let nav = Self::nav(env.clone());
+        let total_supply = Self::total_supply(env.clone());
+        let value = if total_supply == 0 {
+            0
+        } else {
+            let decimals = Self::decimals(env.clone());
+            let share_scale = match 10_i128.checked_pow(decimals) {
+                Some(scale) => scale,
+                None => panic_with_error!(&env, VaultError::Overflow),
+            };
+            let numerator = match nav.value.checked_mul(share_scale) {
+                Some(value) => value,
+                None => panic_with_error!(&env, VaultError::Overflow),
+            };
+            numerator / total_supply
+        };
 
         NavData {
             value,
             decimals: NAV_DECIMALS,
-            timestamp,
+            timestamp: nav.timestamp,
         }
     }
 
@@ -881,7 +894,7 @@ impl VaultContract {
             return;
         };
         let client = ComplianceClient::new(env, &compliance);
-        if !client.screen(party, &cfg.min_compliance_level) {
+        if !client.is_compliant(party, &cfg.min_compliance_level) {
             panic_with_error!(env, VaultError::NotCompliant);
         }
     }
@@ -952,7 +965,8 @@ impl VaultContract {
             panic_with_error!(env, VaultError::StalePrice);
         }
 
-        let normalized = Self::normalize_decimals(env, price_data.price, oracle_decimals, NAV_DECIMALS);
+        let normalized =
+            Self::normalize_decimals(env, price_data.price, oracle_decimals, NAV_DECIMALS);
         (normalized, price_data.timestamp)
     }
 
@@ -985,9 +999,10 @@ impl VaultContract {
             None => panic_with_error!(env, VaultError::OracleNotConfigured),
         };
 
-        let (p1, t1) = Self::fetch_source_price(env, &oracle_set.primary, oracle_set.max_staleness_secs);
+        let (p1, t1) =
+            Self::fetch_source_price(env, &oracle_set.primary, oracle_set.max_staleness_secs);
 
-        if let Some(ref sec) = oracle_set.secondary {
+        if let OptionalOracleSource::Present(ref sec) = oracle_set.secondary {
             let (p2, t2) = Self::fetch_source_price(env, sec, oracle_set.max_staleness_secs);
 
             let diff = if p1 >= p2 { p1 - p2 } else { p2 - p1 };
