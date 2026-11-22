@@ -6,8 +6,10 @@ members = [
     "contracts/compliance",
     "contracts/governance",
     "contracts/oracle-adapter",
+    "contracts/vault",
     "tools/benchmark",
 ]
+exclude = ["contracts/vault/fuzz"]
 resolver = "2"
 
 [workspace.dependencies]

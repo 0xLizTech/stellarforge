@@ -1,13 +1,13 @@
 #![cfg(test)]
 
-use contracts_vault::{
-    Checkpoint, DataKey, Sep40OracleInterface, UnderlyingTokenClient, UnderlyingTokenInterface,
-    VaultConfig, VaultContract, VaultContractClient, VaultError,
-};
 use soroban_sdk::{
     contract, contractimpl,
     testutils::{Address as _, Ledger},
     Address, Env, MuxedAddress, String, Vec,
+};
+use vault::{
+    Checkpoint, DataKey, Sep40OracleInterface, UnderlyingTokenClient, UnderlyingTokenInterface,
+    VaultConfig, VaultContract, VaultContractClient, VaultError,
 };
 
 #[contract]
@@ -77,11 +77,11 @@ fn test_checkpoint_coalescing_and_boundaries() {
 
     // Current ledger (105) is not closed yet -> balance_at(105) must fail with LedgerNotClosed
     let err = client.try_balance_at(&holder1, &105).unwrap_err().unwrap();
-    assert_eq!(err, VaultError::LedgerNotClosed);
+    assert_eq!(err, VaultError::LedgerNotClosed.into());
 
     // Future ledger (106) must also fail
     let err_fut = client.try_balance_at(&holder1, &106).unwrap_err().unwrap();
-    assert_eq!(err_fut, VaultError::LedgerNotClosed);
+    assert_eq!(err_fut, VaultError::LedgerNotClosed.into());
 
     // Boundary before first checkpoint (ledger 99) -> returns 0
     assert_eq!(client.balance_at(&holder1, &99), 0);
