@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - SDK V8 line coverage with an 85% threshold and Codecov reporting, plus generated bash, zsh, and fish completions and `sforge.config.json` support for the NAV reporter CLI (#194, #192, #191).
+- Adds Rust-generated parity coverage for vault deposit and redemption arithmetic (#196).
 
 - `deny.toml` and a `cargo-deny` job in `.github/workflows/security.yml` (#91), enforcing permissive dependency licenses (`Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Unicode-3.0`), rejecting copyleft/GPL dependencies, and denying unknown registries and git sources. Findings, assumptions, and residual risks are documented in `docs/SECURITY.md`.
 - `contracts/size-budget.json` (#94) and `scripts/check-wasm-size.cjs` wired into `.github/workflows/contracts-ci.yml` (#93), recording the compiled `.wasm` byte size of all five contracts (`rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`), posting a size delta report on pull requests, and failing CI if any contract exceeds its configured byte budget.

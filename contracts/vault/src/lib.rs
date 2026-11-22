@@ -14,6 +14,7 @@
 mod compliance;
 mod error;
 mod events;
+mod math;
 mod oracle;
 #[cfg(test)]
 mod test;
@@ -436,7 +437,7 @@ impl VaultContract {
         Self::require_positive(&env, amount);
 
         let cfg = Self::config(env.clone());
-        let shares = match amount.checked_mul(cfg.exchange_rate) {
+        let shares = match math::shares_for_deposit(amount, cfg.exchange_rate) {
             Some(s) => s,
             None => panic_with_error!(&env, VaultError::Overflow),
         };
@@ -496,13 +497,11 @@ impl VaultContract {
         Self::require_positive(&env, shares);
 
         let cfg = Self::config(env.clone());
-        if shares % cfg.exchange_rate != 0 {
-            panic_with_error!(&env, VaultError::NotMultipleOfExchangeRate);
-        }
-
+        let units = match math::underlying_for_redeem(shares, cfg.exchange_rate) {
+            Some(units) => units,
+            None => panic_with_error!(&env, VaultError::NotMultipleOfExchangeRate),
+        };
         Self::require_unlocked(&env, &holder);
-
-        let units = shares / cfg.exchange_rate;
         let current_held = Self::underlying_held(env.clone());
         if current_held < units {
             panic_with_error!(&env, VaultError::InsufficientBalance);

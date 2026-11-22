@@ -6,7 +6,10 @@ on:
     paths:
       - "sdk/**"
       - "contracts/oracle-adapter/**"
+      - "contracts/vault/src/**"
       - "scripts/generate-oracle-parity-table.cjs"
+      - "scripts/generate-vault-parity-table.cjs"
+      - "tools/vault-math-parity/**"
       - "tools/nav-reporter/**"
       - ".github/workflows/sdk-ci.yml"
   pull_request:
@@ -14,7 +17,10 @@ on:
     paths:
       - "sdk/**"
       - "contracts/oracle-adapter/**"
+      - "contracts/vault/src/**"
       - "scripts/generate-oracle-parity-table.cjs"
+      - "scripts/generate-vault-parity-table.cjs"
+      - "tools/vault-math-parity/**"
       - "tools/nav-reporter/**"
 
 jobs:
@@ -32,12 +38,13 @@ jobs:
         with:
           key: ${{ runner.os }}-oracle-parity-${{ hashFiles('**/Cargo.lock') }}
 
-      # Regenerates nothing; asserts the committed fixture matches values from
-      # oracle_adapter::tick_of / check_price_deviation (contract pure math).
-      - name: Validate oracle-parity-table.json against contract math
+      # Regenerates nothing; asserts committed fixtures match their Rust sources.
+      - name: Validate SDK parity fixtures against contract math
         run: |
           cargo test -p oracle-adapter --features testutils \
             test_generate_sdk_parity_table -- --exact
+          cargo test --manifest-path tools/vault-math-parity/Cargo.toml \
+            test_generate_sdk_vault_math_parity_table -- --exact
 
   test:
     name: TypeScript Tests

@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   Account,
   Address,
@@ -45,6 +48,9 @@ const RECIPIENT = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 12));
 const SPENDER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 13));
 const ORACLE_ID = StrKey.encodeContract(Buffer.alloc(32, 14));
 const ADMIN = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 15));
+const vaultMathParity = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "vault-math-parity-table.json"), "utf8"),
+) as { cases: { operation: "deposit" | "redeem"; amount: string; rate: string; expected: string }[] };
 
 const vaultConfig = configWith(
   { vault: VAULT_ID, rwaAsset: RWA_ID },
@@ -174,6 +180,27 @@ describe("Rounding helpers: 50+ committed test table", () => {
     expect(() => underlyingForRedeem(-10n, 2n)).toThrow(RangeError);
     expect(() => underlyingForRedeem(10n, 0n)).toThrow(RangeError);
     expect(() => underlyingForRedeem(10n, -2n)).toThrow(RangeError);
+  });
+});
+
+describe("Rust vault arithmetic parity", () => {
+  it("matches the Rust-generated deposit and redemption fixture", () => {
+    expect(vaultMathParity.cases.length).toBeGreaterThanOrEqual(200);
+    for (const testCase of vaultMathParity.cases) {
+      const amount = BigInt(testCase.amount);
+      const rate = BigInt(testCase.rate);
+      let actual: string;
+      if (testCase.operation === "deposit") {
+        actual = `ok:${sharesForDeposit(amount, rate)}`;
+      } else {
+        try {
+          actual = `ok:${underlyingForRedeem(amount, rate)}`;
+        } catch {
+          actual = "not_multiple";
+        }
+      }
+      expect(actual, `${testCase.operation} amount=${amount} rate=${rate}`).toBe(testCase.expected);
+    }
   });
 });
 
