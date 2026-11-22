@@ -486,7 +486,11 @@ impl VaultContract {
         shares
     }
 
-    /// Redeems `shares` fractional shares for `shares / exchange_rate` underlying tokens.
+    /// Redeems `shares` fractional shares for `shares / exchange_rate` underlying tokens (#219).
+    ///
+    /// Implements redeem with pro-rata underlying return: burns fractional shares from `holder`,
+    /// decrements underlying held accordingly, transfers the pro-rata underlying asset tokens to `holder`,
+    /// and emits the `Redeem` event.
     ///
     /// Holder must not be currently locked (`now >= locked_until(holder)`).
     /// `shares` must be an exact integer multiple of `exchange_rate`.
