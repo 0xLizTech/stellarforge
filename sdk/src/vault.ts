@@ -575,6 +575,12 @@ export class VaultClient extends ContractClient {
     return native.map(String);
   }
 
+  /** Checks whether the primary oracle price is stale (#226, #225). */
+  async isOracleStale(): Promise<boolean> {
+    const result = await this.simulateReadOnly("is_oracle_stale", []);
+    return scValToNative(result) as boolean;
+  }
+
   /**
    * Queries the latest Net Asset Value (NAV) of the vault from configured oracles.
    *
