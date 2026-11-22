@@ -18,8 +18,12 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
+  "bin": {
+    "sforge": "./bin/sforge.js"
+  },
   "publishConfig": {
     "access": "public"
   },
