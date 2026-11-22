@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/guides/tokenized-real-estate.md` and runnable companion script `sdk/examples/tokenized-real-estate.ts` (#210), demonstrating end-to-end tokenized commercial real estate issuance with KYC compliance screening and registry listing.
 - `testnet-smoke` workflow: added nightly cron schedule (`0 2 * * *`) and live read and write smoke test coverage for `OracleAdapterClient` against testnet deployments (#207).
 
 - `deny.toml` and a `cargo-deny` job in `.github/workflows/security.yml` (#91), enforcing permissive dependency licenses (`Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Unicode-3.0`), rejecting copyleft/GPL dependencies, and denying unknown registries and git sources. Findings, assumptions, and residual risks are documented in `docs/SECURITY.md`.
