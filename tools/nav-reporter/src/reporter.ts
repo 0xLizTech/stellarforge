@@ -1,7 +1,9 @@
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, Networks, rpc } from "@stellar/stellar-sdk";
 import {
   OracleAdapterClient,
+  authorizeEntries,
   checkDeviation,
+  DEFAULT_AUTH_VALIDITY_LEDGERS,
   tickOf,
 } from "@stellarforge-protocol/sdk";
 import type { OracleAsset, PriceData } from "@stellarforge-protocol/sdk";
@@ -12,6 +14,8 @@ export interface ReporterConfig {
   oracleClient: OracleAdapterClient;
   reporterKeypair: Keypair;
   relayerKeypair?: Keypair;
+  rpcUrl?: string;
+  networkName?: "testnet" | "mainnet";
   expectedAppraiserPublicKey?: string;
   dryRun?: boolean;
 }
@@ -157,7 +161,14 @@ export async function submitSignedAppraisal(
       // Check deviation limits
       if (assetConfig && assetConfig.maxDeviationBps > 0) {
         try {
-          checkDeviation(lastPriceData.price, scaledPrice, assetConfig.maxDeviationBps);
+          if (!checkDeviation(lastPriceData.price, scaledPrice, assetConfig.maxDeviationBps)) {
+            return {
+              success: false,
+              exitCode: ExitCode.PreflightFailure,
+              action: "rejected",
+              error: `Deviation limit exceeded: price move is outside ${assetConfig.maxDeviationBps} bps (admin override required)`,
+            };
+          }
         } catch (err) {
           return {
             success: false,
@@ -195,13 +206,16 @@ export async function submitSignedAppraisal(
     );
 
     // Sign reporter auth entries
-    const signedTx = client.authorizeEntries(sponsored, config.reporterKeypair);
-    const finalized = client.finalizeSponsoredTx(signedTx);
-
-    // Relayer signs and submits fee payment
-    finalized.sign(relayer);
-
-    const txResult = await client.submitSponsoredTx(finalized);
+    const networkPassphrase = config.networkName === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+    const server = new rpc.Server(config.rpcUrl ?? "https://soroban-testnet.stellar.org", { allowHttp: false });
+    const { sequence: latestLedger } = await server.getLatestLedger();
+    const signedEntries = await authorizeEntries(
+      sponsored.authEntries,
+      config.reporterKeypair,
+      latestLedger + DEFAULT_AUTH_VALIDITY_LEDGERS,
+      networkPassphrase,
+    );
+    const txResult = await client.submitSponsoredTx(sponsored, signedEntries);
     return {
       success: true,
       exitCode: ExitCode.Success,
