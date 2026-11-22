@@ -1,5 +1,6 @@
 // ─── Core Protocol Types ──────────────────────────────────────────────────────
 
+/** Categories supported by StellarForge for real-world assets. */
 export type AssetClass =
   | "real_estate"
   | "commodity"
@@ -9,6 +10,7 @@ export type AssetClass =
   | "art"
   | "other";
 
+/** Asset identity, decimal precision, legal document hash, and supply cap. */
 export interface AssetMetadata {
   /** Human-readable name of the real-world asset */
   name: string;
@@ -24,6 +26,7 @@ export interface AssetMetadata {
   maxSupply: bigint;
 }
 
+/** Subject verification level and its jurisdiction and expiry. */
 export interface KycRecord {
   /** ISO-3166-1 alpha-2 country code */
   jurisdiction: string;
@@ -33,6 +36,7 @@ export interface KycRecord {
   expiresAt: number;
 }
 
+/** RPC endpoint and Stellar network passphrase for a client. */
 export interface NetworkConfig {
   /** "mainnet" | "testnet" | "futurenet" | custom RPC URL */
   network: "mainnet" | "testnet" | "futurenet" | (string & {});
@@ -42,6 +46,7 @@ export interface NetworkConfig {
   networkPassphrase: string;
 }
 
+/** Optional deployed contract IDs used by the client constructors. */
 export interface ContractAddresses {
   rwaAsset?: string;
   registry?: string;
@@ -51,6 +56,7 @@ export interface ContractAddresses {
   oracleAdapter?: string;
 }
 
+/** Complete shared configuration for StellarForge contract clients. */
 export interface StellarForgeConfig extends NetworkConfig {
   contracts: ContractAddresses;
   /** Optional signing keypair (StrKey secret, `S...`) — only for server-side use */
@@ -84,8 +90,10 @@ export interface AssetEntry {
 
 // ─── Governance ───────────────────────────────────────────────────────────────
 
+/** Current lifecycle status of a governance proposal. */
 export type ProposalStatus = "Active" | "Passed" | "Rejected" | "Executed";
 
+/** Decoded proposal state and vote tally. */
 export interface Proposal {
   /** Contract-assigned id, counting from 1. */
   id: bigint;
@@ -107,6 +115,7 @@ export interface ProposalCreated extends TxResult {
 
 // ─── Well-known network presets ───────────────────────────────────────────────
 
+/** Default Soroban RPC URL and network passphrase for testnet clients. */
 export const TESTNET_CONFIG: Omit<NetworkConfig, "network"> & { network: "testnet" } = {
   network: "testnet",
   rpcUrl: "https://soroban-testnet.stellar.org",

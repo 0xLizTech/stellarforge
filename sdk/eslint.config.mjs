@@ -4,7 +4,40 @@
 // every exported symbol. The rules below encode the parts of that policy ESLint
 // can check mechanically; `npm run typecheck` covers the type system itself.
 import js from "@eslint/js";
+import jsdoc from "eslint-plugin-jsdoc";
 import tseslint from "typescript-eslint";
+
+const stellarforgeDocs = {
+  rules: {
+    "require-exported-value-docs": {
+      meta: {
+        type: "problem",
+        docs: { description: "require TSDoc comments on exported values" },
+        schema: [],
+        messages: { missing: "Exported value '{{name}}' needs a TSDoc comment." },
+      },
+      create(context) {
+        const sourceCode = context.sourceCode;
+        return {
+          ExportNamedDeclaration(node) {
+            if (node.declaration?.type !== "VariableDeclaration") return;
+            const declaration = node.declaration;
+            const hasDoc = sourceCode.getCommentsBefore(node).some((comment) =>
+              sourceCode.text.slice(comment.range[0], comment.range[0] + 3) === "/**" &&
+              sourceCode.text.slice(comment.range[1], node.range[0]).trim() === "",
+            );
+            if (hasDoc) return;
+            for (const value of declaration.declarations) {
+              if (value.id.type === "Identifier") {
+                context.report({ node: value, messageId: "missing", data: { name: value.id.name } });
+              }
+            }
+          },
+        };
+      },
+    },
+  },
+};
 
 export default tseslint.config(
   {
@@ -13,6 +46,13 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    plugins: { jsdoc, stellarforge: stellarforgeDocs },
+    rules: {
+      "jsdoc/require-jsdoc": "error",
+      "stellarforge/require-exported-value-docs": "error",
+    },
+  },
   {
     files: ["src/**/*.ts"],
     rules: {
@@ -24,6 +64,25 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
+      // Public SDK API documentation is part of the published contract.
+      "jsdoc/require-jsdoc": [
+        "error",
+        {
+          publicOnly: true,
+          require: {
+            ClassDeclaration: true,
+            FunctionDeclaration: true,
+            MethodDefinition: true,
+          },
+          contexts: [
+            "TSInterfaceDeclaration",
+            "TSTypeAliasDeclaration",
+            "TSEnumDeclaration",
+          ],
+        },
+      ],
+      // Descriptions, @param, @returns and @throws are part of the TSDoc
+      // convention; the required-comment rule is the blocking completeness gate.
     },
   },
 );

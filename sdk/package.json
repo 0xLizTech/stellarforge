@@ -29,6 +29,8 @@
     "test:watch": "vitest",
     "test:smoke": "vitest run tests/smoke.testnet.test.ts",
     "test:smoke:write": "vitest run tests/smoke.write.testnet.test.ts",
+    "example": "tsx",
+    "examples:check": "tsc -p examples/tsconfig.json --noEmit",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "prepack": "cp ../LICENSE ./LICENSE"
@@ -56,7 +58,9 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.5.0",
     "eslint": "^10.13.0",
+    "eslint-plugin-jsdoc": "^63.3.3",
     "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.72.0",
     "vitest": "^5.0.0"

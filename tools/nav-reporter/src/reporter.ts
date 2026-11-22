@@ -157,7 +157,14 @@ export async function submitSignedAppraisal(
       // Check deviation limits
       if (assetConfig && assetConfig.maxDeviationBps > 0) {
         try {
-          checkDeviation(lastPriceData.price, scaledPrice, assetConfig.maxDeviationBps);
+          if (!checkDeviation(lastPriceData.price, scaledPrice, assetConfig.maxDeviationBps)) {
+            return {
+              success: false,
+              exitCode: ExitCode.PreflightFailure,
+              action: "rejected",
+              error: `Deviation limit exceeded: price moved beyond ${assetConfig.maxDeviationBps} basis points (admin override required)`,
+            };
+          }
         } catch (err) {
           return {
             success: false,
@@ -195,13 +202,10 @@ export async function submitSignedAppraisal(
     );
 
     // Sign reporter auth entries
-    const signedTx = client.authorizeEntries(sponsored, config.reporterKeypair);
-    const finalized = client.finalizeSponsoredTx(signedTx);
-
-    // Relayer signs and submits fee payment
-    finalized.sign(relayer);
-
-    const txResult = await client.submitSponsoredTx(finalized);
+    const signedEntries = await client.authorizeEntries(sponsored, config.reporterKeypair.secret());
+    // The SDK finalizes and submits the sponsored transaction with the
+    // configured fee payer (the relayer, or the reporter when none is set).
+    const txResult = await client.submitSponsoredTx(sponsored, signedEntries);
     return {
       success: true,
       exitCode: ExitCode.Success,

@@ -18,6 +18,7 @@
 export class TransactionExpiredError extends Error {
   readonly hash: string;
 
+  /** Creates the expired-transaction error for a submitted transaction hash. */
   constructor(hash: string) {
     super(
       `Transaction ${hash} expired without being included in a ledger. ` +
@@ -39,6 +40,7 @@ export class TransactionExpiredError extends Error {
 export class TransactionOutcomeUnknownError extends Error {
   readonly hash: string;
 
+  /** Creates the unresolved-outcome error for a submitted transaction hash. */
   constructor(hash: string) {
     super(
       `Transaction ${hash} was accepted but had not settled when polling ended, ` +
