@@ -51,10 +51,21 @@ export interface ContractAddresses {
   oracleAdapter?: string;
 }
 
+export interface TelemetryData {
+  method: string;
+  durationMs: number;
+  success: boolean;
+  error?: unknown;
+}
+
+export type TelemetryHook = (data: TelemetryData) => void;
+
 export interface StellarForgeConfig extends NetworkConfig {
   contracts: ContractAddresses;
   /** Optional signing keypair (StrKey secret, `S...`) — only for server-side use */
   signerSecret?: string;
+  /** Optional telemetry hook to measure client call latency and errors */
+  onCall?: TelemetryHook;
 }
 
 /** Outcome of a write transaction that was submitted and confirmed. */
