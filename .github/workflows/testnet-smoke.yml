@@ -12,6 +12,8 @@ name: Testnet Smoke
 # every week before it has ever passed is just noise.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
 
 # No secret is needed. Testnet accounts are funded by friendbot, so the run
 # generates a throwaway keypair and discards it with the runner.
@@ -82,8 +84,8 @@ jobs:
 
       - name: Read the deployed contract ids
         run: |
-          for key in rwaAsset compliance registry governance; do
-            id=$(jq -r ".contracts.$key" deployed-contracts.json)
+          for key in rwaAsset compliance registry governance oracleAdapter; do
+            id=$(jq -r ".contracts.$key | if type==\"object\" then .id else . end" deployed-contracts.json)
             echo "${key}=${id}" >> "$GITHUB_ENV"
             echo "$key: $id"
           done
@@ -116,6 +118,7 @@ jobs:
         env:
           SMOKE_RWA_ASSET_ID: ${{ env.rwaAsset }}
           SMOKE_COMPLIANCE_ID: ${{ env.compliance }}
+          SMOKE_ORACLE_ID: ${{ env.oracleAdapter }}
           SMOKE_HOLDER_ADDRESS: ${{ env.DEPLOYER_ADDRESS }}
         run: npm run test:smoke
 
@@ -143,6 +146,7 @@ jobs:
           SMOKE_WRITE_RWA_ASSET_ID: ${{ env.rwaAsset }}
           SMOKE_WRITE_RECIPIENT_ADDRESS: ${{ env.RECIPIENT_ADDRESS }}
           SMOKE_WRITE_COMPLIANCE_ID: ${{ env.compliance }}
+          SMOKE_WRITE_ORACLE_ID: ${{ env.oracleAdapter }}
           # Configure the fresh deployment through the SDK's operator methods.
           SMOKE_WRITE_SETUP: "true"
           SMOKE_WRITE_SCREENED: "true"

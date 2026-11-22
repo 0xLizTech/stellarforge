@@ -21,6 +21,8 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { Account, Keypair, MuxedAccount, Networks, rpc, scValToNative } from "@stellar/stellar-sdk";
 
 import { ComplianceClient, RwaAssetClient } from "../src/client.js";
+import { OracleAdapterClient } from "../src/oracle.js";
+import type { OracleAsset } from "../src/oracle.js";
 import { DEFAULT_AUTH_VALIDITY_LEDGERS, authorizeEntries } from "../src/sponsored.js";
 import { TESTNET_CONFIG } from "../src/types.js";
 import { isValidContractId, isValidStellarAddress, sha256Hex } from "../src/utils.js";
@@ -29,6 +31,7 @@ import type { KycRecord, StellarForgeConfig } from "../src/types.js";
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const ASSET_ID = process.env["SMOKE_WRITE_RWA_ASSET_ID"];
+const ORACLE_ID = process.env["SMOKE_WRITE_ORACLE_ID"];
 const ISSUER_SECRET = process.env["SMOKE_WRITE_ISSUER_SECRET"];
 /** Admin of the asset and the compliance contract. A default deploy makes the issuer both. */
 const ADMIN_SECRET = process.env["SMOKE_WRITE_ADMIN_SECRET"] ?? ISSUER_SECRET;
@@ -459,3 +462,56 @@ describe.runIf(ASSET_ID)("live RwaAssetClient writes", () => {
     WRITE_TIMEOUT,
   );
 });
+
+// ─── Oracle Adapter write path ───────────────────────────────────────────────
+
+describe.runIf(ORACLE_ID)("live OracleAdapterClient writes", () => {
+  let oracleClient: OracleAdapterClient;
+  let admin: string;
+  const throwawayAsset: OracleAsset = {
+    type: "other",
+    symbol: `SMOKE_${Date.now().toString().slice(-6)}`,
+  };
+
+  beforeAll(() => {
+    if (!isValidContractId(ORACLE_ID as string)) {
+      throw new Error(`SMOKE_WRITE_ORACLE_ID is not a valid contract id: ${ORACLE_ID}`);
+    }
+    const adminSecret = process.env["SMOKE_WRITE_ADMIN_SECRET"] ?? process.env["SMOKE_WRITE_ISSUER_SECRET"];
+    if (!adminSecret) {
+      throw new Error("SMOKE_WRITE_ADMIN_SECRET or SMOKE_WRITE_ISSUER_SECRET required for oracle writes");
+    }
+    admin = Keypair.fromSecret(adminSecret).publicKey();
+    oracleClient = new OracleAdapterClient({
+      network: "testnet",
+      rpcUrl: RPC_URL,
+      networkPassphrase: NETWORK_PASSPHRASE,
+      contracts: { oracleAdapter: ORACLE_ID as string },
+      signerSecret: adminSecret,
+    });
+  });
+
+  it(
+    "adds a throwaway asset, authorizes reporter, reports price, and verifies lastprice",
+    async () => {
+      // 1. Add asset
+      await oracleClient.addAsset(admin, throwawayAsset, 2000); // 20% max deviation
+
+      // 2. Authorize reporter
+      await oracleClient.setReporter(admin, throwawayAsset, admin, true);
+      expect(await oracleClient.isReporter(throwawayAsset, admin)).toBe(true);
+
+      // 3. Report price
+      const now = BigInt(Math.floor(Date.now() / 1000));
+      const price = 100_000_000n;
+      await oracleClient.report(admin, throwawayAsset, price, now);
+
+      // 4. Read lastprice
+      const last = await oracleClient.lastprice(throwawayAsset);
+      expect(last).not.toBeNull();
+      expect(last?.price).toBe(price);
+    },
+    WRITE_TIMEOUT,
+  );
+});
+
