@@ -753,6 +753,46 @@ fn test_deposit_cap_enforcement() {
 }
 
 #[test]
+fn test_deposit_cap_exact_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let underlying = env.register(MockToken, ());
+
+    // Cap at 500 shares, exchange_rate = 2 (underlying amount * 2 = shares)
+    let config = VaultConfig {
+        underlying,
+        exchange_rate: 2,
+        max_share_supply: 500,
+        lockup_secs: 0,
+        name: String::from_str(&env, "BoundaryVault"),
+        symbol: String::from_str(&env, "BVLT"),
+        compliance: None,
+        min_compliance_level: 0,
+    };
+
+    let contract_id = env.register(VaultContract, (&admin, &config));
+    let client = VaultContractClient::new(&env, &contract_id);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // Initial deposit: 200 underlying -> 400 shares (under cap)
+    assert_eq!(client.deposit(&alice, &200), 400);
+    assert_eq!(client.total_supply(), 400);
+
+    // Deposit exactly reaching cap: 50 underlying -> 100 shares -> total_supply = 500 (at cap passes)
+    assert_eq!(client.deposit(&bob, &50), 100);
+    assert_eq!(client.total_supply(), 500);
+
+    // Next deposit of even 1 underlying (2 shares) or cap plus 1 fails with ExceedsMaxSupply
+    assert_eq!(
+        client.try_deposit(&bob, &1),
+        Err(Ok(VaultError::ExceedsMaxSupply.into()))
+    );
+    assert_eq!(client.total_supply(), 500);
+}
+
+#[test]
 fn test_redeem_and_redeemable() {
     let h = default_setup();
     let alice = Address::generate(&h.env);
@@ -780,6 +820,14 @@ fn test_redeem_and_redeemable() {
     assert_eq!(h.client.total_supply(), 100);
     assert_eq!(h.client.underlying_held(), 50);
     assert_eq!(h.client.redeemable(&alice), 100);
+
+    // Verify pro-rata underlying return reconciles share supply and underlying holdings (#219)
+    let remaining_units = h.client.redeem(&alice, &100);
+    assert_eq!(remaining_units, 50);
+    assert_eq!(h.client.balance(&alice), 0);
+    assert_eq!(h.client.total_supply(), 0);
+    assert_eq!(h.client.underlying_held(), 0);
+    assert_eq!(h.client.redeemable(&alice), 0);
 }
 
 #[test]
