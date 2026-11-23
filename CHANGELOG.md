@@ -7,13 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!--
+Entry template (include only applicable sections in each release):
+### Added
+- <new capability> (#issue)
+### Changed
+- <behavior change> (#issue)
+### Deprecated
+- <new deprecation> (#issue)
+### Removed
+- <removed capability> (#issue)
+### Fixed
+- <bug fix> (#issue)
+### Security
+- <security change> (#issue)
+-->
+
 ### Added
 
 - `sdk`: BigInt-safe amount helpers with decimals awareness (#176). `toStroops` and `fromStroops` support custom decimal precisions from 0 to 18 (defaulting to 7). `toStroops` accepts `bigint`, `string`, and safe integer `number`, and strictly rejects excess decimal places. Exact round-tripping verified across all 0 to 18 decimal depths.
 - `sdk`: `formatAmount(amount, decimals, locale)` display formatting helper (#177). Converts base units (`bigint`) or decimal strings into grouped, locale-aware formatted strings (e.g. `1,234.56` or `1.234,56`) without floating-point arithmetic, remaining 100% exact for values of 1e30 and beyond.
 - `sdk`: Multiplexed address (SEP-23) support in transfer helpers (#179). `buildTransferTx`, `transfer`, and `buildSponsoredTransferTx` accept `M...` addresses, properly encoding `ScAddressMuxedAccount` to credit the underlying `G...` address on-chain while propagating the 64-bit muxed ID in contract events. Added `isValidMuxedAddress` and `parseMuxedAddress` helpers to parse the memo ID.
 - `sdk`: SEP-41 Token Interface conformance and compatibility test suite (#180). Added `decimals()`, `name()`, and `symbol()` methods to `RwaAssetClient` and defined `Sep41TokenClient`. Added comprehensive conformance tests verifying all 10 SEP-41 methods (`allowance`, `approve`, `balance`, `transfer`, `transfer_from`, `burn`, `burn_from`, `decimals`, `name`, `symbol`), plus the SEP-41 compatibility table in `sdk/README.md`.
-
+- A pull-request changelog template and CI check requiring a new `[Unreleased]` entry for code changes (#154).
 - `deny.toml` and a `cargo-deny` job in `.github/workflows/security.yml` (#91), enforcing permissive dependency licenses (`Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Unicode-3.0`), rejecting copyleft/GPL dependencies, and denying unknown registries and git sources. Findings, assumptions, and residual risks are documented in `docs/SECURITY.md`.
 - `contracts/size-budget.json` (#94) and `scripts/check-wasm-size.cjs` wired into `.github/workflows/contracts-ci.yml` (#93), recording the compiled `.wasm` byte size of all five contracts (`rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`), posting a size delta report on pull requests, and failing CI if any contract exceeds its configured byte budget.
 - `scripts/check-soroban-sdk-version.cjs`, run in `.github/workflows/contracts-ci.yml`, rejecting per-crate `soroban-sdk` version overrides or duplicate `soroban-sdk` lockfile versions, plus the workspace SDK upgrade procedure in `CONTRIBUTING.md` (#95).

@@ -22,7 +22,7 @@ Read CONTRIBUTING.md first if you haven't already.
 - [ ] `cargo test --all --features testutils` passes
 - [ ] (SDK) `npm run typecheck` and `npm test` pass
 - [ ] New public functions have both a positive and a negative test
-- [ ] Docs updated (README / ADR / CHANGELOG) where relevant
+- [ ] For code changes, a new bullet is added under [Unreleased](../CHANGELOG.md) in the appropriate changelog section
 - [ ] (Release) Required reviewers for npm-publish environment confirmed
 
 ## Type

@@ -103,6 +103,24 @@ export class RegistryClient extends ContractClient {
     }
   }
 
+  /**
+   * Async generator yielding registered asset addresses across pages.
+   */
+  async *paginateAssets(pageSize = REGISTRY_MAX_PAGE_SIZE): AsyncGenerator<string, void, unknown> {
+    const limit = Math.min(pageSize, REGISTRY_MAX_PAGE_SIZE);
+    let start = 0;
+    while (true) {
+      const page = await this.listAssets(start, limit);
+      for (const asset of page) {
+        yield asset;
+      }
+      if (page.length < limit) {
+        break;
+      }
+      start += page.length;
+    }
+  }
+
   /** The address permitted to register assets and change their active flag. */
   async admin(): Promise<string> {
     const result = await this.simulateReadOnly("admin", []);
