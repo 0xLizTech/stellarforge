@@ -32,12 +32,23 @@ pub struct OracleSource {
     pub asset: Asset,
 }
 
+/// Optional secondary oracle source.
+///
+/// Wrapped in a dedicated `#[contracttype]` enum because `soroban-sdk` 29 does not
+/// implement `TryFrom<&Option<T>> for ScVal` for custom `#[contracttype]` structs.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SecondaryOracle {
+    None,
+    Some(OracleSource),
+}
+
 /// Multi-source oracle configuration.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleSet {
     pub primary: OracleSource,
-    pub secondary: Option<OracleSource>,
+    pub secondary: SecondaryOracle,
     pub max_staleness_secs: u64,
     pub max_divergence_bps: u32,
 }

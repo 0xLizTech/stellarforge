@@ -23,8 +23,8 @@ pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::VaultError;
 pub use events::{AdminTransferred, Approve, Deposit, Paused, Redeem, SetOracles, Transfer, TransferFrom};
 pub use oracle::{
-    Asset, NavData, OracleSet, OracleSource, PriceData, Sep40OracleClient, Sep40OracleInterface,
-    BPS_DENOMINATOR, NAV_DECIMALS,
+    Asset, NavData, OracleSet, OracleSource, PriceData, SecondaryOracle, Sep40OracleClient,
+    Sep40OracleInterface, BPS_DENOMINATOR, NAV_DECIMALS,
 };
 pub use token::{UnderlyingTokenClient, UnderlyingTokenInterface};
 
@@ -579,7 +579,7 @@ impl VaultContract {
             }
             oracles_list.push_back(cfg.primary.oracle.clone());
 
-            if let Some(ref sec) = cfg.secondary {
+            if let SecondaryOracle::Some(ref sec) = cfg.secondary {
                 if cfg.max_divergence_bps < 1 {
                     panic_with_error!(&env, VaultError::InvalidMetadata);
                 }
@@ -1007,7 +1007,7 @@ impl VaultContract {
 
         let (p1, t1) = Self::fetch_source_price(env, &oracle_set.primary, oracle_set.max_staleness_secs);
 
-        if let Some(ref sec) = oracle_set.secondary {
+        if let SecondaryOracle::Some(ref sec) = oracle_set.secondary {
             let (p2, t2) = Self::fetch_source_price(env, sec, oracle_set.max_staleness_secs);
 
             let diff = if p1 >= p2 { p1 - p2 } else { p2 - p1 };
