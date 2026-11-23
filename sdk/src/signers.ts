@@ -30,6 +30,8 @@ export interface FreighterSignResult {
   signedTxXdr: string;
   /** Public key of the account that signed the transaction. */
   signerAddress: string;
+  /** Optional error message returned by Freighter when signing fails or is rejected. */
+  error?: string;
 }
 
 /** Freighter-style transaction signing callback, without a Freighter package dependency. */
@@ -43,6 +45,10 @@ export type FreighterSignTransaction = (
  * interface.
  */
 export class FreighterSigner implements Signer {
+  /**
+   * @param publicKey - Stellar public key (`G...`) expected to sign transactions.
+   * @param freighterSignTransaction - Callback delegating to Freighter's `signTransaction`.
+   */
   constructor(
     readonly publicKey: string,
     private readonly freighterSignTransaction: FreighterSignTransaction,
@@ -52,10 +58,19 @@ export class FreighterSigner implements Signer {
     transaction: Transaction,
     networkPassphrase: string,
   ): Promise<Transaction> {
+    if (!networkPassphrase) {
+      throw new Error("FreighterSigner requires a non-empty networkPassphrase");
+    }
     const result = await this.freighterSignTransaction(transaction.toXDR(), {
       address: this.publicKey,
       networkPassphrase,
     });
+    if (result.error) {
+      throw new Error(`Freighter signing failed: ${result.error}`);
+    }
+    if (!result.signedTxXdr) {
+      throw new Error("Freighter returned an empty signed transaction XDR");
+    }
     if (result.signerAddress !== this.publicKey) {
       throw new Error(
         `Freighter signed with ${result.signerAddress}, expected ${this.publicKey}`,
