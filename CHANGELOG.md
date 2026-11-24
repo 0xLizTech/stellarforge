@@ -7,10 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!--
+Entry template (include only applicable sections in each release):
+### Added
+- <new capability> (#issue)
+### Changed
+- <behavior change> (#issue)
+### Deprecated
+- <new deprecation> (#issue)
+### Removed
+- <removed capability> (#issue)
+### Fixed
+- <bug fix> (#issue)
+### Security
+- <security change> (#issue)
+-->
+
 ### Added
 - Admin-configurable deposit and redemption fees (maximum 500 bps), management share accrual, fee events, and accounting tests in the vault (#230, #231).
 - Soroban-compatible representation and validation of the optional secondary vault oracle source; dual-admin authorization regression coverage for the vault (#232, #233).
 
+- `VaultClient` write-path helpers for vault `deposit` and `redeem` (`buildDepositTx`, `deposit`, `buildRedeemTx`, `redeem`, `buildSponsoredDepositTx`, `buildSponsoredRedeemTx`), unit tests covering direct and sponsored modes plus simulation error propagation, and testnet write smoke tests (#245).
+- `GovernanceClient.proposals()` async iterator in `@stellarforge-protocol/sdk`, yielding all governance proposals from `1n` through `proposalCount()` and skipping missing entries (#175).
+- `VaultClient` in `@stellarforge-protocol/sdk`: completed contract coverage with `checkpointCount`, `supplyCheckpointCount`, `buildTransferAdminTx`/`transferAdmin`, aligned `VaultErrorCode` (1..26) with `contracts/vault/src/error.rs`, added `VaultError.fromCode`, `parseVaultError`, `AdminTransferredEvent`/`FeeEvent` decoding, and unit tests (#244).
+- Vault unit tests for deposit and redeem rounding covering first deposit, tiny and huge amounts, dust shares, overflow boundaries, and multi-holder rounding sequences (#234).
+- A pull-request changelog template and CI check requiring a new `[Unreleased]` entry for code changes (#154).
 - `deny.toml` and a `cargo-deny` job in `.github/workflows/security.yml` (#91), enforcing permissive dependency licenses (`Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Unicode-3.0`), rejecting copyleft/GPL dependencies, and denying unknown registries and git sources. Findings, assumptions, and residual risks are documented in `docs/SECURITY.md`.
 - `contracts/size-budget.json` (#94) and `scripts/check-wasm-size.cjs` wired into `.github/workflows/contracts-ci.yml` (#93), recording the compiled `.wasm` byte size of all five contracts (`rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`), posting a size delta report on pull requests, and failing CI if any contract exceeds its configured byte budget.
 - `scripts/check-soroban-sdk-version.cjs`, run in `.github/workflows/contracts-ci.yml`, rejecting per-crate `soroban-sdk` version overrides or duplicate `soroban-sdk` lockfile versions, plus the workspace SDK upgrade procedure in `CONTRIBUTING.md` (#95).

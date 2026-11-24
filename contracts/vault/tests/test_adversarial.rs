@@ -9,6 +9,11 @@ use vault::{
     Asset, OracleSet, OracleSource, PriceData, UnderlyingTokenClient, VaultConfig, VaultContract,
     VaultContractClient, VaultError, MAX_LOCKUP_SECS,
 };
+use vault::{
+    Asset, OracleSet, OracleSource, PriceData, Sep40OracleInterface, UnderlyingTokenClient,
+    UnderlyingTokenInterface, VaultConfig, VaultContract, VaultContractClient, VaultError,
+    MAX_LOCKUP_SECS,
+};
 
 #[contract]
 struct MockUnderlying;
@@ -187,6 +192,19 @@ fn test_adversarial_lock_griefing() {
     assert_eq!(client.locked_until(&innocent_user), 1500);
 
     // Attacker transfers shares to innocent_user
+    // Attacker deposits later at timestamp 1400 with a lock target of 1900
+    env.ledger().set_timestamp(1_400);
+    client.deposit(&attacker, &10);
+
+    // The attacker is locked until 1900, so the transfer is refused while he
+    // is locked; even a successful transfer must not extend InnocentUser's lock.
+    let err_grief = client
+        .try_transfer(&attacker, &MuxedAddress::from(innocent_user.clone()), &10)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err_grief, VaultError::SharesLocked.into());
+
+    env.ledger().set_timestamp(1_900);
     client.transfer(&attacker, &MuxedAddress::from(innocent_user.clone()), &10);
 
     // Innocent user's lockup MUST remain 1500, NOT extended to 1900
@@ -283,6 +301,7 @@ fn test_adversarial_oracle_manipulation() {
                 asset: asset.clone(),
             }],
         ),
+        secondary: Some(oracle2.clone()),
         max_divergence_bps: 200,  // 2%
         max_staleness_secs: 3600, // 1 hour
     }));
@@ -297,6 +316,10 @@ fn test_adversarial_oracle_manipulation() {
     });
     let nav_data = client.nav();
     assert_eq!(nav_data.value, 1_000); // 10 smallest units * 100.0 USD, at 7 decimals
+        MockOracle::set_price(env.clone(), 100_00000000000000, 10_000)
+    });
+    let nav_data = client.nav();
+    assert_eq!(nav_data.value, 1_000); // 10 units * 100.0 USD
 
     // 2. Manipulated extreme divergence: primary 100.0, secondary 110.0 (10% > 2%)
     // Directly update oracle2 price via env storage
@@ -355,6 +378,9 @@ fn test_adversarial_compliance_churn() {
 
     // Revoke KYC for user
     MockComplianceClient::new(&env, &compliance_id).set_revoked(&user);
+    env.as_contract(&compliance_id, || {
+        MockCompliance::set_revoked(env.clone(), user.clone())
+    });
 
     // Transfer must fail
     let err_tx = client
@@ -447,4 +473,6 @@ fn test_adversarial_extremes() {
 
     // Constructor rejection for a lock-up above MAX_LOCKUP_SECS is covered by
     // `test_constructor_rejects_excessive_lockup` in `test_vault.rs`.
+    // Reject lockup > MAX_LOCKUP_SECS at deploy is covered by VaultConfig
+    // validation tests; no extra call is needed here.
 }

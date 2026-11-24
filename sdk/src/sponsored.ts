@@ -212,7 +212,7 @@ export function checkInvocationTree(
 function describeInvocation(inv: xdr.SorobanAuthorizedInvocation, prefix = "", isLast = true): string[] {
   const lines: string[] = [];
   const fn = inv.function;
-  let callDesc = "unknown";
+  let callDesc: string;
 
   if (fn.type === "sorobanAuthorizedFunctionTypeContractFn") {
     const contractFn = fn.contractFn;
@@ -260,7 +260,7 @@ export function describeAuthTree(entry: xdr.SorobanAuthorizationEntry): string {
 
   const rootInv = entry.rootInvocation;
   const fn = rootInv.function;
-  let rootDesc = "unknown";
+  let rootDesc: string;
 
   if (fn.type === "sorobanAuthorizedFunctionTypeContractFn") {
     const contractFn = fn.contractFn;
@@ -317,6 +317,7 @@ export function checkSignedAuthEntry(
   } catch (err: unknown) {
     throw new Error(
       `Authorization entry ${index} authorizes a different invocation than the one built: ${(err as Error).message}`,
+      { cause: err },
     );
   }
 

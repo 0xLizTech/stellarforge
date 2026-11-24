@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 soroban-sdk = { version = "27.0.5", features = ["testutils"] }
 contracts-vault = { package = "vault", path = ".." }
+vault = { path = ".." }
 
 [[bin]]
 name = "vault_fuzz"

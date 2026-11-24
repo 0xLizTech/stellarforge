@@ -24,10 +24,11 @@ pub use error::VaultError;
 pub use events::{
     AdminTransferred, Approve, Deposit, FeesConfigured, ManagementFee, Paused, Redeem, SetOracles,
     Transfer, TransferFrom, VaultFee,
+    AdminTransferred, Approve, Deposit, Fee, Paused, Redeem, SetOracles, Transfer, TransferFrom,
 };
 pub use oracle::{
-    Asset, NavData, OracleSet, OracleSource, PriceData, Sep40OracleClient, Sep40OracleInterface,
-    BPS_DENOMINATOR, NAV_DECIMALS,
+    Asset, NavData, OracleSet, OracleSource, PriceData, SecondaryOracle, Sep40OracleClient,
+    Sep40OracleInterface, BPS_DENOMINATOR, NAV_DECIMALS,
 };
 pub use token::{UnderlyingTokenClient, UnderlyingTokenInterface};
 
@@ -600,6 +601,26 @@ impl VaultContract {
         bal - (bal % cfg.exchange_rate)
     }
 
+    /// Returns the number of shares minted for a given `amount` of underlying asset (#220, #218).
+    pub fn preview_deposit(env: Env, amount: i128) -> i128 {
+        let cfg = Self::config(env);
+        if cfg.exchange_rate <= 0 || amount <= 0 {
+            0
+        } else {
+            amount * cfg.exchange_rate
+        }
+    }
+
+    /// Returns the underlying units redeemed for a given number of `shares` (#220).
+    pub fn preview_redeem(env: Env, shares: i128) -> i128 {
+        let cfg = Self::config(env);
+        if cfg.exchange_rate <= 0 || shares <= 0 {
+            0
+        } else {
+            shares / cfg.exchange_rate
+        }
+    }
+
     // ── Multi-Source NAV & Oracles (#59) ───────────────────────────────────────
 
     /// Configures the primary and optional secondary SEP-40 oracle sources (admin only).
@@ -617,25 +638,15 @@ impl VaultContract {
                 panic_with_error!(&env, VaultError::InvalidMetadata);
             }
             if let Some(sec) = cfg.secondary.first() {
+            if let SecondaryOracle::Some(ref sec) = cfg.secondary {
                 if cfg.max_divergence_bps < 1 {
                     panic_with_error!(&env, VaultError::InvalidMetadata);
                 }
-                if cfg.primary.oracle == sec.oracle {
+                if cfg.primary.oracle == *sec {
                     panic_with_error!(&env, VaultError::IdenticalOracleSources);
                 }
 
-                let base1 = match Sep40OracleClient::new(&env, &cfg.primary.oracle).try_base() {
-                    Ok(Ok(b)) => b,
-                    _ => panic_with_error!(&env, VaultError::OracleBaseMismatch),
-                };
-                let base2 = match Sep40OracleClient::new(&env, &sec.oracle).try_base() {
-                    Ok(Ok(b)) => b,
-                    _ => panic_with_error!(&env, VaultError::OracleBaseMismatch),
-                };
-                if base1 != base2 {
-                    panic_with_error!(&env, VaultError::OracleBaseMismatch);
-                }
-                oracles_list.push_back(sec.oracle.clone());
+                oracles_list.push_back(sec.clone());
             }
 
             env.storage().instance().set(&ORACLES_KEY, cfg);
@@ -1098,13 +1109,18 @@ impl VaultContract {
         }
     }
 
-    fn fetch_source_price(env: &Env, source: &OracleSource, max_staleness: u64) -> (i128, u64) {
-        let client = Sep40OracleClient::new(env, &source.oracle);
+    fn fetch_source_price(
+        env: &Env,
+        oracle: &Address,
+        asset: &Asset,
+        max_staleness: u64,
+    ) -> (i128, u64) {
+        let client = Sep40OracleClient::new(env, oracle);
         let oracle_decimals = match client.try_decimals() {
             Ok(Ok(d)) => d,
             _ => panic_with_error!(env, VaultError::PriceUnavailable),
         };
-        let price_data = match client.try_lastprice(&source.asset) {
+        let price_data = match client.try_lastprice(asset) {
             Ok(Ok(Some(p))) => p,
             _ => panic_with_error!(env, VaultError::PriceUnavailable),
         };
@@ -1159,6 +1175,20 @@ impl VaultContract {
 
         if let Some(sec) = oracle_set.secondary.first() {
             let (p2, t2) = Self::fetch_source_price(env, &sec, oracle_set.max_staleness_secs);
+        let (p1, t1) = Self::fetch_source_price(
+            env,
+            &oracle_set.primary.oracle,
+            &oracle_set.primary.asset,
+            oracle_set.max_staleness_secs,
+        );
+
+        if let Some(ref sec) = oracle_set.secondary {
+            let (p2, t2) = Self::fetch_source_price(
+                env,
+                sec,
+                &oracle_set.primary.asset,
+                oracle_set.max_staleness_secs,
+            );
 
             let diff = if p1 >= p2 { p1 - p2 } else { p2 - p1 };
             let min_p = if p1 <= p2 { p1 } else { p2 };

@@ -71,12 +71,24 @@ const tx = await client.buildTransferTx(from, to, toStroops("100", meta.decimals
 const signedXdr = await freighter.signTransaction(tx.toXdr(), { networkPassphrase });
 ```
 
-**The bare method signs and submits**, for server-side automation.
+**The bare method signs and submits** through a configured signer. `KeypairSigner`
+supports server-side automation; `FreighterSigner` adapts Freighter's
+`signTransaction` API without adding a wallet dependency to the SDK.
 
 ```typescript
-const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signerSecret });
+import { FreighterSigner, RwaAssetClient } from "@stellarforge-protocol/sdk";
+
+const signer = new FreighterSigner(publicKey, (xdr, options) =>
+  freighter.signTransaction(xdr, options),
+);
+const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signer });
 const { hash, ledger } = await client.transfer(from, to, amount);
 ```
+
+For server-side keypairs, use `new KeypairSigner(keypair)` or
+`KeypairSigner.fromSecret(secret)`. The older `signerSecret` config option remains
+supported for compatibility. Every submitting write, including sponsored
+submissions, uses the configured signer.
 
 A bare write waits for the transaction to settle, for up to its 180-second
 validity window plus 30 seconds. If it has not settled by then, the error type
@@ -103,8 +115,10 @@ Two things worth knowing before you use either:
 | `RwaAssetClient` | `rwa-asset` | Balances, metadata, allowances; mint, burn, burnFrom, transfer, approve (with an expiry ledger), transferFrom. Admin: setIssuer, setPaused, updateMetadata, setCompliance |
 | `ComplianceClient` | `compliance` | `isCompliant` is the pure query, never the TTL-extending `screen`; `getKyc` reads a stored record. Admin: setKyc, revokeKyc |
 | `RegistryClient` | `registry` | Asset directory, paged with `listAssets(start, limit)` or walked with `listAllAssets()`; `register` and `setActive` are admin-only |
-| `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
+| `GovernanceClient` | `governance` | Proposals (walked with `proposals()`) and voting — **see the warning below** |
 | `VaultClient` | `vault` | Real estate / RWA share vault: config, balances, historical checkpoints, NAV, sponsored deposits/redeems, and typed event decoders |
+| `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
+| `VaultClient` | `vault` | Real estate / RWA share vault: config, balances, previews (`previewDeposit`/`previewRedeem`), historical checkpoints (`balanceAt`/`totalSupplyAt`/`checkpointCount`/`supplyCheckpointCount`), NAV, admin (`setPaused`/`setOracles`/`transferAdmin`), sponsored deposits/redeems, typed errors (`VaultErrorCode`/`parseVaultError`), and event decoders |
 | `OracleAdapterClient` | `oracle-adapter` | SEP-40 NAV feed — **see [Oracle adapter](#oracle-adapter)** |
 
 ## Vault & Auth-Tree Verification
@@ -136,8 +150,16 @@ const navPerShare = await client.navPerShare();
 const shares = sharesForDeposit(assets, config.exchangeRate);
 const redeemableBalance = maxRedeemable(userBalance, lockedUntilLedger, currentLedger);
 
-// 3. Sponsored deposit with auth-tree verification
+// 3. Direct deposit and redeem (build*Tx for wallets, bare method for signers)
+const depositTx = await client.buildDepositTx(depositor, depositAmount);
+const depositRes = await client.deposit(depositor, depositAmount);
+const redeemRes = await client.redeem(depositor, shares);
+
+// 4. Sponsored deposit / redeem with auth-tree verification
 const sponsored = await client.buildSponsoredDepositTx(depositor, depositAmount, {
+  feeSource: relayer,
+});
+const sponsoredRedeem = await client.buildSponsoredRedeemTx(depositor, shares, {
   feeSource: relayer,
 });
 
