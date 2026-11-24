@@ -13,7 +13,7 @@ use soroban_sdk::{
     Address, Env, IntoVal, String, Symbol,
 };
 
-use vault::{VaultConfig, VaultContract};
+use contracts_vault::{VaultConfig, VaultContract};
 
 #[contract]
 struct MockUnderlying;
@@ -60,4 +60,27 @@ fn test_constructor_requires_the_admin_to_authorize() {
             },
         )]
     );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_constructor_rejects_negative_share_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let underlying = env.register(MockUnderlying, ());
+
+    let config = VaultConfig {
+        underlying,
+        exchange_rate: 1,
+        max_share_supply: -1,
+        lockup_secs: 86400,
+        name: String::from_str(&env, "Vault Share"),
+        symbol: String::from_str(&env, "vRWA"),
+        compliance: None,
+        min_compliance_level: 0,
+    };
+
+    env.register(VaultContract, (&admin, &config));
 }

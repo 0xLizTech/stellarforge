@@ -1,0 +1,11 @@
+{
+  "appraisal": "./appraisal.json",
+  "oracle": "C...",
+  "appraiserKey": "G...",
+  "reporterKeyFile": "./keys/reporter.secret",
+  "relayerKeyFile": "./keys/relayer.secret",
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "dryRun": true,
+  "json": false
+}

@@ -16,6 +16,13 @@ import type { Transaction } from "@stellar/stellar-sdk";
 import { TransactionExpiredError, TransactionOutcomeUnknownError } from "./errors.js";
 import { SilentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
+import {
+  authEntryAddress,
+  authorizeEntries as signAuthEntries,
+  checkSignedAuthEntry,
+  DEFAULT_AUTH_VALIDITY_LEDGERS,
+} from "./sponsored.js";
+import { KeypairSigner } from "./signers.js";
 import { authEntryAddress, checkSignedAuthEntry } from "./sponsored.js";
 import type { SponsoredTransaction } from "./sponsored.js";
 import type { StellarForgeConfig, TxResult } from "./types.js";
@@ -108,16 +115,52 @@ export abstract class ContractClient {
       .build();
 
     const simResult = await this.server.simulateTransaction(tx);
+    const start = Date.now();
+    let success = false;
+    let err: unknown = undefined;
+    try {
+      // A throwaway account is enough: a simulation is never submitted, so the
+      // source needs neither funding nor a real sequence number.
+      const dummyKeypair = Keypair.random();
+      const dummyAccount = new Account(dummyKeypair.publicKey(), "0");
 
-    if (rpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation error: ${simResult.error}`);
+      const tx = new TransactionBuilder(dummyAccount, {
+        fee: BASE_FEE,
+        networkPassphrase: this.clientConfig.networkPassphrase,
+      })
+        .addOperation(this.contract.call(method, ...args))
+        .setTimeout(SIMULATION_TIMEOUT_SECONDS)
+        .build();
+
+      const simResult = await this.server.simulateTransaction(tx);
+
+      if (rpc.Api.isSimulationError(simResult)) {
+        throw new Error(`Simulation error: ${simResult.error}`);
+      }
+
+      if (!simResult.result) {
+        throw new Error(`No result returned from ${method}`);
+      }
+
+      success = true;
+      return simResult.result.retval;
+    } catch (e) {
+      err = e;
+      throw e;
+    } finally {
+      if (this.clientConfig.onCall) {
+        try {
+          this.clientConfig.onCall({
+            method,
+            durationMs: Date.now() - start,
+            success,
+            error: err,
+          });
+        } catch {
+          // Telemetry errors must never fail client operations
+        }
+      }
     }
-
-    if (!simResult.result) {
-      throw new Error(`No result returned from ${method}`);
-    }
-
-    return simResult.result.retval;
   }
 
   /**
@@ -161,32 +204,34 @@ export abstract class ContractClient {
     source: string,
     sponsored = false,
   ): Promise<SubmitOutcome> {
-    const secret = this.clientConfig.signerSecret;
-    if (!secret) {
+    const configuredSigner = this.clientConfig.signer;
+    const signer = configuredSigner ?? (this.clientConfig.signerSecret
+      ? KeypairSigner.fromSecret(this.clientConfig.signerSecret)
+      : undefined);
+    if (!signer) {
       throw new Error(
-        "config.signerSecret is required to submit a transaction. " +
+        "config.signer or config.signerSecret is required to submit a transaction. " +
           "Use the matching build*Tx method to sign with a wallet instead.",
       );
     }
 
-    const keypair = Keypair.fromSecret(secret);
-
     // The signer has to be the transaction source. Catching it here beats a
     // protocol-level bad-auth failure, or a require_auth failure after the fee
     // is spent.
-    if (keypair.publicKey() !== source) {
+    if (signer.publicKey !== source) {
+      const signerName = configuredSigner ? "signer" : "signerSecret";
       throw new Error(
         sponsored
-          ? `signerSecret is for ${keypair.publicKey()} but this sponsored transaction is sourced ` +
+          ? `${signerName} is for ${signer.publicKey} but this sponsored transaction is sourced ` +
               `and paid for by ${source}, which must sign it.`
-          : `signerSecret is for ${keypair.publicKey()} but this call must be authorized by ` +
+          : `${signerName} is for ${signer.publicKey} but this call must be authorized by ` +
               `${source}. To pay from a different account, use a buildSponsored*Tx method.`,
       );
     }
 
-    tx.sign(keypair);
+    const signedTransaction = await signer.signTransaction(tx, this.clientConfig.networkPassphrase);
 
-    const sent = await this.server.sendTransaction(tx);
+    const sent = await this.server.sendTransaction(signedTransaction);
     switch (sent.status) {
       case "ERROR":
         throw new Error(`Transaction ${sent.hash} was rejected on submission`);
@@ -355,6 +400,27 @@ export abstract class ContractClient {
   }
 
   /**
+   * Signs the entries in a sponsored invocation that belong to `signer`.
+   *
+   * @param sponsored - Invocation returned by a `buildSponsored*Tx` method.
+   * @param signerSecret - Stellar secret key authorized by the invocation.
+   * @returns All entries in original order, signed where the key is the authorizer.
+   * @throws If the key is not named by the invocation or an entry cannot be signed.
+   */
+  async authorizeEntries(
+    sponsored: SponsoredTransaction,
+    signerSecret: string,
+  ): Promise<xdr.SorobanAuthorizationEntry[]> {
+    const { sequence } = await this.server.getLatestLedger();
+    return signAuthEntries(
+      sponsored.authEntries,
+      Keypair.fromSecret(signerSecret),
+      sequence + DEFAULT_AUTH_VALIDITY_LEDGERS,
+      this.clientConfig.networkPassphrase,
+    );
+  }
+
+  /**
    * Finalizes a sponsored invocation, signs it with `config.signerSecret` as the
    * fee payer, and waits for it to settle.
    */
@@ -386,6 +452,7 @@ export abstract class ContractClient {
     ]);
   }
 
+  /** Submits a request to hand administration to `newAdmin`. */
   async proposeAdmin(admin: string, newAdmin: string): Promise<TxResult> {
     return this.submit(await this.buildProposeAdminTx(admin, newAdmin), admin);
   }
@@ -401,6 +468,7 @@ export abstract class ContractClient {
     return this.buildWriteTx(newAdmin, "accept_admin", []);
   }
 
+  /** Accepts the pending administrator handover as `newAdmin`. */
   async acceptAdmin(newAdmin: string): Promise<TxResult> {
     return this.submit(await this.buildAcceptAdminTx(newAdmin), newAdmin);
   }
@@ -415,6 +483,7 @@ export abstract class ContractClient {
     return this.buildWriteTx(admin, "cancel_admin_transfer", []);
   }
 
+  /** Cancels the current administrator's pending handover. */
   async cancelAdminTransfer(admin: string): Promise<TxResult> {
     return this.submit(await this.buildCancelAdminTransferTx(admin), admin);
   }
