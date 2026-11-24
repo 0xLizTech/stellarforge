@@ -26,6 +26,11 @@ Entry template (include only applicable sections in each release):
 - Added SDK migration guide template and `sdk/docs/migrations/0.2-to-0.3.md` for breaking SDK releases (#199).
 - `getEventsPaginated` helper in SDK utils for paginating through RPC events (#173).
 
+- `contracts/vault`: verified SEP-41 share token interface entry points (`balance`, `transfer`, `approve`, `transfer_from`, `decimals`, `name`, `symbol`), added `test_sep41_share_token_events_and_allowance_flow` test, and confirmed protocol invariant on share redemption as sole exit mechanism (#217).
+- `contracts/vault`: constructor authorization validation and configuration coverage ensuring admin authentication and share cap validation (#216).
+- `docs/guides/tokenized-real-estate.md` and runnable companion script `sdk/examples/tokenized-real-estate.ts` (#210), demonstrating end-to-end tokenized commercial real estate issuance with KYC compliance screening and registry listing.
+- `testnet-smoke` workflow: added nightly cron schedule (`0 2 * * *`) and live read and write smoke test coverage for `OracleAdapterClient` against testnet deployments (#207).
+
 - Vault deposits now screen the depositor through the configured compliance contract; the vault documents and tests its pause policy and NAV-per-share calculation, including zero supply. SDK Changesets now open a Version Packages PR for queued releases (#229, #228, #227, #197).
 - The SDK includes runnable testnet examples for mint, transfer, KYC, governance proposals and voting; CI typechecks them and exercises package import/read behavior under Deno 2 and Bun 1 (#188, #185).
 - The SDK's public TypeScript API now requires TSDoc comments in lint, and the NAV reporter's `--json` mode has CLI tests guaranteeing machine-readable stdout with diagnostics on stderr (#187, #190).

@@ -20,6 +20,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { StrKey } from "@stellar/stellar-sdk";
 
 import { RwaAssetClient, ComplianceClient } from "../src/client.js";
+import { OracleAdapterClient } from "../src/oracle.js";
 import { TESTNET_CONFIG } from "../src/types.js";
 import { isValidContractId, isValidStellarAddress } from "../src/utils.js";
 import type { StellarForgeConfig } from "../src/types.js";
@@ -28,6 +29,7 @@ import type { StellarForgeConfig } from "../src/types.js";
 
 const RWA_ASSET_ID = process.env["SMOKE_RWA_ASSET_ID"];
 const COMPLIANCE_ID = process.env["SMOKE_COMPLIANCE_ID"];
+const ORACLE_ID = process.env["SMOKE_ORACLE_ID"];
 
 const RPC_URL = process.env["SOROBAN_RPC_URL"] ?? TESTNET_CONFIG.rpcUrl;
 const NETWORK_PASSPHRASE =
@@ -243,3 +245,51 @@ describe.runIf(COMPLIANCE_ID)("live ComplianceClient", () => {
     NETWORK_TIMEOUT,
   );
 });
+
+// ─── Oracle Adapter ───────────────────────────────────────────────────────────
+
+describe.runIf(ORACLE_ID)("live OracleAdapterClient", () => {
+  let client: OracleAdapterClient;
+
+  beforeAll(() => {
+    assertUsableConfig(ORACLE_ID as string, "SMOKE_ORACLE_ID");
+    client = new OracleAdapterClient(configFor({ oracleAdapter: ORACLE_ID as string }));
+  });
+
+  it(
+    "returns base asset and non-negative decimals and resolution",
+    async () => {
+      const base = await client.base();
+      expect(base).toBeDefined();
+      expect(["stellar", "other"]).toContain(base.type);
+
+      const decimals = await client.decimals();
+      expect(Number.isInteger(decimals)).toBe(true);
+      expect(decimals).toBeGreaterThanOrEqual(0);
+
+      const resolution = await client.resolution();
+      expect(Number.isInteger(resolution)).toBe(true);
+      expect(resolution).toBeGreaterThan(0);
+    },
+    NETWORK_TIMEOUT,
+  );
+
+  it(
+    "returns assets array",
+    async () => {
+      const assets = await client.assets();
+      expect(Array.isArray(assets)).toBe(true);
+    },
+    NETWORK_TIMEOUT,
+  );
+
+  it(
+    "rejects a contract that is not deployed with a simulation error",
+    async () => {
+      const missing = new OracleAdapterClient(configFor({ oracleAdapter: UNDEPLOYED_ID }));
+      await expect(missing.decimals()).rejects.toThrow(/Simulation error:/);
+    },
+    NETWORK_TIMEOUT,
+  );
+});
+
