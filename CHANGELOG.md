@@ -26,6 +26,11 @@ Entry template (include only applicable sections in each release):
 - Added SDK migration guide template and `sdk/docs/migrations/0.2-to-0.3.md` for breaking SDK releases (#199).
 - `getEventsPaginated` helper in SDK utils for paginating through RPC events (#173).
 
+- `tooling`: added `@stellarforge-protocol/indexer-graphql` GraphQL API over the indexer exposing balances, holders, and proposals with pagination support (#206).
+- `sdk`: corrected `sdk/README.md` example snippet referencing `contracts.vault` against current `VaultConfig` API (#208).
+- `vault`: enforced maximum fractional share supply cap rejection (`ExceedsMaxSupply`), added exact boundary test verifying deposit at cap passes while cap + 1 fails (#222).
+- `vault`: documented and verified pro-rata underlying return and reconciliation between share supply and holdings on `redeem` (#219).
+
 - `contracts/vault`: verified SEP-41 share token interface entry points (`balance`, `transfer`, `approve`, `transfer_from`, `decimals`, `name`, `symbol`), added `test_sep41_share_token_events_and_allowance_flow` test, and confirmed protocol invariant on share redemption as sole exit mechanism (#217).
 - `contracts/vault`: constructor authorization validation and configuration coverage ensuring admin authentication and share cap validation (#216).
 - `docs/guides/tokenized-real-estate.md` and runnable companion script `sdk/examples/tokenized-real-estate.ts` (#210), demonstrating end-to-end tokenized commercial real estate issuance with KYC compliance screening and registry listing.
