@@ -1,0 +1,27 @@
+{
+  "name": "@stellarforge-protocol/react",
+  "version": "0.1.0",
+  "description": "React hooks for the StellarForge RWA protocol SDK",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "react",
+    "hooks",
+    "tanstack-query"
+  ],
+  "license": "Apache-2.0",
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.0.0",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "@stellarforge-protocol/sdk": "workspace:*"
+  }
+}

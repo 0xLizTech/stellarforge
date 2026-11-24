@@ -82,6 +82,8 @@ export interface StellarForgeConfig extends NetworkConfig {
   signer?: Signer;
   /** @deprecated Use `signer` with a {@link Signer} adapter instead. Server-side only. */
   signerSecret?: string;
+  /** Pluggable logger instance (defaults to SilentLogger) */
+  logger?: import("./logger.js").Logger;
   /** Optional telemetry hook to measure client call latency and errors */
   onCall?: TelemetryHook;
 }
