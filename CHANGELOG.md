@@ -27,6 +27,18 @@ Entry template (include only applicable sections in each release):
 - `sdk`: `formatAmount(amount, decimals, locale)` display formatting helper (#177). Converts base units (`bigint`) or decimal strings into grouped, locale-aware formatted strings (e.g. `1,234.56` or `1.234,56`) without floating-point arithmetic, remaining 100% exact for values of 1e30 and beyond.
 - `sdk`: Multiplexed address (SEP-23) support in transfer helpers (#179). `buildTransferTx`, `transfer`, and `buildSponsoredTransferTx` accept `M...` addresses, properly encoding `ScAddressMuxedAccount` to credit the underlying `G...` address on-chain while propagating the 64-bit muxed ID in contract events. Added `isValidMuxedAddress` and `parseMuxedAddress` helpers to parse the memo ID.
 - `sdk`: SEP-41 Token Interface conformance and compatibility test suite (#180). Added `decimals()`, `name()`, and `symbol()` methods to `RwaAssetClient` and defined `Sep41TokenClient`. Added comprehensive conformance tests verifying all 10 SEP-41 methods (`allowance`, `approve`, `balance`, `transfer`, `transfer_from`, `burn`, `burn_from`, `decimals`, `name`, `symbol`), plus the SEP-41 compatibility table in `sdk/README.md`.
+- Added SDK migration guide template and `sdk/docs/migrations/0.2-to-0.3.md` for breaking SDK releases (#199).
+- `getEventsPaginated` helper in SDK utils for paginating through RPC events (#173).
+
+- `tooling`: added `@stellarforge-protocol/indexer-graphql` GraphQL API over the indexer exposing balances, holders, and proposals with pagination support (#206).
+- `sdk`: corrected `sdk/README.md` example snippet referencing `contracts.vault` against current `VaultConfig` API (#208).
+- `vault`: enforced maximum fractional share supply cap rejection (`ExceedsMaxSupply`), added exact boundary test verifying deposit at cap passes while cap + 1 fails (#222).
+- `vault`: documented and verified pro-rata underlying return and reconciliation between share supply and holdings on `redeem` (#219).
+
+- `contracts/vault`: verified SEP-41 share token interface entry points (`balance`, `transfer`, `approve`, `transfer_from`, `decimals`, `name`, `symbol`), added `test_sep41_share_token_events_and_allowance_flow` test, and confirmed protocol invariant on share redemption as sole exit mechanism (#217).
+- `contracts/vault`: constructor authorization validation and configuration coverage ensuring admin authentication and share cap validation (#216).
+- `docs/guides/tokenized-real-estate.md` and runnable companion script `sdk/examples/tokenized-real-estate.ts` (#210), demonstrating end-to-end tokenized commercial real estate issuance with KYC compliance screening and registry listing.
+- `testnet-smoke` workflow: added nightly cron schedule (`0 2 * * *`) and live read and write smoke test coverage for `OracleAdapterClient` against testnet deployments (#207).
 - Vault deposits now screen the depositor through the configured compliance contract; the vault documents and tests its pause policy and NAV-per-share calculation, including zero supply. SDK Changesets now open a Version Packages PR for queued releases (#229, #228, #227, #197).
 - The SDK includes runnable testnet examples for mint, transfer, KYC, governance proposals and voting; CI typechecks them and exercises package import/read behavior under Deno 2 and Bun 1 (#188, #185).
 - The SDK's public TypeScript API now requires TSDoc comments in lint, and the NAV reporter's `--json` mode has CLI tests guaranteeing machine-readable stdout with diagnostics on stderr (#187, #190).

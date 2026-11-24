@@ -14,6 +14,8 @@ import {
 import type { Transaction } from "@stellar/stellar-sdk";
 
 import { TransactionExpiredError, TransactionOutcomeUnknownError } from "./errors.js";
+import { SilentLogger } from "./logger.js";
+import type { Logger } from "./logger.js";
 import {
   authEntryAddress,
   authorizeEntries as signAuthEntries,
@@ -66,6 +68,7 @@ export abstract class ContractClient {
   protected readonly server: rpc.Server;
   protected readonly contract: Contract;
   protected readonly clientConfig: StellarForgeConfig;
+  public readonly logger: Logger;
 
   /**
    * @param contractId - Deployed contract address, from `config.contracts`.
@@ -89,12 +92,14 @@ export abstract class ContractClient {
       throw new Error(`contracts.${configKey} address is required`);
     }
     this.clientConfig = config;
+    this.logger = config.logger ?? new SilentLogger();
     this.server = new rpc.Server(config.rpcUrl, { allowHttp: false });
     this.contract = new Contract(contractId);
   }
 
   /** Simulates `method` and returns its raw return value. Touches no ledger state. */
   protected async simulateReadOnly(method: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
+    this.logger.debug(`simulateReadOnly: invoking ${method} with ${args.length} args`);
     // A throwaway account is enough: a simulation is never submitted, so the
     // source needs neither funding nor a real sequence number.
     const dummyKeypair = Keypair.random();
@@ -109,16 +114,52 @@ export abstract class ContractClient {
       .build();
 
     const simResult = await this.server.simulateTransaction(tx);
+    const start = Date.now();
+    let success = false;
+    let err: unknown = undefined;
+    try {
+      // A throwaway account is enough: a simulation is never submitted, so the
+      // source needs neither funding nor a real sequence number.
+      const dummyKeypair = Keypair.random();
+      const dummyAccount = new Account(dummyKeypair.publicKey(), "0");
 
-    if (rpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation error: ${simResult.error}`);
+      const tx = new TransactionBuilder(dummyAccount, {
+        fee: BASE_FEE,
+        networkPassphrase: this.clientConfig.networkPassphrase,
+      })
+        .addOperation(this.contract.call(method, ...args))
+        .setTimeout(SIMULATION_TIMEOUT_SECONDS)
+        .build();
+
+      const simResult = await this.server.simulateTransaction(tx);
+
+      if (rpc.Api.isSimulationError(simResult)) {
+        throw new Error(`Simulation error: ${simResult.error}`);
+      }
+
+      if (!simResult.result) {
+        throw new Error(`No result returned from ${method}`);
+      }
+
+      success = true;
+      return simResult.result.retval;
+    } catch (e) {
+      err = e;
+      throw e;
+    } finally {
+      if (this.clientConfig.onCall) {
+        try {
+          this.clientConfig.onCall({
+            method,
+            durationMs: Date.now() - start,
+            success,
+            error: err,
+          });
+        } catch {
+          // Telemetry errors must never fail client operations
+        }
+      }
     }
-
-    if (!simResult.result) {
-      throw new Error(`No result returned from ${method}`);
-    }
-
-    return simResult.result.retval;
   }
 
   /**

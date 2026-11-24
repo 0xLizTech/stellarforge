@@ -235,7 +235,7 @@ const finalizedTx = await client.finalizeSponsoredTx(sponsored, signedEntries);
 // Query events from RPC for the vault contract using txResult.ledger
 const eventsResponse = await server.getEvents({
   startLedger: txResult.ledger,
-  filters: [{ type: "contract", contractIds: [config.contracts.vault] }],
+  filters: [{ type: "contract", contractIds: [vaultAddress] }],
 });
 const events = decodeVaultEvents(eventsResponse);
 for (const event of events) {

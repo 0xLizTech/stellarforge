@@ -1,4 +1,4 @@
-import { MuxedAccount, StrKey } from "@stellar/stellar-sdk";
+import { MuxedAccount, StrKey, rpc } from "@stellar/stellar-sdk";
 import { createHash } from "node:crypto";
 import { InvalidAddressError } from "./errors.js";
 
@@ -237,4 +237,55 @@ export function hexToBytes32(hex: string): Uint8Array {
 export function truncateAddress(address: string, chars = 5): string {
   if (address.length <= chars * 2 + 3) return address;
   return `${address.slice(0, chars)}...${address.slice(-chars)}`;
+}
+
+// ─── Event Pagination Helper (Issue #173) ──────────────────────────────────
+
+export interface GetEventsPaginationOptions {
+  startLedger: number;
+  filters?: rpc.Server.GetEventsRequest["filters"];
+  limit?: number;
+  maxTotalEvents?: number;
+}
+
+/**
+ * Paginates through RPC events until the cursor terminates or maxTotalEvents is reached.
+ *
+ * @param server - rpc.Server instance
+ * @param options - Pagination options including startLedger, filters, and limits
+ * @returns Array of events retrieved across pages
+ */
+export async function getEventsPaginated(
+  server: rpc.Server,
+  options: GetEventsPaginationOptions,
+): Promise<rpc.Api.GetEventsResponse["events"]> {
+  const allEvents: rpc.Api.GetEventsResponse["events"] = [];
+  const maxTotal = options.maxTotalEvents ?? 1_000;
+  let cursor: string | undefined = undefined;
+
+  while (allEvents.length < maxTotal) {
+    const pageLimit = options.limit ? Math.min(options.limit, maxTotal - allEvents.length) : undefined;
+    const request: rpc.Server.GetEventsRequest = {
+      startLedger: options.startLedger,
+      filters: options.filters,
+      cursor,
+      limit: pageLimit,
+    };
+
+    const res: rpc.Api.GetEventsResponse = await server.getEvents(request);
+    if (!res.events || res.events.length === 0) {
+      break;
+    }
+
+    allEvents.push(...res.events);
+
+    // Stop if we received fewer events than requested or cursor didn't change
+    if (res.cursor && res.cursor !== cursor) {
+      cursor = res.cursor;
+    } else {
+      break;
+    }
+  }
+
+  return allEvents.slice(0, maxTotal);
 }

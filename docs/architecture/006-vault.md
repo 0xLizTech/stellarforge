@@ -31,6 +31,8 @@ Redemption (#58) is the only valid mechanism by which shares leave circulation. 
 - Depositing `X` underlying tokens mints exactly `X × exchange_rate` shares (FR-06-2).
 - Redeeming `Y` shares returns exactly `Y / exchange_rate` underlying tokens (FR-06-3).
 - `exchange_rate` is a positive integer fixed at contract construction. Redemptions must be exact integer multiples of `exchange_rate`.
+- **Rounding Direction:** All conversions favor the vault/protocol over the user to prevent drain exploits. Share minting on deposits rounds down (`floor`), while asset return on redemption rounds down (`floor`), leaving dust with the vault.
+- **First-Depositor Inflation Mitigation:** Standard ERC-4626 style floating share ratio vaults are prone to inflation attacks where an attacker donates assets to skew share pricing. By enforcing a fixed integer exchange rate coupled with tracked internal deposits (`underlying_held`), arbitrary asset donations directly to the contract address cannot skew share pricing or dilute subsequent depositors.
 
 *Reasoning:* If deposit and redemption exchange rates are fixed and decoupled from variable market prices, oracle manipulation cannot extract value from the vault. This also inherently eliminates the ERC-4626 first-depositor inflation attack.
 
