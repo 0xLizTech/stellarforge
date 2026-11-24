@@ -25,6 +25,7 @@ Entry template (include only applicable sections in each release):
 
 ### Added
 
+- `VaultClient` write-path helpers for vault `deposit` and `redeem` (`buildDepositTx`, `deposit`, `buildRedeemTx`, `redeem`, `buildSponsoredDepositTx`, `buildSponsoredRedeemTx`), unit tests covering direct and sponsored modes plus simulation error propagation, and testnet write smoke tests (#245).
 - `VaultClient` in `@stellarforge-protocol/sdk`: completed contract coverage with `checkpointCount`, `supplyCheckpointCount`, `buildTransferAdminTx`/`transferAdmin`, aligned `VaultErrorCode` (1..26) with `contracts/vault/src/error.rs`, added `VaultError.fromCode`, `parseVaultError`, `AdminTransferredEvent`/`FeeEvent` decoding, and unit tests (#244).
 - Vault unit tests for deposit and redeem rounding covering first deposit, tiny and huge amounts, dust shares, overflow boundaries, and multi-holder rounding sequences (#234).
 - A pull-request changelog template and CI check requiring a new `[Unreleased]` entry for code changes (#154).

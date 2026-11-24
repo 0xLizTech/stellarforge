@@ -55,7 +55,7 @@ export class TransactionOutcomeUnknownError extends Error {
  */
 export class InvalidAddressError extends Error {
   readonly address: string;
-  readonly parameterName?: string;
+  readonly parameterName?: string | undefined;
 
   constructor(address: string, parameterName?: string) {
     super(
