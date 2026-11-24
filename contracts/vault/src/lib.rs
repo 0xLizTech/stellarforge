@@ -21,7 +21,9 @@ mod token;
 
 pub use compliance::{ComplianceClient, ComplianceInterface};
 pub use error::VaultError;
-pub use events::{AdminTransferred, Approve, Deposit, Paused, Redeem, SetOracles, Transfer, TransferFrom};
+pub use events::{
+    AdminTransferred, Approve, Deposit, Fee, Paused, Redeem, SetOracles, Transfer, TransferFrom,
+};
 pub use oracle::{
     Asset, NavData, OracleSet, OracleSource, PriceData, SecondaryOracle, Sep40OracleClient,
     Sep40OracleInterface, BPS_DENOMINATOR, NAV_DECIMALS,
@@ -583,22 +585,11 @@ impl VaultContract {
                 if cfg.max_divergence_bps < 1 {
                     panic_with_error!(&env, VaultError::InvalidMetadata);
                 }
-                if cfg.primary.oracle == sec.oracle {
+                if cfg.primary.oracle == *sec {
                     panic_with_error!(&env, VaultError::IdenticalOracleSources);
                 }
 
-                let base1 = match Sep40OracleClient::new(&env, &cfg.primary.oracle).try_base() {
-                    Ok(Ok(b)) => b,
-                    _ => panic_with_error!(&env, VaultError::OracleBaseMismatch),
-                };
-                let base2 = match Sep40OracleClient::new(&env, &sec.oracle).try_base() {
-                    Ok(Ok(b)) => b,
-                    _ => panic_with_error!(&env, VaultError::OracleBaseMismatch),
-                };
-                if base1 != base2 {
-                    panic_with_error!(&env, VaultError::OracleBaseMismatch);
-                }
-                oracles_list.push_back(sec.oracle.clone());
+                oracles_list.push_back(sec.clone());
             }
 
             env.storage().instance().set(&ORACLES_KEY, cfg);
@@ -950,13 +941,18 @@ impl VaultContract {
         }
     }
 
-    fn fetch_source_price(env: &Env, source: &OracleSource, max_staleness: u64) -> (i128, u64) {
-        let client = Sep40OracleClient::new(env, &source.oracle);
+    fn fetch_source_price(
+        env: &Env,
+        oracle: &Address,
+        asset: &Asset,
+        max_staleness: u64,
+    ) -> (i128, u64) {
+        let client = Sep40OracleClient::new(env, oracle);
         let oracle_decimals = match client.try_decimals() {
             Ok(Ok(d)) => d,
             _ => panic_with_error!(env, VaultError::PriceUnavailable),
         };
-        let price_data = match client.try_lastprice(&source.asset) {
+        let price_data = match client.try_lastprice(asset) {
             Ok(Ok(Some(p))) => p,
             _ => panic_with_error!(env, VaultError::PriceUnavailable),
         };
@@ -972,7 +968,8 @@ impl VaultContract {
             panic_with_error!(env, VaultError::StalePrice);
         }
 
-        let normalized = Self::normalize_decimals(env, price_data.price, oracle_decimals, NAV_DECIMALS);
+        let normalized =
+            Self::normalize_decimals(env, price_data.price, oracle_decimals, NAV_DECIMALS);
         (normalized, price_data.timestamp)
     }
 
@@ -1005,10 +1002,20 @@ impl VaultContract {
             None => panic_with_error!(env, VaultError::OracleNotConfigured),
         };
 
-        let (p1, t1) = Self::fetch_source_price(env, &oracle_set.primary, oracle_set.max_staleness_secs);
+        let (p1, t1) = Self::fetch_source_price(
+            env,
+            &oracle_set.primary.oracle,
+            &oracle_set.primary.asset,
+            oracle_set.max_staleness_secs,
+        );
 
-        if let SecondaryOracle::Some(ref sec) = oracle_set.secondary {
-            let (p2, t2) = Self::fetch_source_price(env, sec, oracle_set.max_staleness_secs);
+        if let Some(ref sec) = oracle_set.secondary {
+            let (p2, t2) = Self::fetch_source_price(
+                env,
+                sec,
+                &oracle_set.primary.asset,
+                oracle_set.max_staleness_secs,
+            );
 
             let diff = if p1 >= p2 { p1 - p2 } else { p2 - p1 };
             let min_p = if p1 <= p2 { p1 } else { p2 };

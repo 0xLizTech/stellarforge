@@ -49,6 +49,7 @@ pub enum SecondaryOracle {
 pub struct OracleSet {
     pub primary: OracleSource,
     pub secondary: SecondaryOracle,
+    pub secondary: Option<Address>,
     pub max_staleness_secs: u64,
     pub max_divergence_bps: u32,
 }
