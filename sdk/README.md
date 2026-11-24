@@ -12,8 +12,8 @@ npm install @stellarforge-protocol/sdk
 
 Requires Node.js 22.12 or newer, which is what `@stellar/stellar-sdk` 17 requires. Its CommonJS build loads ESM-only dependencies with `require()`, and Node supports that without a flag only from 22.12.
 
-Supported versions: **22.12 (the exact minimum) and 24 (current LTS)**. CI
-(`.github/workflows/sdk-ci.yml`) runs the test matrix over both. Node.js 20 and
+Supported versions: **Node.js 22.12 or newer and 24 (current LTS)**. CI
+(`.github/workflows/sdk-ci.yml`) tests Node 22.13 and 24. Node.js 20 and
 older are not supported and are not tested — they are below the `engines` floor
 and fail at import time.
 
@@ -41,6 +41,33 @@ would lose precision silently. Use `toStroops` and `fromStroops` to convert.
 `toStroops` throws rather than guess. It rejects anything but plain decimal
 notation, more decimal places than the asset allows, and a `number` that is not
 a safe integer, so pass user-entered amounts as strings.
+
+## Runnable testnet examples
+
+The [`examples/`](examples/) directory has complete mint, transfer, KYC,
+governance proposal, and vote flows. They submit real testnet transactions, so
+use a funded testnet signer and the matching deployed contract IDs. Never use a
+mainnet secret. Install dependencies with `npm ci` in this directory, then run
+the chosen script with `npm run example -- examples/mint.ts` (replace `mint.ts`
+with `transfer.ts`, `kyc.ts`, `propose.ts`, or `vote.ts`).
+
+Every example needs `SIGNER_SECRET` and the contract-specific ID:
+`RWA_ASSET_CONTRACT_ID`, `COMPLIANCE_CONTRACT_ID`, or
+`GOVERNANCE_CONTRACT_ID`. `SOROBAN_RPC_URL` optionally overrides the public testnet RPC. CI
+typechecks all examples without sending transactions using
+`npm run examples:check`.
+
+| Example | Required action variables |
+|---|---|
+| `mint.ts` | `MINT_TO_ADDRESS`, `MINT_AMOUNT` |
+| `transfer.ts` | `TRANSFER_TO_ADDRESS`, `TRANSFER_AMOUNT` |
+| `kyc.ts` | `KYC_SUBJECT_ADDRESS`, `KYC_LEVEL` |
+| `propose.ts` | `PROPOSAL_TITLE`, `PROPOSAL_DESCRIPTION_SHA256` (optional; defaults shown in code) |
+| `vote.ts` | `PROPOSAL_ID`, `VOTE_SUPPORT` |
+
+Alternate runtime smoke coverage is provided for Deno 2 and Bun 1. It imports
+the built package and performs a read through an in-memory testnet RPC response;
+it does not need a deployed contract or send a transaction.
 
 ## Networks
 
@@ -71,12 +98,24 @@ const tx = await client.buildTransferTx(from, to, toStroops("100", meta.decimals
 const signedXdr = await freighter.signTransaction(tx.toXdr(), { networkPassphrase });
 ```
 
-**The bare method signs and submits**, for server-side automation.
+**The bare method signs and submits** through a configured signer. `KeypairSigner`
+supports server-side automation; `FreighterSigner` adapts Freighter's
+`signTransaction` API without adding a wallet dependency to the SDK.
 
 ```typescript
-const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signerSecret });
+import { FreighterSigner, RwaAssetClient } from "@stellarforge-protocol/sdk";
+
+const signer = new FreighterSigner(publicKey, (xdr, options) =>
+  freighter.signTransaction(xdr, options),
+);
+const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signer });
 const { hash, ledger } = await client.transfer(from, to, amount);
 ```
+
+For server-side keypairs, use `new KeypairSigner(keypair)` or
+`KeypairSigner.fromSecret(secret)`. The older `signerSecret` config option remains
+supported for compatibility. Every submitting write, including sponsored
+submissions, uses the configured signer.
 
 A bare write waits for the transaction to settle, for up to its 180-second
 validity window plus 30 seconds. If it has not settled by then, the error type
@@ -103,8 +142,10 @@ Two things worth knowing before you use either:
 | `RwaAssetClient` | `rwa-asset` | Balances, metadata, allowances; mint, burn, burnFrom, transfer, approve (with an expiry ledger), transferFrom. Admin: setIssuer, setPaused, updateMetadata, setCompliance |
 | `ComplianceClient` | `compliance` | `isCompliant` is the pure query, never the TTL-extending `screen`; `getKyc` reads a stored record. Admin: setKyc, revokeKyc |
 | `RegistryClient` | `registry` | Asset directory, paged with `listAssets(start, limit)` or walked with `listAllAssets()`; `register` and `setActive` are admin-only |
-| `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
+| `GovernanceClient` | `governance` | Proposals (walked with `proposals()`) and voting — **see the warning below** |
 | `VaultClient` | `vault` | Real estate / RWA share vault: config, balances, historical checkpoints, NAV, sponsored deposits/redeems, and typed event decoders |
+| `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
+| `VaultClient` | `vault` | Real estate / RWA share vault: config, balances, previews (`previewDeposit`/`previewRedeem`), historical checkpoints (`balanceAt`/`totalSupplyAt`/`checkpointCount`/`supplyCheckpointCount`), NAV, admin (`setPaused`/`setOracles`/`transferAdmin`), sponsored deposits/redeems, typed errors (`VaultErrorCode`/`parseVaultError`), and event decoders |
 | `OracleAdapterClient` | `oracle-adapter` | SEP-40 NAV feed — **see [Oracle adapter](#oracle-adapter)** |
 
 ## Vault & Auth-Tree Verification
@@ -136,8 +177,16 @@ const navPerShare = await client.navPerShare();
 const shares = sharesForDeposit(assets, config.exchangeRate);
 const redeemableBalance = maxRedeemable(userBalance, lockedUntilLedger, currentLedger);
 
-// 3. Sponsored deposit with auth-tree verification
+// 3. Direct deposit and redeem (build*Tx for wallets, bare method for signers)
+const depositTx = await client.buildDepositTx(depositor, depositAmount);
+const depositRes = await client.deposit(depositor, depositAmount);
+const redeemRes = await client.redeem(depositor, shares);
+
+// 4. Sponsored deposit / redeem with auth-tree verification
 const sponsored = await client.buildSponsoredDepositTx(depositor, depositAmount, {
+  feeSource: relayer,
+});
+const sponsoredRedeem = await client.buildSponsoredRedeemTx(depositor, shares, {
   feeSource: relayer,
 });
 
@@ -293,6 +342,59 @@ Weight is deliberately unverified rather than read from a live balance, which
 would be worse: a holder could vote, transfer the same tokens onward, and vote
 again from the recipient. Correct weighting needs balances snapshotted at
 proposal creation, which arrives with `SFORGE` in Phase 2/3.
+
+## Subpath Exports & Tree-Shaking
+
+The SDK is marked with `"sideEffects": false` and provides dedicated subpath exports so modern bundlers can shake out unreferenced modules. Importing a specific client or utility bundle ensures unneeded contract clients (such as governance or vault logic) are omitted from your application bundle.
+
+Available export paths:
+- `@stellarforge-protocol/sdk` (full bundle with all clients and utilities)
+- `@stellarforge-protocol/sdk/client` (`RwaAssetClient`, `ComplianceClient`)
+- `@stellarforge-protocol/sdk/governance` (`GovernanceClient`, types)
+- `@stellarforge-protocol/sdk/registry` (`RegistryClient`, types)
+- `@stellarforge-protocol/sdk/vault` (`VaultClient`, pure helpers, event decoders)
+- `@stellarforge-protocol/sdk/oracle` (`OracleAdapterClient`, pure helpers, codecs)
+- `@stellarforge-protocol/sdk/sponsored` (sponsored write auth entry helpers)
+- `@stellarforge-protocol/sdk/errors` (structured error classes)
+- `@stellarforge-protocol/sdk/types` (type definitions and network configurations)
+- `@stellarforge-protocol/sdk/utils` (pure decimal and address utilities)
+
+```typescript
+// Granular subpath import - pulls in only the RWA client
+import { RwaAssetClient } from "@stellarforge-protocol/sdk/client";
+import { toStroops } from "@stellarforge-protocol/sdk/utils";
+```
+
+## Bundle Size Tracking & Budgets
+
+Bundle sizes are tracked with `size-limit` to prevent bundle bloat in browser dApps. Budgets are strictly enforced in CI:
+- Full SDK (CJS): `<= 100 KB`
+- Full SDK (ESM index): `<= 5 KB`
+- RWA Client (CJS): `<= 40 KB`
+- Vault Client (CJS): `<= 45 KB`
+- Oracle Client (CJS): `<= 40 KB`
+- Governance Client (CJS): `<= 30 KB`
+
+Run `npm run size` locally to measure and verify bundles against the configured limits.
+
+## Browser Support & Compatibility
+
+The SDK is designed to run in both Node.js (22.12+) and modern browser environments without requiring Node built-ins or silent polyfills.
+
+### Supported Browsers
+- **Chrome / Chromium** 109+
+- **Edge** 109+
+- **Firefox** 115+ (ESR)
+- **Safari / WebKit** 16.4+
+
+### Browser Environment Principles
+- **No Silent Polyfills:** The SDK avoids Node-specific APIs (`fs`, `child_process`, `net`, `Buffer`). It relies on standard Web Platform APIs (`fetch`, Web Crypto via `crypto.subtle`, `BigInt`).
+- **Wallet-Centric Signing:** Browsers should never handle raw signer secrets. Instead, use the unsigned `build*Tx` methods (e.g. `client.buildTransferTx`, `client.buildSponsoredDepositTx`) to prepare transactions, and pass the resulting XDR to browser extension wallets (such as Freighter) for user approval and signing:
+  ```typescript
+  const tx = await client.buildTransferTx(from, to, amount);
+  const signedXdr = await window.freighter.signTransaction(tx.toXdr(), { networkPassphrase });
+  ```
+- **Automated Verification:** The browser suite runs under a DOM/Web runner (`happy-dom`) via `npm run test:browser` to catch regressions where Node-only APIs might slip in.
 
 ## Status
 

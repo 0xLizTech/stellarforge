@@ -62,4 +62,10 @@ pub enum VaultError {
     OracleNotConfigured = 25,
     /// Queried ledger sequence has not yet closed (ledger >= current ledger sequence).
     LedgerNotClosed = 26,
+    /// A fee rate exceeded the 500 bps limit.
+    InvalidFeeRate = 27,
+    /// A non-zero fee was configured without a recipient.
+    MissingFeeRecipient = 28,
+    /// The vault cannot receive its own underlying fee payments.
+    InvalidFeeRecipient = 29,
 }

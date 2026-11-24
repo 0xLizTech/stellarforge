@@ -30,6 +30,7 @@ function assetEntryToScVal(entry: AssetEntry): xdr.ScVal {
  * {@link RwaAssetClient}.
  */
 export class RegistryClient extends ContractClient {
+  /** Creates a registry client for the configured deployment. */
   constructor(config: StellarForgeConfig) {
     super(config, config.contracts.registry, "registry");
   }
@@ -103,6 +104,24 @@ export class RegistryClient extends ContractClient {
     }
   }
 
+  /**
+   * Async generator yielding registered asset addresses across pages.
+   */
+  async *paginateAssets(pageSize = REGISTRY_MAX_PAGE_SIZE): AsyncGenerator<string, void, unknown> {
+    const limit = Math.min(pageSize, REGISTRY_MAX_PAGE_SIZE);
+    let start = 0;
+    while (true) {
+      const page = await this.listAssets(start, limit);
+      for (const asset of page) {
+        yield asset;
+      }
+      if (page.length < limit) {
+        break;
+      }
+      start += page.length;
+    }
+  }
+
   /** The address permitted to register assets and change their active flag. */
   async admin(): Promise<string> {
     const result = await this.simulateReadOnly("admin", []);
@@ -127,6 +146,7 @@ export class RegistryClient extends ContractClient {
     return this.buildWriteTx(admin, "register", [assetEntryToScVal(entry)]);
   }
 
+  /** Registers or replaces an asset entry. */
   async register(admin: string, entry: AssetEntry): Promise<TxResult> {
     return this.submit(await this.buildRegisterTx(admin, entry), admin);
   }
@@ -148,6 +168,7 @@ export class RegistryClient extends ContractClient {
     ]);
   }
 
+  /** Marks a registered asset active or inactive. */
   async setActive(admin: string, contractAddress: string, active: boolean): Promise<TxResult> {
     return this.submit(await this.buildSetActiveTx(admin, contractAddress, active), admin);
   }
@@ -161,6 +182,7 @@ export class RegistryClient extends ContractClient {
     return this.buildWriteTx(admin, "set_paused", [nativeToScVal(paused)]);
   }
 
+  /** Enables or disables the registry's emergency pause. */
   async setPaused(admin: string, paused: boolean): Promise<TxResult> {
     return this.submit(await this.buildSetPausedTx(admin, paused), admin);
   }

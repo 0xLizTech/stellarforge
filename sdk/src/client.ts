@@ -44,12 +44,14 @@ function kycRecordToScVal(record: KycRecord): xdr.ScVal {
  * optional `signerSecret` for automated/server contexts only.
  */
 export class RwaAssetClient extends ContractClient {
+  /** Creates a token client for the configured asset deployment. */
   constructor(config: StellarForgeConfig) {
     super(config, config.contracts.rwaAsset, "rwaAsset");
   }
 
   // ── Read-only queries ──────────────────────────────────────────────────────
 
+  /** Returns the token balance held by `ownerAddress`. */
   async balance(ownerAddress: string): Promise<bigint> {
     const result = await this.simulateReadOnly("balance", [
       nativeToScVal(ownerAddress, { type: "address" }),
@@ -57,11 +59,13 @@ export class RwaAssetClient extends ContractClient {
     return scValToNative(result) as bigint;
   }
 
+  /** Returns the current circulating token supply. */
   async totalSupply(): Promise<bigint> {
     const result = await this.simulateReadOnly("total_supply", []);
     return scValToNative(result) as bigint;
   }
 
+  /** Returns the metadata stored by the asset contract. */
   async metadata(): Promise<AssetMetadata> {
     const result = await this.simulateReadOnly("metadata", []);
     const native = scValToNative(result) as Record<string, unknown>;
@@ -75,11 +79,13 @@ export class RwaAssetClient extends ContractClient {
     };
   }
 
+  /** Reports whether the asset contract is paused. */
   async isPaused(): Promise<boolean> {
     const result = await this.simulateReadOnly("paused", []);
     return scValToNative(result) as boolean;
   }
 
+  /** Reports whether `address` has permission to mint. */
   async isIssuer(address: string): Promise<boolean> {
     const result = await this.simulateReadOnly("is_issuer", [
       nativeToScVal(address, { type: "address" }),
@@ -87,6 +93,7 @@ export class RwaAssetClient extends ContractClient {
     return scValToNative(result) as boolean;
   }
 
+  /** Returns the live allowance from `ownerAddress` to `spenderAddress`. */
   async allowance(ownerAddress: string, spenderAddress: string): Promise<bigint> {
     const result = await this.simulateReadOnly("allowance", [
       nativeToScVal(ownerAddress, { type: "address" }),
@@ -146,6 +153,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Mints `amount` to `to`, authorized and paid for by `issuer`. */
   async mint(issuer: string, to: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildMintTx(issuer, to, amount), issuer);
   }
@@ -158,6 +166,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Burns `amount` from `from`'s balance. */
   async burn(from: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildBurnTx(from, amount), from);
   }
@@ -171,6 +180,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Burns from `from` using the allowance authorized by `spender`. */
   async burnFrom(spender: string, from: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildBurnFromTx(spender, from, amount), spender);
   }
@@ -184,6 +194,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Transfers `amount` from `from` to `to`. */
   async transfer(from: string, to: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildTransferTx(from, to, amount), from);
   }
@@ -208,6 +219,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Sets an allowance that remains valid through `liveUntilLedger`. */
   async approve(
     owner: string,
     spender: string,
@@ -232,6 +244,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Transfers tokens using `spender`'s allowance from `from`. */
   async transferFrom(
     spender: string,
     from: string,
@@ -350,6 +363,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Grants or revokes the issuer role for `issuer`. */
   async setIssuer(admin: string, issuer: string, approved: boolean): Promise<TxResult> {
     return this.submit(await this.buildSetIssuerTx(admin, issuer, approved), admin);
   }
@@ -362,6 +376,7 @@ export class RwaAssetClient extends ContractClient {
     return this.buildWriteTx(admin, "set_paused", [nativeToScVal(paused)]);
   }
 
+  /** Enables or disables the asset's emergency pause. */
   async setPaused(admin: string, paused: boolean): Promise<TxResult> {
     return this.submit(await this.buildSetPausedTx(admin, paused), admin);
   }
@@ -378,6 +393,7 @@ export class RwaAssetClient extends ContractClient {
     return this.buildWriteTx(admin, "update_metadata", [assetMetadataToScVal(metadata)]);
   }
 
+  /** Updates mutable asset metadata, subject to contract validation. */
   async updateMetadata(admin: string, metadata: AssetMetadata): Promise<TxResult> {
     return this.submit(await this.buildUpdateMetadataTx(admin, metadata), admin);
   }
@@ -401,6 +417,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Configures transfer screening through the compliance contract. */
   async setCompliance(
     admin: string,
     compliance: string | null,
@@ -421,6 +438,7 @@ export class RwaAssetClient extends ContractClient {
  * `buildProposeAdminTx` / `buildAcceptAdminTx` pair.
  */
 export class ComplianceClient extends ContractClient {
+  /** Creates a compliance client for the configured deployment. */
   constructor(config: StellarForgeConfig) {
     super(config, config.contracts.compliance, "compliance");
   }
@@ -485,6 +503,7 @@ export class ComplianceClient extends ContractClient {
     ]);
   }
 
+  /** Stores or replaces the compliance record for `subject`. */
   async setKyc(admin: string, subject: string, record: KycRecord): Promise<TxResult> {
     return this.submit(await this.buildSetKycTx(admin, subject, record), admin);
   }
@@ -497,6 +516,7 @@ export class ComplianceClient extends ContractClient {
     return this.buildWriteTx(admin, "revoke_kyc", [nativeToScVal(subject, { type: "address" })]);
   }
 
+  /** Removes the stored compliance record for `subject`. */
   async revokeKyc(admin: string, subject: string): Promise<TxResult> {
     return this.submit(await this.buildRevokeKycTx(admin, subject), admin);
   }
