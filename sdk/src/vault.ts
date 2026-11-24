@@ -810,7 +810,12 @@ export class VaultClient extends ContractClient {
   // ── Write operations ───────────────────────────────────────────────────────
 
   /**
-   * Builds a transaction depositing `amount` underlying RWA tokens to mint fractional shares.
+   * Builds and simulates a transaction depositing `amount` underlying RWA tokens
+   * to mint fractional shares.
+   *
+   * @param depositor - Address authorizing the deposit and sourcing the transaction.
+   * @param amount - Positive amount of underlying RWA tokens to deposit (in stroops).
+   * @returns A prepared, unsigned transaction ready for signing.
    */
   async buildDepositTx(depositor: string, amount: bigint): Promise<Transaction> {
     return this.buildWriteTx(depositor, "deposit", [
@@ -819,13 +824,25 @@ export class VaultClient extends ContractClient {
     ]);
   }
 
-  /** Deposits `amount` underlying tokens and submits the transaction. */
+  /**
+   * Deposits `amount` underlying RWA tokens to mint fractional shares, signing
+   * and submitting the transaction with the configured signer.
+   *
+   * @param depositor - Address authorizing the deposit and sourcing the transaction.
+   * @param amount - Positive amount of underlying RWA tokens to deposit (in stroops).
+   * @returns The submitted transaction hash and closing ledger.
+   */
   async deposit(depositor: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildDepositTx(depositor, amount), depositor);
   }
 
   /**
-   * Builds a transaction redeeming `shares` fractional shares for underlying RWA tokens.
+   * Builds and simulates a transaction redeeming `shares` fractional shares for
+   * underlying RWA tokens.
+   *
+   * @param redeemer - Address authorizing the redemption and sourcing the transaction.
+   * @param shares - Positive share count to burn (must be a multiple of the exchange rate).
+   * @returns A prepared, unsigned transaction ready for signing.
    */
   async buildRedeemTx(redeemer: string, shares: bigint): Promise<Transaction> {
     return this.buildWriteTx(redeemer, "redeem", [
@@ -834,7 +851,14 @@ export class VaultClient extends ContractClient {
     ]);
   }
 
-  /** Redeems `shares` fractional shares and submits the transaction. */
+  /**
+   * Redeems `shares` fractional shares for underlying RWA tokens, signing and
+   * submitting the transaction with the configured signer.
+   *
+   * @param redeemer - Address authorizing the redemption and sourcing the transaction.
+   * @param shares - Positive share count to burn (must be a multiple of the exchange rate).
+   * @returns The submitted transaction hash and closing ledger.
+   */
   async redeem(redeemer: string, shares: bigint): Promise<TxResult> {
     return this.submit(await this.buildRedeemTx(redeemer, shares), redeemer);
   }
@@ -967,7 +991,15 @@ export class VaultClient extends ContractClient {
     ]);
   }
 
-  /** Builds an unsigned sponsored redemption transaction. */
+  /**
+   * Builds an unsigned sponsored redemption transaction.
+   * Sourced and paid for by `feeSource`, while `redeemer` authorizes burning shares.
+   *
+   * @param redeemer - Address authorizing the redemption.
+   * @param shares - Positive share count to burn (must be a multiple of the exchange rate).
+   * @param options - Sponsorship options specifying the `feeSource` paying transaction fees.
+   * @returns A `SponsoredTransaction` whose `authEntries` must be signed by `redeemer`.
+   */
   async buildSponsoredRedeemTx(
     redeemer: string,
     shares: bigint,

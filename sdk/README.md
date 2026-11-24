@@ -150,8 +150,16 @@ const navPerShare = await client.navPerShare();
 const shares = sharesForDeposit(assets, config.exchangeRate);
 const redeemableBalance = maxRedeemable(userBalance, lockedUntilLedger, currentLedger);
 
-// 3. Sponsored deposit with auth-tree verification
+// 3. Direct deposit and redeem (build*Tx for wallets, bare method for signers)
+const depositTx = await client.buildDepositTx(depositor, depositAmount);
+const depositRes = await client.deposit(depositor, depositAmount);
+const redeemRes = await client.redeem(depositor, shares);
+
+// 4. Sponsored deposit / redeem with auth-tree verification
 const sponsored = await client.buildSponsoredDepositTx(depositor, depositAmount, {
+  feeSource: relayer,
+});
+const sponsoredRedeem = await client.buildSponsoredRedeemTx(depositor, shares, {
   feeSource: relayer,
 });
 

@@ -468,6 +468,138 @@ describe("VaultClient writes", () => {
     expect((await client.setPaused(FEE_PAYER, true)).hash).toBe(SUBMITTED_HASH);
     expect((await client.setOracles(FEE_PAYER, [ORACLE_ID])).hash).toBe(SUBMITTED_HASH);
   });
+
+  it("buildDepositTx and deposit propagate simulation errors without submitting", async () => {
+    const sendSpy = vi.spyOn(rpc.Server.prototype, "sendTransaction");
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    vi.spyOn(rpc.Server.prototype, "prepareTransaction").mockRejectedValue(
+      new Error("Simulation error: HostError: Error(Contract, #7)"),
+    );
+
+    await expect(client.buildDepositTx(FEE_PAYER, 5_000_000n)).rejects.toThrow(/Error\(Contract, #7\)/);
+    await expect(client.deposit(FEE_PAYER, 5_000_000n)).rejects.toThrow(/Error\(Contract, #7\)/);
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("buildRedeemTx and redeem propagate simulation errors without submitting", async () => {
+    const sendSpy = vi.spyOn(rpc.Server.prototype, "sendTransaction");
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    vi.spyOn(rpc.Server.prototype, "prepareTransaction").mockRejectedValue(
+      new Error("Simulation error: HostError: Error(Contract, #14)"),
+    );
+
+    await expect(client.buildRedeemTx(FEE_PAYER, 10_000n)).rejects.toThrow(/Error\(Contract, #14\)/);
+    await expect(client.redeem(FEE_PAYER, 10_000n)).rejects.toThrow(/Error\(Contract, #14\)/);
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("buildSponsoredDepositTx builds a sponsored deposit sourced by feeSource", async () => {
+    const entry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
+        new xdr.SorobanAddressCredentials({
+          address: new Address(DEPOSITOR).toScAddress(),
+          nonce: 1n,
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(VAULT_ID).toScAddress(),
+            functionName: "deposit",
+            args: [
+              nativeToScVal(DEPOSITOR, { type: "address" }),
+              nativeToScVal(5_000_000n, { type: "i128" }),
+            ],
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
+
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    vi.spyOn(rpc.Server.prototype, "simulateTransaction").mockResolvedValue({
+      _parsed: true,
+      id: "1",
+      latestLedger: 1_000,
+      minResourceFee: "5000",
+      transactionData: new SorobanDataBuilder(),
+      events: [],
+      result: { retval: nativeToScVal(50_000_000n, { type: "i128" }), auth: [entry] },
+    } as unknown as rpc.Api.SimulateTransactionResponse);
+
+    const sponsored = await client.buildSponsoredDepositTx(DEPOSITOR, 5_000_000n, {
+      feeSource: FEE_PAYER,
+    });
+    expect(sponsored.transaction.source).toBe(FEE_PAYER);
+    expect(sponsored.authorizers).toEqual([DEPOSITOR]);
+    expect(sponsored.authEntries).toHaveLength(1);
+    const op = builtInvocation(sponsored.transaction);
+    expect(op.fn).toBe("deposit");
+    expect(op.args).toEqual([DEPOSITOR, 5_000_000n]);
+  });
+
+  it("buildSponsoredRedeemTx builds a sponsored redeem sourced by feeSource", async () => {
+    const entry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
+        new xdr.SorobanAddressCredentials({
+          address: new Address(DEPOSITOR).toScAddress(),
+          nonce: 2n,
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(VAULT_ID).toScAddress(),
+            functionName: "redeem",
+            args: [
+              nativeToScVal(DEPOSITOR, { type: "address" }),
+              nativeToScVal(50_000_000n, { type: "i128" }),
+            ],
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
+
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    vi.spyOn(rpc.Server.prototype, "simulateTransaction").mockResolvedValue({
+      _parsed: true,
+      id: "1",
+      latestLedger: 1_000,
+      minResourceFee: "5000",
+      transactionData: new SorobanDataBuilder(),
+      events: [],
+      result: { retval: nativeToScVal(5_000_000n, { type: "i128" }), auth: [entry] },
+    } as unknown as rpc.Api.SimulateTransactionResponse);
+
+    const sponsored = await client.buildSponsoredRedeemTx(DEPOSITOR, 50_000_000n, {
+      feeSource: FEE_PAYER,
+    });
+    expect(sponsored.transaction.source).toBe(FEE_PAYER);
+    expect(sponsored.authorizers).toEqual([DEPOSITOR]);
+    expect(sponsored.authEntries).toHaveLength(1);
+    const op = builtInvocation(sponsored.transaction);
+    expect(op.fn).toBe("redeem");
+    expect(op.args).toEqual([DEPOSITOR, 50_000_000n]);
+  });
+
+  it("buildSponsoredDepositTx and buildSponsoredRedeemTx reject on simulation error", async () => {
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    stubSimulation(fails("HostError: Error(Contract, #15)"));
+
+    await expect(
+      client.buildSponsoredDepositTx(DEPOSITOR, 999_999_999n, { feeSource: FEE_PAYER }),
+    ).rejects.toThrow(/Error\(Contract, #15\)/);
+
+    stubSimulation(fails("HostError: Error(Contract, #17)"));
+    await expect(
+      client.buildSponsoredRedeemTx(DEPOSITOR, 3n, { feeSource: FEE_PAYER }),
+    ).rejects.toThrow(/Error\(Contract, #17\)/);
+  });
 });
 
 // ─── 4. Auth-Tree Verification & describeAuthTree ─────────────────────────────
