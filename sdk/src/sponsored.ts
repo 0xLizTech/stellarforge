@@ -209,10 +209,29 @@ export function checkInvocationTree(
 /**
  * Formats a SorobanAuthorizedInvocation into a human-readable string.
  */
+function describeFunction(fn: xdr.SorobanAuthorizedFunction): string {
+  if (fn.type !== "sorobanAuthorizedFunctionTypeContractFn") return fn.type;
+
+  const contractFn = fn.contractFn;
+  const contractId = Address.fromScAddress(contractFn.contractAddress).toString();
+  const fnName = contractFn.functionName.toString();
+  const args = contractFn.args.map((arg) => {
+    try {
+      const native = scValToNative(arg);
+      if (typeof native === "bigint") return `${native.toString()}n`;
+      return JSON.stringify(native);
+    } catch {
+      return arg.toXdr("base64");
+    }
+  });
+  return `${contractId}.${fnName}(${args.join(", ")})`;
+}
+
 function describeInvocation(inv: xdr.SorobanAuthorizedInvocation, prefix = "", isLast = true): string[] {
   const lines: string[] = [];
+  const callDesc = describeFunction(inv.function);
   const fn = inv.function;
-  let callDesc = "unknown";
+  let callDesc: string;
 
   if (fn.type === "sorobanAuthorizedFunctionTypeContractFn") {
     const contractFn = fn.contractFn;
@@ -259,8 +278,9 @@ export function describeAuthTree(entry: xdr.SorobanAuthorizationEntry): string {
   const lines: string[] = [`Authorizer: ${authorizer}`];
 
   const rootInv = entry.rootInvocation;
+  const rootDesc = describeFunction(rootInv.function);
   const fn = rootInv.function;
-  let rootDesc = "unknown";
+  let rootDesc: string;
 
   if (fn.type === "sorobanAuthorizedFunctionTypeContractFn") {
     const contractFn = fn.contractFn;
@@ -317,6 +337,7 @@ export function checkSignedAuthEntry(
   } catch (err: unknown) {
     throw new Error(
       `Authorization entry ${index} authorizes a different invocation than the one built: ${(err as Error).message}`,
+      { cause: err },
     );
   }
 

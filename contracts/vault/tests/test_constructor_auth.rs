@@ -13,7 +13,7 @@ use soroban_sdk::{
     Address, Env, IntoVal, String, Symbol,
 };
 
-use vault::{VaultConfig, VaultContract};
+use contracts_vault::{VaultConfig, VaultContract};
 
 #[contract]
 struct MockUnderlying;
