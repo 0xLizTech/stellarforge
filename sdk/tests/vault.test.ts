@@ -15,8 +15,11 @@ import {
 
 import {
   VaultClient,
+  VaultError,
   VaultErrorCode,
+  VAULT_ERROR_MESSAGES,
   NavRefusalError,
+  parseVaultError,
   sharesForDeposit,
   underlyingForRedeem,
   maxRedeemable,
@@ -373,6 +376,28 @@ describe("VaultClient reads", () => {
     stubSimulation(succeeds(nativeToScVal(9_000_000n, { type: "i128" })));
     expect(await client.totalSupplyAt(1000)).toBe(9_000_000n);
   });
+
+  it("decodes checkpointCount and supplyCheckpointCount", async () => {
+    stubSimulation(succeeds(nativeToScVal(3, { type: "u32" })));
+    expect(await client.checkpointCount(DEPOSITOR)).toBe(3);
+
+    stubSimulation(succeeds(nativeToScVal(5, { type: "u32" })));
+    expect(await client.supplyCheckpointCount()).toBe(5);
+  });
+
+  it("decodes previewDeposit, previewRedeem, maxDeposit, and maxRedeem", async () => {
+    stubSimulation(succeeds(nativeToScVal(20_000n, { type: "i128" })));
+    expect(await client.previewDeposit(2_000n)).toBe(20_000n);
+
+    stubSimulation(succeeds(nativeToScVal(2_000n, { type: "i128" })));
+    expect(await client.previewRedeem(20_000n)).toBe(2_000n);
+
+    stubSimulation(succeeds(nativeToScVal(100_000n, { type: "i128" })));
+    expect(await client.maxDeposit(DEPOSITOR)).toBe(100_000n);
+
+    stubSimulation(succeeds(nativeToScVal(50_000n, { type: "i128" })));
+    expect(await client.maxRedeem(DEPOSITOR)).toBe(50_000n);
+  });
 });
 
 // ─── 3. VaultClient Writes ─────────────────────────────────────────────────────
@@ -442,6 +467,165 @@ describe("VaultClient writes", () => {
     const op = builtInvocation(tx);
     expect(op.fn).toBe("set_oracles");
     expect(op.args).toEqual([FEE_PAYER, [ORACLE_ID]]);
+  });
+
+  it("buildTransferAdminTx constructs exact contract args", async () => {
+    stubWritePath();
+    const tx = await client.buildTransferAdminTx(FEE_PAYER, ADMIN);
+    const op = builtInvocation(tx);
+    expect(op.fn).toBe("transfer_admin");
+    expect(op.args).toEqual([ADMIN]);
+  });
+
+  it("transferAdmin submits transaction", async () => {
+    stubWritePath();
+    const res = await client.transferAdmin(FEE_PAYER, ADMIN);
+    expect(res.hash).toBe(SUBMITTED_HASH);
+    expect(res.ledger).toBe(42);
+  });
+
+  it("redeem, transfer, approve, transferFrom, setPaused, and setOracles submit transactions", async () => {
+    stubWritePath();
+    expect((await client.redeem(FEE_PAYER, 10_000n)).hash).toBe(SUBMITTED_HASH);
+    expect((await client.transfer(FEE_PAYER, RECIPIENT, 1_000n)).hash).toBe(SUBMITTED_HASH);
+    expect((await client.approve(FEE_PAYER, SPENDER, 2_000n, 5000)).hash).toBe(SUBMITTED_HASH);
+    expect((await client.transferFrom(FEE_PAYER, DEPOSITOR, RECIPIENT, 500n)).hash).toBe(
+      SUBMITTED_HASH,
+    );
+    expect((await client.setPaused(FEE_PAYER, true)).hash).toBe(SUBMITTED_HASH);
+    expect((await client.setOracles(FEE_PAYER, [ORACLE_ID])).hash).toBe(SUBMITTED_HASH);
+  });
+
+  it("buildDepositTx and deposit propagate simulation errors without submitting", async () => {
+    const sendSpy = vi.spyOn(rpc.Server.prototype, "sendTransaction");
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    vi.spyOn(rpc.Server.prototype, "prepareTransaction").mockRejectedValue(
+      new Error("Simulation error: HostError: Error(Contract, #7)"),
+    );
+
+    await expect(client.buildDepositTx(FEE_PAYER, 5_000_000n)).rejects.toThrow(/Error\(Contract, #7\)/);
+    await expect(client.deposit(FEE_PAYER, 5_000_000n)).rejects.toThrow(/Error\(Contract, #7\)/);
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("buildRedeemTx and redeem propagate simulation errors without submitting", async () => {
+    const sendSpy = vi.spyOn(rpc.Server.prototype, "sendTransaction");
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    vi.spyOn(rpc.Server.prototype, "prepareTransaction").mockRejectedValue(
+      new Error("Simulation error: HostError: Error(Contract, #14)"),
+    );
+
+    await expect(client.buildRedeemTx(FEE_PAYER, 10_000n)).rejects.toThrow(/Error\(Contract, #14\)/);
+    await expect(client.redeem(FEE_PAYER, 10_000n)).rejects.toThrow(/Error\(Contract, #14\)/);
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("buildSponsoredDepositTx builds a sponsored deposit sourced by feeSource", async () => {
+    const entry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
+        new xdr.SorobanAddressCredentials({
+          address: new Address(DEPOSITOR).toScAddress(),
+          nonce: 1n,
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(VAULT_ID).toScAddress(),
+            functionName: "deposit",
+            args: [
+              nativeToScVal(DEPOSITOR, { type: "address" }),
+              nativeToScVal(5_000_000n, { type: "i128" }),
+            ],
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
+
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    vi.spyOn(rpc.Server.prototype, "simulateTransaction").mockResolvedValue({
+      _parsed: true,
+      id: "1",
+      latestLedger: 1_000,
+      minResourceFee: "5000",
+      transactionData: new SorobanDataBuilder(),
+      events: [],
+      result: { retval: nativeToScVal(50_000_000n, { type: "i128" }), auth: [entry] },
+    } as unknown as rpc.Api.SimulateTransactionResponse);
+
+    const sponsored = await client.buildSponsoredDepositTx(DEPOSITOR, 5_000_000n, {
+      feeSource: FEE_PAYER,
+    });
+    expect(sponsored.transaction.source).toBe(FEE_PAYER);
+    expect(sponsored.authorizers).toEqual([DEPOSITOR]);
+    expect(sponsored.authEntries).toHaveLength(1);
+    const op = builtInvocation(sponsored.transaction);
+    expect(op.fn).toBe("deposit");
+    expect(op.args).toEqual([DEPOSITOR, 5_000_000n]);
+  });
+
+  it("buildSponsoredRedeemTx builds a sponsored redeem sourced by feeSource", async () => {
+    const entry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddressV2(
+        new xdr.SorobanAddressCredentials({
+          address: new Address(DEPOSITOR).toScAddress(),
+          nonce: 2n,
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(VAULT_ID).toScAddress(),
+            functionName: "redeem",
+            args: [
+              nativeToScVal(DEPOSITOR, { type: "address" }),
+              nativeToScVal(50_000_000n, { type: "i128" }),
+            ],
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
+
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    vi.spyOn(rpc.Server.prototype, "simulateTransaction").mockResolvedValue({
+      _parsed: true,
+      id: "1",
+      latestLedger: 1_000,
+      minResourceFee: "5000",
+      transactionData: new SorobanDataBuilder(),
+      events: [],
+      result: { retval: nativeToScVal(5_000_000n, { type: "i128" }), auth: [entry] },
+    } as unknown as rpc.Api.SimulateTransactionResponse);
+
+    const sponsored = await client.buildSponsoredRedeemTx(DEPOSITOR, 50_000_000n, {
+      feeSource: FEE_PAYER,
+    });
+    expect(sponsored.transaction.source).toBe(FEE_PAYER);
+    expect(sponsored.authorizers).toEqual([DEPOSITOR]);
+    expect(sponsored.authEntries).toHaveLength(1);
+    const op = builtInvocation(sponsored.transaction);
+    expect(op.fn).toBe("redeem");
+    expect(op.args).toEqual([DEPOSITOR, 50_000_000n]);
+  });
+
+  it("buildSponsoredDepositTx and buildSponsoredRedeemTx reject on simulation error", async () => {
+    vi.spyOn(rpc.Server.prototype, "getAccount").mockResolvedValue(new Account(FEE_PAYER, "1"));
+    stubSimulation(fails("HostError: Error(Contract, #15)"));
+
+    await expect(
+      client.buildSponsoredDepositTx(DEPOSITOR, 999_999_999n, { feeSource: FEE_PAYER }),
+    ).rejects.toThrow(/Error\(Contract, #15\)/);
+
+    stubSimulation(fails("HostError: Error(Contract, #17)"));
+    await expect(
+      client.buildSponsoredRedeemTx(DEPOSITOR, 3n, { feeSource: FEE_PAYER }),
+    ).rejects.toThrow(/Error\(Contract, #17\)/);
   });
 });
 
@@ -965,5 +1149,73 @@ describe("Event Decoding", () => {
     // Test with empty/null
     expect(decodeVaultEvents(null)).toEqual([]);
     expect(decodeVaultEvents({})).toEqual([]);
+  });
+
+  it("decodes transfer_admin and fee events", () => {
+    const adminEvent = {
+      ledger: 60,
+      topic: [xdr.ScVal.scvSymbol("transfer_admin"), new Address(ADMIN).toScVal()],
+      value: new Address(RECIPIENT).toScVal(),
+    };
+    const decodedAdmin = decodeVaultEvent(adminEvent);
+    expect(decodedAdmin.type).toBe("transfer_admin");
+    if (decodedAdmin.type === "transfer_admin") {
+      expect(decodedAdmin.previous).toBe(ADMIN);
+      expect(decodedAdmin.newAdmin).toBe(RECIPIENT);
+      expect(decodedAdmin.ledger).toBe(60);
+    }
+
+    const feeEvent = {
+      ledger: 61,
+      topic: [xdr.ScVal.scvSymbol("fee"), new Address(DEPOSITOR).toScVal()],
+      value: nativeToScVal({ amount: 250n, recipient: ADMIN }),
+    };
+    const decodedFee = decodeVaultEvent(feeEvent);
+    expect(decodedFee.type).toBe("fee");
+    if (decodedFee.type === "fee") {
+      expect(decodedFee.payer).toBe(DEPOSITOR);
+      expect(decodedFee.amount).toBe(250n);
+      expect(decodedFee.recipient).toBe(ADMIN);
+      expect(decodedFee.ledger).toBe(61);
+    }
+  });
+});
+
+// ─── 6. Typed Vault Errors ─────────────────────────────────────────────────────
+
+describe("Typed VaultError and parseVaultError", () => {
+  it("maps every VaultErrorCode (1..26) to a human-readable message", () => {
+    const codes = Object.values(VaultErrorCode).filter((v): v is VaultErrorCode => typeof v === "number");
+    expect(codes).toHaveLength(26);
+    expect(VaultErrorCode.NotInitialized).toBe(1);
+    expect(VaultErrorCode.SharesLocked).toBe(14);
+    expect(VaultErrorCode.NotMultipleOfExchangeRate).toBe(17);
+    expect(VaultErrorCode.StalePrice).toBe(22);
+    expect(VaultErrorCode.OracleDivergence).toBe(23);
+    expect(VaultErrorCode.LedgerNotClosed).toBe(26);
+    for (const code of codes) {
+      expect(VAULT_ERROR_MESSAGES[code]).toBeTruthy();
+      const err = VaultError.fromCode(code);
+      expect(err).toBeInstanceOf(VaultError);
+      expect(err.code).toBe(code);
+      expect(err.message).toBe(VAULT_ERROR_MESSAGES[code]);
+    }
+  });
+
+  it("parseVaultError parses Soroban contract error codes into VaultError or NavRefusalError", () => {
+    const locked = parseVaultError(new Error("Simulation error: HostError: Error(Contract, #14)"));
+    expect(locked).toBeInstanceOf(VaultError);
+    expect(locked?.code).toBe(VaultErrorCode.SharesLocked);
+
+    const stale = parseVaultError(new Error("HostError: Error(Contract, #22)"));
+    expect(stale).toBeInstanceOf(NavRefusalError);
+    expect(stale?.code).toBe(VaultErrorCode.StalePrice);
+
+    const divergence = parseVaultError(new Error("HostError: Error(Contract, #23)"));
+    expect(divergence).toBeInstanceOf(NavRefusalError);
+    expect(divergence?.code).toBe(VaultErrorCode.OracleDivergence);
+
+    expect(parseVaultError(new Error("Network timeout"))).toBeNull();
+    expect(parseVaultError(new Error("Error(Contract, #999)"))).toBeNull();
   });
 });

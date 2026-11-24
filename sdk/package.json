@@ -18,8 +18,12 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
+  "bin": {
+    "sforge": "./bin/sforge.js"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -32,6 +36,7 @@
     "test:smoke:write": "vitest run tests/smoke.write.testnet.test.ts",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "docs": "typedoc",
     "prepack": "cp ../LICENSE ./LICENSE"
   },
   "keywords": [

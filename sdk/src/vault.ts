@@ -53,24 +53,68 @@ export interface VaultNavPerShare {
 
 // ─── Vault Errors ──────────────────────────────────────────────────────────────
 
-/** Known Soroban error codes for the vault contract. */
+/**
+ * Known Soroban error codes for the vault contract.
+ * Discriminants match `VaultError` in `contracts/vault/src/error.rs`.
+ */
 export enum VaultErrorCode {
-  AlreadyInitialized = 1,
-  NotInitialized = 2,
-  Unauthorized = 3,
-  Paused = 4,
-  ZeroAmount = 5,
-  InsufficientBalance = 6,
-  InsufficientAllowance = 7,
-  SupplyCapExceeded = 8,
-  LockedUntil = 9,
-  NonMultipleRedeem = 10,
-  ComplianceFailed = 11,
-  OracleStale = 12,
-  OracleDivergence = 13,
-  InvalidRate = 14,
-  MuxedAddressUnsupported = 15,
+  NotInitialized = 1,
+  InvalidExchangeRate = 2,
+  InvalidMaxSupply = 3,
+  InvalidLockup = 4,
+  InvalidMetadata = 5,
+  InvalidUnderlying = 6,
+  ContractPaused = 7,
+  InvalidAmount = 8,
+  InsufficientBalance = 9,
+  InsufficientAllowance = 10,
+  Overflow = 11,
+  InvalidExpiration = 12,
+  NotCompliant = 13,
+  SharesLocked = 14,
+  ExceedsMaxSupply = 15,
+  InvalidComplianceLevel = 16,
+  NotMultipleOfExchangeRate = 17,
+  OracleBaseMismatch = 18,
+  PriceUnavailable = 19,
+  InvalidPrice = 20,
+  PriceInFuture = 21,
+  StalePrice = 22,
+  OracleDivergence = 23,
+  IdenticalOracleSources = 24,
+  OracleNotConfigured = 25,
+  LedgerNotClosed = 26,
 }
+
+/** Human-readable descriptions for each vault contract error code. */
+export const VAULT_ERROR_MESSAGES: Record<VaultErrorCode, string> = {
+  [VaultErrorCode.NotInitialized]: "Vault contract is not initialized",
+  [VaultErrorCode.InvalidExchangeRate]: "Exchange rate must be at least 1",
+  [VaultErrorCode.InvalidMaxSupply]: "Max share supply cannot be negative",
+  [VaultErrorCode.InvalidLockup]: "Lock-up duration exceeds maximum allowed",
+  [VaultErrorCode.InvalidMetadata]: "Invalid vault metadata or oracle parameters",
+  [VaultErrorCode.InvalidUnderlying]: "Underlying contract is not a valid token",
+  [VaultErrorCode.ContractPaused]: "Vault contract is paused",
+  [VaultErrorCode.InvalidAmount]: "Amount must be positive",
+  [VaultErrorCode.InsufficientBalance]: "Insufficient balance",
+  [VaultErrorCode.InsufficientAllowance]: "Insufficient allowance",
+  [VaultErrorCode.Overflow]: "Arithmetic overflow",
+  [VaultErrorCode.InvalidExpiration]: "Allowance expiration ledger has already passed",
+  [VaultErrorCode.NotCompliant]: "Account does not meet compliance verification requirements",
+  [VaultErrorCode.SharesLocked]: "Shares are currently locked",
+  [VaultErrorCode.ExceedsMaxSupply]: "Deposit would exceed max share supply",
+  [VaultErrorCode.InvalidComplianceLevel]: "Minimum compliance level exceeds maximum",
+  [VaultErrorCode.NotMultipleOfExchangeRate]: "Redeemed shares must be an exact multiple of exchange rate",
+  [VaultErrorCode.OracleBaseMismatch]: "Primary and secondary oracle base assets do not match",
+  [VaultErrorCode.PriceUnavailable]: "Price is unavailable from oracle feed",
+  [VaultErrorCode.InvalidPrice]: "Oracle returned zero or negative price",
+  [VaultErrorCode.PriceInFuture]: "Oracle price timestamp is in the future",
+  [VaultErrorCode.StalePrice]: "Oracle price is stale",
+  [VaultErrorCode.OracleDivergence]: "Oracle sources diverged beyond threshold",
+  [VaultErrorCode.IdenticalOracleSources]: "Primary and secondary oracle cannot be the same contract",
+  [VaultErrorCode.OracleNotConfigured]: "Oracle configuration has not been set",
+  [VaultErrorCode.LedgerNotClosed]: "Queried ledger sequence has not yet closed",
+};
 
 /** Base error class for all vault contract execution errors. */
 export class VaultError extends Error {
@@ -80,6 +124,13 @@ export class VaultError extends Error {
     super(message);
     this.name = "VaultError";
     this.code = code;
+  }
+
+  /** Constructs a typed `VaultError` from a Soroban contract error discriminant. */
+  static fromCode(code: number, detail?: string): VaultError {
+    const knownMessage = VAULT_ERROR_MESSAGES[code as VaultErrorCode];
+    const message = detail ?? knownMessage ?? `Vault contract error #${code}`;
+    return new VaultError(message, code);
   }
 }
 
@@ -94,6 +145,44 @@ export class NavRefusalError extends VaultError {
     this.source = source;
     this.reason = reason;
   }
+}
+
+const CONTRACT_ERROR_RE = /Error\(Contract,\s*#(\d+)\)/;
+
+const NAV_REFUSAL_CODES = new Set<number>([
+  VaultErrorCode.OracleBaseMismatch,
+  VaultErrorCode.PriceUnavailable,
+  VaultErrorCode.InvalidPrice,
+  VaultErrorCode.PriceInFuture,
+  VaultErrorCode.StalePrice,
+  VaultErrorCode.OracleDivergence,
+  VaultErrorCode.OracleNotConfigured,
+]);
+
+/**
+ * Parses a Soroban simulation or RPC error into a typed `VaultError` (or
+ * `NavRefusalError` for oracle-related codes). Returns `null` if the error does
+ * not contain a recognized vault contract error code.
+ */
+export function parseVaultError(err: unknown): VaultError | null {
+  if (err instanceof VaultError) {
+    return err;
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  const match = CONTRACT_ERROR_RE.exec(msg);
+  if (!match?.[1]) {
+    return null;
+  }
+  const code = Number(match[1]);
+  if (!(code in VAULT_ERROR_MESSAGES)) {
+    return null;
+  }
+  const reason = VAULT_ERROR_MESSAGES[code as VaultErrorCode];
+  if (NAV_REFUSAL_CODES.has(code)) {
+    const source = code === VaultErrorCode.OracleDivergence ? "multi-source" : "oracle";
+    return new NavRefusalError(reason, source, code);
+  }
+  return new VaultError(reason, code);
 }
 
 // ─── Vault Events ──────────────────────────────────────────────────────────────
@@ -147,6 +236,21 @@ export interface SetOraclesEvent {
   ledger: number;
 }
 
+export interface AdminTransferredEvent {
+  type: "transfer_admin";
+  previous: string;
+  newAdmin: string;
+  ledger: number;
+}
+
+export interface FeeEvent {
+  type: "fee";
+  payer: string;
+  amount: bigint;
+  recipient: string;
+  ledger: number;
+}
+
 export interface UnknownVaultEvent {
   type: "unknown";
   raw?: unknown;
@@ -159,6 +263,8 @@ export type VaultEvent =
   | ApproveEvent
   | SetPausedEvent
   | SetOraclesEvent
+  | AdminTransferredEvent
+  | FeeEvent
   | UnknownVaultEvent;
 
 // ─── Pure Rounding Helpers ─────────────────────────────────────────────────────
@@ -414,6 +520,25 @@ export function decodeVaultEvent(event: unknown): VaultEvent {
       return { type: "set_oracles", admin, oracles, ledger };
     }
 
+    if (action === "transfer_admin") {
+      const previous = String(dataObj["previous"] ?? (isVaultNamespace ? topics[2] : topics[1]) ?? "");
+      const newAdmin =
+        typeof nativeVal === "string"
+          ? nativeVal
+          : String(dataObj["new_admin"] ?? dataObj["newAdmin"] ?? "");
+      return { type: "transfer_admin", previous, newAdmin, ledger };
+    }
+
+    if (action === "fee") {
+      const payer = String(dataObj["payer"] ?? (isVaultNamespace ? topics[2] : topics[1]) ?? "");
+      const amount =
+        typeof dataObj["amount"] === "bigint"
+          ? dataObj["amount"]
+          : BigInt(String(dataObj["amount"] ?? 0));
+      const recipient = String(dataObj["recipient"] ?? "");
+      return { type: "fee", payer, amount, recipient, ledger };
+    }
+
     return { type: "unknown", raw: event };
   } catch {
     return { type: "unknown", raw: event };
@@ -540,6 +665,38 @@ export class VaultClient extends ContractClient {
     return scValToNative(result) as bigint;
   }
 
+  /** Preview shares minted for underlying deposit amount. */
+  async previewDeposit(amount: bigint): Promise<bigint> {
+    const result = await this.simulateReadOnly("preview_deposit", [
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
+  /** Preview underlying amount redeemed for share count. */
+  async previewRedeem(shares: bigint): Promise<bigint> {
+    const result = await this.simulateReadOnly("preview_redeem", [
+      nativeToScVal(shares, { type: "i128" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
+  /** Maximum deposit amount accepted from `userAddress`. */
+  async maxDeposit(userAddress: string): Promise<bigint> {
+    const result = await this.simulateReadOnly("max_deposit", [
+      nativeToScVal(userAddress, { type: "address" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
+  /** Maximum shares redeemable by `holderAddress`. */
+  async maxRedeem(holderAddress: string): Promise<bigint> {
+    const result = await this.simulateReadOnly("max_redeem", [
+      nativeToScVal(holderAddress, { type: "address" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
   /** Whether vault operations are currently paused. */
   async paused(): Promise<boolean> {
     const result = await this.simulateReadOnly("paused", []);
@@ -574,9 +731,13 @@ export class VaultClient extends ContractClient {
         source: String(native["source"] ?? "oracle"),
       };
     } catch (err: unknown) {
+      const parsed = parseVaultError(err);
+      if (parsed) {
+        throw parsed;
+      }
       const msg = (err as Error).message;
-      if (msg.includes("OracleStale") || msg.includes("stale")) {
-        throw new NavRefusalError("Oracle price is stale", "oracle", VaultErrorCode.OracleStale);
+      if (msg.includes("OracleStale") || msg.includes("StalePrice") || msg.includes("stale")) {
+        throw new NavRefusalError("Oracle price is stale", "oracle", VaultErrorCode.StalePrice);
       }
       if (msg.includes("OracleDivergence") || msg.includes("divergence")) {
         throw new NavRefusalError("Oracle sources diverged beyond threshold", "multi-source", VaultErrorCode.OracleDivergence);
@@ -600,9 +761,13 @@ export class VaultClient extends ContractClient {
         source: String(native["source"] ?? "oracle"),
       };
     } catch (err: unknown) {
+      const parsed = parseVaultError(err);
+      if (parsed) {
+        throw parsed;
+      }
       const msg = (err as Error).message;
-      if (msg.includes("OracleStale") || msg.includes("stale")) {
-        throw new NavRefusalError("Oracle price is stale", "oracle", VaultErrorCode.OracleStale);
+      if (msg.includes("OracleStale") || msg.includes("StalePrice") || msg.includes("stale")) {
+        throw new NavRefusalError("Oracle price is stale", "oracle", VaultErrorCode.StalePrice);
       }
       if (msg.includes("OracleDivergence") || msg.includes("divergence")) {
         throw new NavRefusalError("Oracle sources diverged beyond threshold", "multi-source", VaultErrorCode.OracleDivergence);
@@ -628,10 +793,29 @@ export class VaultClient extends ContractClient {
     return scValToNative(result) as bigint;
   }
 
+  /** Number of historical balance checkpoints recorded for `holderAddress`. */
+  async checkpointCount(holderAddress: string): Promise<number> {
+    const result = await this.simulateReadOnly("checkpoint_count", [
+      nativeToScVal(holderAddress, { type: "address" }),
+    ]);
+    return Number(scValToNative(result));
+  }
+
+  /** Number of historical total supply checkpoints recorded by the vault. */
+  async supplyCheckpointCount(): Promise<number> {
+    const result = await this.simulateReadOnly("supply_checkpoint_count", []);
+    return Number(scValToNative(result));
+  }
+
   // ── Write operations ───────────────────────────────────────────────────────
 
   /**
-   * Builds a transaction depositing `amount` underlying RWA tokens to mint fractional shares.
+   * Builds and simulates a transaction depositing `amount` underlying RWA tokens
+   * to mint fractional shares.
+   *
+   * @param depositor - Address authorizing the deposit and sourcing the transaction.
+   * @param amount - Positive amount of underlying RWA tokens to deposit (in stroops).
+   * @returns A prepared, unsigned transaction ready for signing.
    */
   async buildDepositTx(depositor: string, amount: bigint): Promise<Transaction> {
     return this.buildWriteTx(depositor, "deposit", [
@@ -640,13 +824,25 @@ export class VaultClient extends ContractClient {
     ]);
   }
 
-  /** Deposits `amount` underlying tokens and submits the transaction. */
+  /**
+   * Deposits `amount` underlying RWA tokens to mint fractional shares, signing
+   * and submitting the transaction with the configured signer.
+   *
+   * @param depositor - Address authorizing the deposit and sourcing the transaction.
+   * @param amount - Positive amount of underlying RWA tokens to deposit (in stroops).
+   * @returns The submitted transaction hash and closing ledger.
+   */
   async deposit(depositor: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildDepositTx(depositor, amount), depositor);
   }
 
   /**
-   * Builds a transaction redeeming `shares` fractional shares for underlying RWA tokens.
+   * Builds and simulates a transaction redeeming `shares` fractional shares for
+   * underlying RWA tokens.
+   *
+   * @param redeemer - Address authorizing the redemption and sourcing the transaction.
+   * @param shares - Positive share count to burn (must be a multiple of the exchange rate).
+   * @returns A prepared, unsigned transaction ready for signing.
    */
   async buildRedeemTx(redeemer: string, shares: bigint): Promise<Transaction> {
     return this.buildWriteTx(redeemer, "redeem", [
@@ -655,7 +851,14 @@ export class VaultClient extends ContractClient {
     ]);
   }
 
-  /** Redeems `shares` fractional shares and submits the transaction. */
+  /**
+   * Redeems `shares` fractional shares for underlying RWA tokens, signing and
+   * submitting the transaction with the configured signer.
+   *
+   * @param redeemer - Address authorizing the redemption and sourcing the transaction.
+   * @param shares - Positive share count to burn (must be a multiple of the exchange rate).
+   * @returns The submitted transaction hash and closing ledger.
+   */
   async redeem(redeemer: string, shares: bigint): Promise<TxResult> {
     return this.submit(await this.buildRedeemTx(redeemer, shares), redeemer);
   }
@@ -750,6 +953,18 @@ export class VaultClient extends ContractClient {
     return this.submit(await this.buildSetOraclesTx(admin, oracles), admin);
   }
 
+  /** Builds an admin transaction transferring vault admin privileges to `newAdmin`. */
+  async buildTransferAdminTx(admin: string, newAdmin: string): Promise<Transaction> {
+    return this.buildWriteTx(admin, "transfer_admin", [
+      nativeToScVal(newAdmin, { type: "address" }),
+    ]);
+  }
+
+  /** Transfers vault admin privileges to `newAdmin` and submits the transaction. */
+  async transferAdmin(admin: string, newAdmin: string): Promise<TxResult> {
+    return this.submit(await this.buildTransferAdminTx(admin, newAdmin), admin);
+  }
+
   // ── Sponsored writes ───────────────────────────────────────────────────────
 
   /**
@@ -776,7 +991,15 @@ export class VaultClient extends ContractClient {
     ]);
   }
 
-  /** Builds an unsigned sponsored redemption transaction. */
+  /**
+   * Builds an unsigned sponsored redemption transaction.
+   * Sourced and paid for by `feeSource`, while `redeemer` authorizes burning shares.
+   *
+   * @param redeemer - Address authorizing the redemption.
+   * @param shares - Positive share count to burn (must be a multiple of the exchange rate).
+   * @param options - Sponsorship options specifying the `feeSource` paying transaction fees.
+   * @returns A `SponsoredTransaction` whose `authEntries` must be signed by `redeemer`.
+   */
   async buildSponsoredRedeemTx(
     redeemer: string,
     shares: bigint,
