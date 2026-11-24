@@ -13,6 +13,12 @@ import {
 
 import type { Transaction } from "@stellar/stellar-sdk";
 
+import {
+  mapContractError,
+  parseContractErrorCode,
+  TransactionExpiredError,
+  TransactionOutcomeUnknownError,
+} from "./errors.js";
 import { TransactionExpiredError, TransactionOutcomeUnknownError } from "./errors.js";
 import { SilentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
@@ -68,6 +74,7 @@ export abstract class ContractClient {
   protected readonly server: rpc.Server;
   protected readonly contract: Contract;
   protected readonly clientConfig: StellarForgeConfig;
+  protected readonly configKey: string;
   public readonly logger: Logger;
 
   /**
@@ -92,9 +99,23 @@ export abstract class ContractClient {
       throw new Error(`contracts.${configKey} address is required`);
     }
     this.clientConfig = config;
+    this.configKey = configKey;
     this.logger = config.logger ?? new SilentLogger();
     this.server = new rpc.Server(config.rpcUrl, { allowHttp: false });
     this.contract = new Contract(contractId);
+  }
+
+  /**
+   * Maps a simulation error string to a typed {@link ContractError} when it
+   * carries a Soroban `Error(Contract, #N)` code, or a plain `Error` otherwise.
+   */
+  protected mapSimulationError(simError: string): Error {
+    const rawMessage = `Simulation error: ${simError}`;
+    const code = parseContractErrorCode(simError);
+    if (code !== undefined) {
+      return mapContractError(this.configKey, code, rawMessage);
+    }
+    return new Error(rawMessage);
   }
 
   /** Simulates `method` and returns its raw return value. Touches no ledger state. */
@@ -137,6 +158,9 @@ export abstract class ContractClient {
         throw new Error(`Simulation error: ${simResult.error}`);
       }
 
+    if (rpc.Api.isSimulationError(simResult)) {
+      throw this.mapSimulationError(simResult.error);
+    }
       if (!simResult.result) {
         throw new Error(`No result returned from ${method}`);
       }
@@ -186,7 +210,17 @@ export abstract class ContractClient {
 
     // Simulates, then attaches the footprint, authorization entries and
     // resource fee the transaction needs to be accepted.
-    return this.server.prepareTransaction(tx);
+    try {
+      return await this.server.prepareTransaction(tx);
+    } catch (err) {
+      if (err instanceof Error) {
+        const code = parseContractErrorCode(err.message);
+        if (code !== undefined) {
+          throw mapContractError(this.configKey, code, err.message);
+        }
+      }
+      throw err;
+    }
   }
 
   /**
@@ -327,7 +361,7 @@ export abstract class ContractClient {
 
     const simulation = await this.server.simulateTransaction(transaction);
     if (rpc.Api.isSimulationError(simulation)) {
-      throw new Error(`Simulation error: ${simulation.error}`);
+      throw this.mapSimulationError(simulation.error);
     }
 
     const authEntries = simulation.result?.auth ?? [];
@@ -393,7 +427,7 @@ export abstract class ContractClient {
 
     const simulation = await this.server.simulateTransaction(withAuth);
     if (rpc.Api.isSimulationError(simulation)) {
-      throw new Error(`Simulation error: ${simulation.error}`);
+      throw this.mapSimulationError(simulation.error);
     }
     return rpc.assembleTransaction(withAuth, simulation).build();
   }

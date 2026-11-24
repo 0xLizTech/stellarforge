@@ -51,6 +51,7 @@ Entry template (include only applicable sections in each release):
 - SDK V8 line coverage with an 85% threshold and Codecov reporting, plus generated bash, zsh, and fish completions and `sforge.config.json` support for the NAV reporter CLI (#194, #192, #191).
 - Adds Rust-generated parity coverage for vault deposit and redemption arithmetic (#196).
 
+- Typed contract error mapping in `@stellarforge-protocol/sdk` (`ContractError`, `RwaAssetError`, `ComplianceError`, `RegistryError`, `GovernanceError`, `OracleAdapterError`, `VaultContractError`, and their corresponding `*ErrorCode` enums), automatically mapping Soroban `Error(Contract, #N)` failures to named error classes while preserving the numeric code (#159).
 ### Added
 - Admin-configurable deposit and redemption fees (maximum 500 bps), management share accrual, fee events, and accounting tests in the vault (#230, #231).
 - Soroban-compatible representation and validation of the optional secondary vault oracle source; dual-admin authorization regression coverage for the vault (#232, #233).
