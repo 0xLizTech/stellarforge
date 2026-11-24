@@ -58,6 +58,15 @@ export interface ContractAddresses {
   oracleAdapter?: string;
 }
 
+export interface TelemetryData {
+  method: string;
+  durationMs: number;
+  success: boolean;
+  error?: unknown;
+}
+
+export type TelemetryHook = (data: TelemetryData) => void;
+
 /** Complete shared configuration for StellarForge contract clients. */
 /** Signs a prepared transaction for the account identified by `publicKey`. */
 export interface Signer {
@@ -73,6 +82,8 @@ export interface StellarForgeConfig extends NetworkConfig {
   signer?: Signer;
   /** @deprecated Use `signer` with a {@link Signer} adapter instead. Server-side only. */
   signerSecret?: string;
+  /** Optional telemetry hook to measure client call latency and errors */
+  onCall?: TelemetryHook;
 }
 
 /** Outcome of a write transaction that was submitted and confirmed. */
