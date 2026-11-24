@@ -722,7 +722,7 @@ fn test_set_kyc_batch_requires_admin() {
         .client
         .try_set_kyc_batch(&Vec::from_array(
             &h.env,
-            [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))]
+            [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))],
         ))
         .is_err());
     assert!(h.client.get_kyc(&subject).is_none());
@@ -781,7 +781,7 @@ fn test_unpausing_allows_set_kyc_again() {
     assert_eq!(h.client.get_kyc(&subject).unwrap().level, LEVEL_BASIC);
 }
 
-/// transfer_admin must stay callable while paused, matching rwa-asset's own
+/// Admin handover must stay callable while paused, matching rwa-asset's own
 /// exemption, so a compromised admin key can still be rotated out.
 #[test]
 fn test_paused_does_not_block_transfer_admin() {

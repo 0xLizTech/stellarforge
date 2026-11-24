@@ -1,0 +1,67 @@
+#STAGE Stage 6: Phase 3 - DeFi Primitives, Tranching and Governance Execution
+#PHASE phase-3
+#CONTEXT Phase 3 (target Q1 2027) adds the `tranche` contract, a liquidity-pool adapter, governance execution hooks with timelock, the `SFORGE` token, a governance-controlled protocol fee and a reference dashboard. See ROADMAP.md Phase 3 and PRD 5.6.
+#OOS Privacy, bridges and insurance (later phases).
+Write ADR-008: tranche waterfall model | docs,contracts | med | Waterfall order and loss allocation define the product. | Specify senior, mezzanine and junior payment order; Define loss absorption; Define rounding rules | ADR merged
+Scaffold the tranche crate | contracts | gfi | No crate exists. | Create crate files; Add to workspace and Makefile; Add a constructor test | `cargo test -p tranche` runs
+Define the tranche pool configuration struct | contracts | med | Pools need class parameters. | Add class count, target yield bps, size caps; Validate sum rules; Add tests | Invalid configs are rejected
+Implement tranche token issuance per class | contracts | hard | Each class is a transferable token. | Mint class tokens on deposit; Reuse SEP-41 patterns; Add tests | Class tokens appear in a wallet
+Implement deposit into a chosen tranche class | contracts | hard | Users pick risk. | Accept class id and amount; Enforce class caps; Emit events | Deposit mints the right class tokens
+Implement the yield waterfall distribution | contracts | hard | Senior is paid first. | Apply yield by class priority up to target; Pass excess to junior; Add tests | Senior receives target before junior receives anything
+Implement loss absorption from the junior tranche up | contracts | hard | First-loss design. | Apply losses junior first; Track impairment per class; Add tests | Loss of 10% hits junior only when junior holds 20%
+Implement default reporting by an authorized role | contracts,security | med | Losses need a trusted input. | Add a loss reporter role; Emit events; Bound a single report | Unauthorized report fails
+Implement tranche redemption with a queue | contracts | hard | Withdrawals may exceed liquidity. | Add a FIFO queue; Fulfill as liquidity arrives; Add tests | Queue pays in order
+Add tranche NAV per class using the oracle | contracts | med | Share value per class. | Compute class NAV after waterfall and losses; Add tests | NAV is consistent with the waterfall
+Add tranche pause and wind-down | contracts,security | med | Failure handling. | Add pause; Add wind-down mode with pro-rata by seniority; Add tests | Wind-down distributes by seniority
+Gate tranche deposits through compliance | contracts | gfi | Regulated products. | Optionally require a compliance level per class; Add tests | Non-compliant deposit fails
+Add tranche events and snapshot tests | contracts,testing | gfi | Matches IR-03 practice. | Define events; Snapshot them; Document | Tests exist
+Add admin rotation and constructor auth tests to tranche | contracts,testing,security | gfi | Matches IR-04 and IR-17. | Add `transfer_admin`; Add constructor auth test | Tests mutation-checked
+Property test the waterfall conservation | contracts,testing | hard | Money must not appear or vanish. | Randomize yields, losses and deposits; Assert total in equals total out; Run nightly | No violation in 100,000 cases
+Simulate defaults against the tranche contract | contracts,testing | med | Phase 3 exit criteria demand it. | Script several default scenarios; Assert outcomes against a spreadsheet model; Store the model | Contract matches the model
+Add TrancheClient to the SDK | sdk | med | SDK parity. | Wrap all functions; Add events and errors; Add tests | Covers the ABI
+Add tranche write helpers | sdk | med | SDK parity. | Add builders and sponsored mode; Add tests | Write smoke test passes
+Add tranche to the deploy script and manifest | tooling | gfi | Deployment. | Add env variables; Update `.env.example` | Script deploys it
+Write the tranche issuer guide | docs | gfi | Issuers set up pools. | Cover parameter choice and reporting; Include risk language | Guide merged
+Write the tranche investor risk explainer | docs | gfi | Retail users need plain language. | Explain senior, mezzanine and junior risk with examples; Avoid advice; Review with legal | Explainer merged
+Write the tranche security checklist | docs,security | med | Audit preparation. | List invariants and assumptions; Link tests | Checklist merged
+Write ADR-009: DEX and AMM integration approach | docs,contracts | med | The liquidity-pool adapter needs a design. | Compare wrapping Stellar liquidity pools and Soroban AMMs; Decide on access control; Document | ADR merged
+Scaffold the liquidity-pool adapter crate | contracts | gfi | No crate exists. | Create crate files; Add to workspace; Add a constructor test | Crate builds
+Implement deposit and withdraw through the adapter | contracts | hard | Core feature. | Forward to the pool; Enforce compliance on the beneficiary; Add tests | Deposit through the adapter works against a mock pool
+Implement swap through the adapter with allowlists | contracts | hard | Restrict who can trade. | Check compliance for both sides; Emit events; Add tests | Non-compliant swap fails
+Add slippage and deadline protection to the adapter | contracts,security | med | Prevent sandwich losses. | Require min out and deadline; Add tests | Late swap reverts
+Add adapter tests against Stellar classic liquidity pools | contracts,testing | hard | Real pool behavior. | Test on testnet with a real pool; Record results | Test run documented
+Add a LiquidityPoolClient to the SDK | sdk | med | SDK parity. | Wrap functions; Add tests | Covers the ABI
+Write ADR-010: governance execution hooks and timelock | docs,contracts,security | hard | Passed proposals must call contracts safely. | Define the action format, timelock and guardian; Analyze reentrancy and auth | ADR merged
+Extend proposals with executable actions | contracts | hard | Today proposals are text only. | Add target contract, function and args to `Proposal`; Bound sizes; Add tests | Proposal stores an action
+Implement queue and execute with a timelock | contracts | hard | Delay lets users react. | Add `queue` after pass; Add `execute` after the delay; Add tests | Early execute fails
+Implement a guardian cancel in the timelock window | contracts,security | med | Emergency stop. | Add guardian role; Add `cancel_queued`; Emit event | Guardian cancel works inside the window
+Restrict executable targets with an allowlist | contracts,security | med | Prevent arbitrary calls. | Add an allowlist of targets and functions; Add tests | Disallowed target fails
+Make the governance contract the admin of other contracts | contracts | hard | Execution needs authority. | Define the admin handoff flow using dual auth rotation; Test with rwa-asset; Document | Proposal changes an asset parameter on testnet
+Prove a passed proposal executes a contract call on testnet | contracts,testing | med | Phase 3 exit criterion. | Script the full flow; Record transaction hashes; Add to docs | Evidence published
+Add governance execution to the SDK | sdk | med | SDK parity. | Add queue, execute and cancel methods; Add tests | Covers the new ABI
+Write ADR-011: SFORGE token design | docs,contracts | med | PRD says non-transferable voting power. | Specify earn rules, soulbound behavior and decay; Compare to alternatives | ADR merged
+Scaffold the sforge-token crate | contracts | gfi | No crate exists. | Create crate; Add to workspace; Add a constructor test | Crate builds
+Implement non-transferable balances and mint by role | contracts | med | Soulbound voting power. | Disable transfer; Add a minter role; Add tests | Transfer always fails
+Implement an earning rules module | contracts | hard | Power is earned through participation. | Record contributions via role-gated calls; Cap per period; Add tests | Caps hold
+Implement vote weight snapshots for governance | contracts | hard | Prevents double voting through transfers and late mints. | Checkpoint balances; Provide `weight_at(ledger)`; Add tests | Weight at proposal creation is used
+Connect governance `vote` to SFORGE weights | contracts,security | hard | Replace caller-supplied weight. | Read weight from the token at the snapshot; Reject mismatches; Add tests | Forged weight is impossible
+Add delegation to SFORGE voting power | contracts | med | Delegates are common in DAOs. | Add delegate and undelegate; Update checkpoints; Add tests | Delegated weight counts once
+Plan the SFORGE genesis distribution | docs | med | Phase 3 exit criteria include distribution to contributors. | Define eligibility and snapshot rules; Publish the list process; Review | Plan merged
+Add the protocol fee switch module | contracts | med | Fee 0 to 50 bps, off by default. | Add a fee config controlled by governance; Cap at 50 bps; Add tests | Default is zero
+Apply the protocol fee in vault and tranche | contracts | med | Fees apply across modules. | Read the global fee; Send to the treasury address; Add tests | Fee flows are reconciled
+Add a fee change event and a delay | contracts,security | gfi | Users should see fee changes coming. | Require timelock for fee changes; Emit events; Add tests | Immediate change fails
+Scaffold the Next.js reference dashboard | frontend | med | Phase 3 lists a reference app. | Create `apps/dashboard` with Next.js and the SDK; Add CI build; Add README | `npm run dev` shows a home page
+Add wallet connect to the dashboard | frontend | med | Users need to sign. | Integrate Freighter and one more wallet; Show network and address | Connect works on testnet
+Add an asset list page from the registry | frontend | gfi | Discovery. | Page through `list_assets`; Show active flag; Add loading states | List renders testnet assets
+Add an asset detail page | frontend | med | Asset view. | Show metadata, supply, holders count and compliance level; Add links to explorer | Detail page loads
+Add a holder portfolio page | frontend | med | Users see holdings. | Show balances, claimable yield and lock-ups; Add tests | Page shows a test user's holdings
+Add vault deposit and redeem forms | frontend | med | Core UX. | Use previews; Show fees and lock-up; Handle errors | Deposit completes on testnet
+Add a yield claim page | frontend | gfi | Core UX. | List claimable distributions; Add a claim all button | Claim completes on testnet
+Add governance proposal list and voting UI | frontend | med | Core UX. | List proposals; Vote; Show status | Vote completes on testnet
+Add a KYC status panel to the dashboard | frontend | gfi | Users need to know their status. | Show level, jurisdiction and expiry; Warn before expiry | Panel reads compliance data
+Add accessibility checks to the dashboard | frontend,ci | med | WCAG matters for finance apps. | Add axe tests; Fix issues; Run in CI | No serious violations
+Add dashboard i18n scaffolding | frontend | gfi | Global audience. | Add next-intl with English and one more locale; Extract strings | Locale switch works
+Add dashboard end to end tests with Playwright | frontend,testing | med | Prevent regressions. | Test connect, deposit and vote against a mock chain; Run in CI | Tests pass in CI
+Deploy the dashboard preview per pull request | frontend,ci | med | Reviewers need previews. | Add a preview workflow; Comment the URL; Use testnet only | Preview URL appears on PRs
+Write the Phase 3 external audit scope | docs,security | med | ROADMAP lists it. | List contracts and commits; Include timelock and token; Estimate effort | Scope doc merged
+Prepare the Phase 2 mainnet deployment plan | docs | med | ROADMAP lists it. | Define order, keys and checks; Reuse the Phase 1 checklist | Plan merged

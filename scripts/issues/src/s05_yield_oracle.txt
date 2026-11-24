@@ -1,0 +1,44 @@
+#STAGE Stage 5: Phase 2 - Yield Distributor, Oracle Follow-ups and Mainnet Readiness
+#PHASE phase-2
+#CONTEXT Phase 2 also delivers the `yield-distributor` contract, finishes the oracle-adapter rollout (SDK and deploy script items remain open in ROADMAP.md), automates testnet deployment and prepares the Phase 1 mainnet launch.
+#OOS Tranching, governance execution hooks and cross-chain work.
+Write ADR-007: yield distribution snapshot model | docs,contracts | med | Snapshot-at-ledger distribution can be done by checkpoints, merkle roots or pull-based accumulators. | Compare the three on cost and complexity; Decide; Record limits on holder count | ADR merged
+Scaffold the yield-distributor crate | contracts | gfi | No crate exists. | Create crate files, add to workspace and Makefile; Add a constructor test | `cargo test -p yield-distributor` runs
+Implement balance checkpoints in rwa-asset or vault shares | contracts | hard | Snapshots need historical balances. | Add checkpoint writes on balance change; Add `balance_at(ledger)`; Bound storage growth | Historical balance query is correct in tests
+Implement announce_distribution with snapshot ledger | contracts | hard | Admin announces income to share. | Record asset, amount, snapshot ledger and total supply at snapshot; Pull funds from the announcer; Emit `DistributionAnnounced` | Announcement stores the snapshot
+Implement claim for a single distribution | contracts | hard | Holders pull their share. | Compute pro-rata share from the snapshot; Mark as claimed; Transfer funds | Claim twice reverts
+Implement claim_many across distributions | contracts | med | Users claim all outstanding in one transaction. | Accept a bounded list of ids; Skip claimed ones safely; Add tests | Claiming 10 distributions succeeds in one call
+Implement multi-currency payouts | contracts | med | PRD requires XLM, USDC and custom assets. | Store the payout token per distribution; Support any SEP-41 token; Add tests with two tokens | A distribution pays in USDC and another in XLM
+Handle XLM through the native asset contract wrapper | contracts | gfi | XLM is a Stellar Asset Contract on Soroban. | Test with the native SAC; Document the address lookup; Add an example | XLM distribution works in tests
+Implement the unclaimed yield reclaim timeout | contracts | med | PRD requires unclaimed funds to revert to the pool. | Add `reclaim_after_ledgers`; Admin reclaims after the timeout; Emit event | Reclaim before timeout fails
+Round dust handling for pro-rata payouts | contracts | med | Integer division leaves dust. | Define who receives dust; Track it; Test totals | Total paid never exceeds announced amount
+Test distribution to 1,000 simulated holders | contracts,testing | hard | Phase 2 exit criteria demand it. | Generate 1,000 holders in a test; Run claims; Assert the sum | Sum paid equals sum due
+Test distribution to 10,000 holders under resource limits | contracts,testing | hard | Scale check. | Run an ignored test; Record instruction counts per claim; Document the practical limit | Numbers recorded
+Gate claims through compliance | contracts | med | A holder who lost KYC may be barred from payouts. | Optionally call compliance on claim; Document held-over funds; Add tests | Expired KYC holder claim behavior is tested
+Add distribution history views | contracts | gfi | PRD requires transparent history. | Add `distribution_count` and `get_distribution`; Paginate; Add tests | History is queryable
+Add yield-distributor events and snapshot tests | contracts,testing | gfi | Matches IR-03 practice. | Define events; Snapshot each; Document | Tests exist
+Add admin rotation and constructor auth tests to yield-distributor | contracts,testing,security | gfi | Matches IR-04 and IR-17. | Add `transfer_admin`; Add constructor auth test; Document | Tests mutation-checked
+Fuzz the distribution math | contracts,testing,security | hard | Pro-rata math is error prone. | Property test: payouts never exceed funds; Include zero balances and huge supply; Run nightly | No violation in 100,000 cases
+Add YieldDistributorClient to the SDK | sdk | med | ROADMAP lists vault and yield clients. | Wrap all functions; Add typed errors and events; Add tests | Client covers the contract ABI
+Add write helpers for announce and claim | sdk | med | Matches write-path helpers. | Add builders with simulation, submission and sponsored mode; Add tests | Testnet write smoke test passes
+Add SDK helper to compute claimable amounts off-chain | sdk | med | UIs show claimables without a transaction. | Read checkpoint balance and supply; Replicate contract math; Add parity fixtures | Matches contract in parity tests
+Add yield-distributor to the deploy script and manifest | tooling | gfi | Deployment must include it. | Add env variables; Update `.env.example`; Update the manifest writer | Script deploys it
+Write the yield distribution operator guide | docs | gfi | Issuers need steps for periodic income. | Describe announcing, funding, claim windows and reclaim; Include CLI examples | Guide merged
+Write the yield-distributor security checklist | docs,security | med | Prepare for audit. | List invariants and assumptions; Link tests; Add to handover | Checklist merged
+Complete the oracle-adapter SDK client coverage | sdk | med | ROADMAP lists SDK and deploy script for the oracle as open. | Wrap every function including `report` and `override_price`; Add typed errors; Add tests | Client covers all 17 functions
+Add oracle-adapter to scripts/deploy.sh | tooling | gfi | ROADMAP lists it as open. | Add env variables for base asset, decimals and resolution; Validate inputs; Update `.env.example` | Script deploys the oracle
+Write a reporter operations guide for the oracle-adapter | docs | gfi | Reporters need key and cadence advice. | Describe cadence, deviation limits and rotation; Link ADR-005 | Guide merged
+Add a Reflector oracle wrapper per ADR-005 | contracts | hard | ADR-005 plans wrappers for external feeds. | Implement a read-through wrapper to Reflector; Match SEP-40; Add tests with a mock | Wrapper returns the mock price
+Add a Pyth wrapper per ADR-005 | contracts | hard | Same, for Pyth. | Implement the wrapper; Handle confidence intervals; Add tests | Wrapper tested with mock
+Add a median aggregator over several oracles | contracts | hard | One feed is a single point of failure. | Accept up to 5 feeds; Return the median; Ignore stale feeds; Add tests | Outlier is ignored
+Automate testnet deployment with deterministic contract IDs | tooling | hard | ROADMAP lists it as open. | Use salted deployer addresses; Record IDs in a manifest; Add an idempotent rerun mode | Two runs yield the same IDs
+Add a post-deploy verification script | tooling,security | med | Deployments must be checked. | Compare on-chain WASM hash with the release artifact; Check admin and config; Fail loudly | Script flags a wrong hash
+Add a deployment dry-run mode | tooling | gfi | Operators want a plan before spending. | Print every command and fee estimate; Do not submit; Add tests | Dry-run submits nothing
+Add a contract upgrade runbook with test on testnet | docs,contracts | med | ADR-003 defines the path. | Execute an upgrade on testnet; Document each step; Capture the verification | Runbook merged with a real run
+Add a storage migration test harness | contracts,testing | hard | Upgrades may change storage layouts. | Build a harness that loads old state and runs new code; Add one sample migration; Document | Harness used in CI
+Prepare the Phase 1 mainnet launch checklist | docs,security | med | ROADMAP plans mainnet after audit. | List audit, keys, monitoring and communications; Assign owners | Checklist reviewed
+Define a mainnet key ceremony procedure | docs,security | med | Admin keys need a safe process. | Describe multisig setup and hardware signers; Record backups; Add a rehearsal on testnet | Rehearsal done
+Set up monitoring and alerting for deployed contracts | tooling | med | Production needs alerts. | Alert on admin actions, pauses and large mints; Use the indexer events; Document | Test alert fires on testnet
+Create a public status page for protocol contracts | tooling,frontend | med | Transparency. | List contract IDs, versions and WASM hashes; Generate from the manifest; Host as static page | Page builds in CI
+Draft the Phase 2 external audit scope | docs,security | med | ROADMAP lists audit for Phase 1 and 2. | List contracts, commits and questions; Pick candidate firms; Estimate effort | Scope doc merged
+Run a testnet incentive and bug-hunt event | docs | gfi | Real usage finds bugs. | Write rules and rewards; Prepare faucets and scripts; Publish a report | Report published

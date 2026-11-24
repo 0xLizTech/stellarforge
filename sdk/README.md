@@ -12,6 +12,11 @@ npm install @stellarforge-protocol/sdk
 
 Requires Node.js 22.12 or newer, which is what `@stellar/stellar-sdk` 17 requires. Its CommonJS build loads ESM-only dependencies with `require()`, and Node supports that without a flag only from 22.12.
 
+Supported versions: **22.12 (the exact minimum) and 24 (current LTS)**. CI
+(`.github/workflows/sdk-ci.yml`) runs the test matrix over both. Node.js 20 and
+older are not supported and are not tested — they are below the `engines` floor
+and fail at import time.
+
 ## Reading
 
 Every read is a simulation. Nothing is written, nothing is signed, and no
@@ -66,12 +71,24 @@ const tx = await client.buildTransferTx(from, to, toStroops("100", meta.decimals
 const signedXdr = await freighter.signTransaction(tx.toXdr(), { networkPassphrase });
 ```
 
-**The bare method signs and submits**, for server-side automation.
+**The bare method signs and submits** through a configured signer. `KeypairSigner`
+supports server-side automation; `FreighterSigner` adapts Freighter's
+`signTransaction` API without adding a wallet dependency to the SDK.
 
 ```typescript
-const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signerSecret });
+import { FreighterSigner, RwaAssetClient } from "@stellarforge-protocol/sdk";
+
+const signer = new FreighterSigner(publicKey, (xdr, options) =>
+  freighter.signTransaction(xdr, options),
+);
+const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signer });
 const { hash, ledger } = await client.transfer(from, to, amount);
 ```
+
+For server-side keypairs, use `new KeypairSigner(keypair)` or
+`KeypairSigner.fromSecret(secret)`. The older `signerSecret` config option remains
+supported for compatibility. Every submitting write, including sponsored
+submissions, uses the configured signer.
 
 A bare write waits for the transaction to settle, for up to its 180-second
 validity window plus 30 seconds. If it has not settled by then, the error type

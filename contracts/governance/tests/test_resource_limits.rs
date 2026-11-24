@@ -49,9 +49,12 @@ const REGRESSION_THRESHOLD_PERCENT: u64 = 20;
 // Baselines captured on this development machine's test host (see the module
 // doc comment). Each is the instruction count the matching test below
 // recorded at the time this file was written.
-const PROPOSE_BASELINE_INSNS: u64 = 124_347;
+// Updated after #134 (deposit config read/refund check), #135 (quorum and
+// pass-threshold reads in finalize), and #136 (ActiveBySpec duplicate index
+// write in propose and removal in finalize).
+const PROPOSE_BASELINE_INSNS: u64 = 194_672;
 const VOTE_BASELINE_INSNS: u64 = 179_636;
-const FINALIZE_BASELINE_INSNS: u64 = 113_920;
+const FINALIZE_BASELINE_INSNS: u64 = 145_748;
 
 struct Harness<'a> {
     env: Env,

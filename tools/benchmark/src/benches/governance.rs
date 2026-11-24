@@ -46,8 +46,10 @@ pub fn run() -> Vec<Row> {
     rows.push(measure(&env, CONTRACT, "admin"));
 
     let new_admin = Address::generate(&env);
-    client.transfer_admin(&new_admin);
-    rows.push(measure(&env, CONTRACT, "transfer_admin"));
+    client.propose_admin(&new_admin);
+    rows.push(measure(&env, CONTRACT, "propose_admin"));
+    client.accept_admin();
+    rows.push(measure(&env, CONTRACT, "accept_admin"));
 
     rows
 }

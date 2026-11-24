@@ -1,0 +1,37 @@
+#STAGE Stage 10: Research Tracks, Ecosystem and Community
+#PHASE research
+#CONTEXT ROADMAP.md lists research tracks beyond Phase 5 and a contributor program. This stage turns them into scoped, first-step issues and builds the community around the protocol.
+#OOS Committing the protocol to any track. Outputs are reports and prototypes.
+Research sub-second NAV updates via the Stellar DEX | research | hard | Real-time NAV settlement is a listed track. | Survey DEX price discovery; Estimate manipulation risk; Write findings | Report merged
+Prototype oracle aggregation across DEX and external feeds | research,contracts | hard | Same track. | Build an aggregator prototype; Test on testnet data | Prototype and notes merged
+Design a settlement mechanism using live NAV | research | hard | Same. | Write a design doc with failure modes | Doc merged
+Research tokenized private credit structures | research | hard | Tokenized debt is a listed track. | Survey structures; List covenants to monitor | Report merged
+Design on-chain covenant monitoring | research,contracts | hard | Same. | Specify covenants and triggers; Draft interfaces | Spec merged
+Prototype a loan contract with repayment schedule | research,contracts | hard | Same. | Implement a minimal loan with schedule; Add tests | Prototype merged
+Design default and recovery handling for tokenized debt | research | hard | Same. | Write the design with tranche links | Doc merged
+Research carbon credit tokenization standards | research | med | Verra and Gold Standard are listed. | Survey registry rules and retirement; Write findings | Report merged
+Prototype a carbon credit asset type | research,contracts | hard | Same. | Add retirement semantics to a prototype asset; Add tests | Prototype merged
+Design registry bridges to Verra and Gold Standard serial numbers | research,docs | med | Same. | Specify metadata mapping; Document double counting risks | Doc merged
+Research AI-assisted due diligence attestations | research | med | Listed track. | Define attestation format and trust model | Report merged
+Prototype an on-chain attestation registry | research,contracts | hard | Same. | Implement attestations signed by approved underwriters; Add tests | Prototype merged
+Research recursive ZK rollups for batching RWA operations | research | hard | Listed track. | Survey proof systems and Soroban constraints | Report merged
+Prototype batch transfer validity proofs | research | hard | Same. | Prototype an off-chain prover for a batch of transfers | Prototype merged
+Run a developer survey on RWA tokenization needs | docs | gfi | Roadmap input. | Draft questions; Publish; Summarize results | Summary merged
+Create a public roadmap board with phase columns | docs,tooling | gfi | Roadmap visibility. | Create a GitHub Project; Add issues by phase label; Link from README | Board is live
+Add an examples repository index | docs | gfi | Examples are scattered. | List all examples in `docs/EXAMPLES.md` | Index merged
+Create a contributor onboarding video script | docs | gfi | Lowers entry cost. | Write a 10 minute script covering setup and a first PR | Script merged
+Create a first-contributor tutorial: fix a labeled issue | docs | gfi | Hands-on guide. | Walk through fork, branch, test and PR with screenshots | Tutorial merged
+Add a maintainers guide | docs | gfi | Maintenance practices. | Document triage, review SLAs and release duty | Guide merged
+Add a governance of the project document (non-protocol) | docs | gfi | Decision making for contributors. | Describe maintainers, voting on ADRs and conflict resolution | Document merged
+Add a contributor recognition automation | docs,ci | gfi | CONTRIBUTING lists recognition. | Add an all-contributors config and bot | Bot works on a test PR
+Create a discussion category structure | docs | gfi | Discussions are mentioned in the roadmap. | Define categories for ideas, Q&A and RFCs | Categories created
+Add an RFC process and template | docs | gfi | Large changes need a proposal format. | Create `docs/rfcs/0000-template.md`; Describe the flow | Template merged
+Write a comparison with other RWA token standards | docs,research | med | Positioning. | Compare ERC-3643, ERC-1400 and Stellar assets; List tradeoffs | Doc merged
+Map StellarForge to ERC-3643 concepts | docs | med | Eases migration for EVM teams. | Create a concept table | Table merged
+Write a guide for migrating from classic Stellar assets to Soroban RWA tokens | docs | med | Common user need. | Explain wrapping with SACs and trustline differences | Guide merged
+Evaluate integration with Stellar anchors (SEP-24, SEP-31) | research | med | Fiat on and off ramps. | Describe flows for subscription and redemption | Report merged
+Evaluate wallet compatibility (Freighter, Lobstr, xBull) | research,testing | med | Real wallet support. | Test token display and transfer in each wallet; Record results | Matrix merged
+Create a public testnet faucet script for demo assets | tooling | gfi | Demos need test funds. | Add a script that mints demo assets to an address with limits | Script works
+Create a demo seed script for the dashboard | tooling | gfi | Demos need data. | Seed assets, KYC records and proposals on testnet | Dashboard shows data
+Add brand and logo guidelines | docs | gfi | Consistency. | Add `docs/BRAND.md` and assets | Merged
+Publish a public changelog site | docs | gfi | Release visibility. | Generate from CHANGELOG.md; Host on Pages | Site live

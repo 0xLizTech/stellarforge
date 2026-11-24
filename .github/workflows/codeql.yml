@@ -1,0 +1,47 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdk/**"
+      - ".github/workflows/codeql.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "sdk/**"
+      - ".github/workflows/codeql.yml"
+  schedule:
+    # Weekly, so a newly published query can flag code that has not changed.
+    # Offset from security.yml (09:00) to keep the runs apart.
+    - cron: "30 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  # Required to upload results to the code scanning tab.
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze JavaScript/TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # security-extended plus quality queries; documented in docs/SECURITY.md.
+          queries: security-and-quality
+
+      # The JavaScript/TypeScript extractor reads sources directly, so no
+      # build step is required for this language.
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript-typescript"

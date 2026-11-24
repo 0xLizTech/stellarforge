@@ -124,6 +124,9 @@ a weekly schedule.
 git clone https://github.com/0xLizTech/stellarforge.git
 cd stellarforge
 
+# Verify required toolchain versions (rustc, wasm32v1-none, stellar-cli, node, npm)
+make doctor
+
 # Build everything
 make build
 
@@ -136,6 +139,21 @@ make sdk-test
 make sdk-lint
 make sdk-typecheck
 ```
+
+### Devcontainer & Codespaces
+
+If you use GitHub Codespaces or the VS Code Dev Containers extension, `.devcontainer/devcontainer.json` provisions a ready-to-use environment with the pinned Rust toolchain (`rust-toolchain.toml`), the `wasm32v1-none` target, `stellar-cli` (`27.1.0`, matching CI), and Node.js 22 preinstalled, and runs `npm ci` in `sdk/` automatically on container creation so `make test` and `npm test` work immediately without manual setup.
+
+### VS Code Tasks
+
+`.vscode/tasks.json` defines Command Palette tasks (**Terminal: Run Task**) grouped into build and test tasks:
+
+| Task label | Group | Command | Description |
+|---|---|---|---|
+| `make build` | `build` (default) | `make build` | Build all Soroban WASM contracts |
+| `make lint` | `build` | `make lint` | Run Clippy linter across the Rust workspace |
+| `make test` | `test` (default) | `make test` | Run all Rust contract tests |
+| `npm test` | `test` | `npm test` (in `sdk/`) | Run TypeScript SDK unit tests |
 
 ### Running a single contract's tests
 
@@ -173,7 +191,8 @@ stellarforge/
 │   ├── registry/           # Global registry of deployed asset contracts
 │   ├── compliance/         # KYC/AML record management
 │   ├── governance/         # On-chain proposal & voting
-│   └── oracle-adapter/     # SEP-40 NAV price feed (Phase 2)
+│   ├── oracle-adapter/     # SEP-40 NAV price feed (Phase 2)
+│   └── vault/              # Fractionalization vault & SEP-41 share token (Phase 2)
 ├── sdk/                    # @stellarforge-protocol/sdk (TypeScript)
 │   ├── src/
 │   │   ├── client.ts       # RwaAssetClient, ComplianceClient
@@ -237,6 +256,11 @@ Branch naming conventions:
 make fmt
 make lint
 
+# Workspace tooling checks (soroban-sdk consistency, WASM size budgets, cargo-deny)
+node scripts/check-soroban-sdk-version.cjs
+node scripts/check-wasm-size.cjs
+cargo deny check
+
 # TypeScript SDK
 make sdk-lint
 make sdk-typecheck
@@ -247,7 +271,36 @@ make all
 
 CI will reject PRs that fail formatting or linting.
 
-### 4. Write tests
+### 4. Upgrading `soroban-sdk` and Managing WASM Budgets
+
+#### Upgrading `soroban-sdk` (#95)
+
+All workspace crates inherit `soroban-sdk` from a single `[workspace.dependencies]` entry in the root [`Cargo.toml`](Cargo.toml). Individual crates must always declare `soroban-sdk = { workspace = true }` (with optional `features = ["testutils"]` in `[dev-dependencies]`) and must never pin a per-crate `version`, `git`, or `path` override. `node scripts/check-soroban-sdk-version.cjs` enforces this rule in CI.
+
+To upgrade `soroban-sdk` across the workspace:
+
+1. **Update the root manifest:** Edit `soroban-sdk = { version = "..." }` under `[workspace.dependencies]` in the root `Cargo.toml`.
+2. **Align `stellar-cli` in CI:** If the major or minor version changes, update `STELLAR_CLI_VERSION` and `STELLAR_CLI_SHA256` in `.github/workflows/contracts-ci.yml` and `.github/workflows/testnet-smoke.yml`.
+3. **Refresh `Cargo.lock` and verify consistency:**
+   ```bash
+   cargo update -p soroban-sdk
+   node scripts/check-soroban-sdk-version.cjs
+   cargo deny check
+   ```
+4. **Rebuild contracts, verify WASM budgets, and run tests:**
+   ```bash
+   make build
+   node scripts/check-wasm-size.cjs
+   node scripts/generate-oracle-parity-table.cjs
+   make test
+   make sdk-test
+   ```
+
+#### Contract WASM Size Budgets (#93, #94)
+
+Each deployable contract (`rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`) has a byte budget tracked in [`contracts/size-budget.json`](contracts/size-budget.json). In CI, `.github/workflows/contracts-ci.yml` builds all five contracts, runs `node scripts/check-wasm-size.cjs` to compare their optimized `.wasm` sizes against `contracts/size-budget.json`, comments the size delta table on pull requests, and fails the build if any contract exceeds its `max_bytes` ceiling. Raising a contract's budget requires an explicit, reviewed edit to `contracts/size-budget.json`.
+
+### 5. Write tests
 
 See [Testing Requirements](#testing-requirements).
 
@@ -432,6 +485,7 @@ To run the smoke tests locally against testnet for the first time:
 ## Documentation Standards
 
 - **ADRs (Architecture Decision Records):** For any significant architectural decision, create a new ADR in `docs/architecture/` using the template at `docs/architecture/000-template.md`. ADRs are immutable once merged; superseded ADRs are marked as such.
+- **RFCs (protocol changes):** For significant protocol-level changes, write an RFC in `docs/rfcs/` using the template at `docs/rfcs/0000-template.md`. When an RFC is required and how it is reviewed is described in `docs/rfcs/README.md`.
 - **Contract changes:** Update the relevant section in `README.md`'s Contract Reference table.
 - **New modules:** Add a brief description to the README architecture diagram.
 - **Breaking changes:** Document in `CHANGELOG.md` and flag `BREAKING CHANGE:` in the commit footer.

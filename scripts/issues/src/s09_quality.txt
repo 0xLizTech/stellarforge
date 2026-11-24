@@ -1,0 +1,48 @@
+#STAGE Stage 9: Contract Test Depth and Code Quality (Phase 1 Contracts)
+#PHASE phase-2
+#CONTEXT The five existing contracts have integration tests per crate but gaps remain in negative paths, boundaries and documentation. This stage is a good entry point for new contributors.
+#OOS New features. Tests and refactors must not change contract behavior.
+Add negative-path tests for rwa-asset mint | contracts,testing | gfi | Only happy paths and a few errors may be covered. | Test mint by non-issuer, over cap, negative and zero amount, paused; Assert exact error variants | Each failure has a test
+Add negative-path tests for rwa-asset burn and burn_from | contracts,testing | gfi | Same. | Test insufficient balance, no allowance, expired allowance, paused | Each failure has a test
+Add negative-path tests for rwa-asset transfer | contracts,testing | gfi | Same. | Test zero, negative, insufficient funds, paused, failed compliance | Each failure has a test
+Add boundary tests for allowance live_until_ledger | contracts,testing | gfi | Edge ledgers cause off-by-one bugs. | Test expiry at ledger N minus 1, N and N plus 1; Test live_until in the past | Boundaries documented in tests
+Add tests for self-transfer behavior | contracts,testing | gfi | IR-15 touched self `transfer_from`. | Test self transfer and self transfer_from events and balances | Behavior is pinned
+Add tests for maximum i128 amounts | contracts,testing | med | Overflow is a classic bug. | Test balances near i128 max; Assert overflow errors not panics | No panic reaches the host
+Add compliance tests for exact expiry timestamps | contracts,testing | gfi | Expiry semantics can drift. | Test at expiry minus 1, equal, plus 1 | Boundaries pinned
+Add compliance tests for revoke then re-set | contracts,testing | gfi | State flows. | Test revoke, set again and read; Assert events | Behavior pinned
+Add compliance tests for jurisdiction validation edge cases | contracts,testing | gfi | IR-08 added checks. | Test lowercase, three letters, digits, empty | All rejected with `InvalidJurisdiction`
+Add registry tests for pagination boundaries | contracts,testing | gfi | Pagination bugs hide at boundaries. | Test start beyond count, limit 0, limit 100, limit 101 | Behavior pinned
+Add registry tests for duplicate registration | contracts,testing | gfi | Duplicates must fail. | Test registering the same contract twice | Error asserted
+Add registry tests for set_active transitions | contracts,testing | gfi | State flow. | Test active to inactive to active and events | Behavior pinned
+Add governance tests for exact voting period boundaries | contracts,testing | gfi | Boundary bugs. | Test vote at last ledger and first ledger after; Test finalize timing | Behavior pinned
+Add governance tests for tie votes | contracts,testing | gfi | Tie handling must be explicit. | Test equal for and against; Assert the outcome | Behavior documented
+Add governance tests for double voting | contracts,testing | gfi | Core safety property. | Test same voter twice with different support | Second vote fails
+Add governance tests for finalize called twice | contracts,testing | gfi | Idempotence. | Test double finalize | Second call fails
+Add governance tests for zero weight votes | contracts,testing | gfi | Edge case. | Test weight 0 and negative weights | Rejected
+Add oracle-adapter tests for price at exact timestamps | contracts,testing | gfi | Boundary behavior. | Test `price` for exact, before and after known timestamps | Behavior pinned
+Add oracle-adapter tests for the deviation guard boundaries | contracts,testing | med | Guard must trigger exactly at the limit. | Test at limit, limit plus 1 bps | Behavior pinned
+Add oracle-adapter tests for reporter removal | contracts,testing | gfi | Access control. | Remove a reporter then report | Report fails
+Add oracle-adapter tests for the `prices` records limit | contracts,testing | gfi | Bounds. | Test records 0, 1 and above the cap | Behavior pinned
+Add oracle-adapter override_price audit event tests | contracts,testing | gfi | Overrides are sensitive. | Assert an event is emitted with the old and new values | Test exists
+Test cross-contract: rwa-asset with registry | contracts,testing | med | Registry lists assets. | Register a deployed asset; Deactivate; Assert independent behavior | Test passes
+Test cross-contract: rwa-asset with compliance across expiry | contracts,testing | med | Real flow. | Transfer before and after KYC expiry | Behavior pinned
+Test cross-contract: governance controlling an rwa-asset admin | contracts,testing | med | Preparation for execution hooks. | Rotate the admin to governance; Try admin calls by proposal | Behavior documented
+Test deployment order and constructor argument validation | contracts,testing | gfi | Constructors validate inputs. | Test invalid constructor args for all crates | Each rejection tested
+Add a shared test utility crate | contracts,testing | med | Test setup is duplicated. | Create `contracts/test-utils` with env builders; Migrate two crates | Duplication removed in migrated crates
+Add snapshot tests for contract spec output | contracts,testing | med | ABI changes should be intentional. | Snapshot the exported spec per crate; Document updates | ABI changes fail the test
+Add code coverage reporting for contracts | contracts,ci,testing | med | No coverage metrics. | Use cargo-llvm-cov; Upload to Codecov; Report per crate | Coverage appears on PRs
+Set a coverage threshold for contracts | contracts,ci | gfi | Needs a number. | Set 90 percent line threshold; Document exceptions | PR fails below threshold
+Add mutation testing for contracts with cargo-mutants | contracts,testing,security | hard | Coverage does not prove assertions. | Run on rwa-asset and compliance; Kill surviving mutants; Report | Score reported
+Review clippy allow attributes and remove unjustified ones | contracts | gfi | Suppressed lints hide issues. | List all `allow` attributes; Remove or justify with comments | Each remaining allow has a reason
+Enable stricter clippy lints in the workspace | contracts,ci | med | Higher quality bar. | Enable `clippy::pedantic` selectively; Fix findings; Document choices | CI passes
+Replace magic numbers with named constants | contracts | gfi | Constants such as TTL values should be named. | Find literals in `lib.rs` files; Move to `common`; Add docs | No unexplained literals remain
+Add rustdoc to every public contract function | contracts,docs | gfi | Docs generate the spec descriptions. | Document args, auth, errors and events; Enable `missing_docs` | Warning-free doc build
+Publish rustdoc to GitHub Pages | docs,ci | gfi | Make docs browsable. | Build docs in CI; Deploy to Pages | Site is live
+Factor shared admin logic into contracts/common | contracts | med | Admin rotation is duplicated across crates. | Extract a helper preserving dual authorization; Migrate crates one at a time; Keep tests green | No behavior change; WASM size delta reported
+Factor shared pagination into contracts/common | contracts | gfi | Pagination logic appears in the registry. | Extract helper; Reuse in governance listing | Registry tests unchanged
+Review event naming consistency across contracts | contracts | gfi | Names should follow one scheme. | Audit event names; Propose a convention; Apply if no consumers break | Convention doc merged
+Review error enum numbering consistency | contracts | gfi | Codes should not collide in meaning across crates. | Audit codes; Document ranges per crate | Table merged
+Optimize storage reads in transfer | contracts | med | Fewer reads lower fees. | Profile transfer; Remove redundant reads; Show before and after numbers | Instruction count drops without behavior change
+Optimize registry registration cost | contracts | med | Same. | Profile register; Remove redundant writes | Cost drops
+Add a security-focused review of all require_auth placements | contracts,security | med | Auth bugs are critical. | Review each entry point; Record the auth table in the docs; Add missing tests | Table merged
+Add an inventory of all external calls made by contracts | contracts,security | gfi | Reentrancy analysis input. | List cross-contract calls and order relative to state writes | Inventory merged

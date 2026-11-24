@@ -1,0 +1,34 @@
+#STAGE Stage 11: Operations, Observability and Release Engineering
+#PHASE phase-2
+#CONTEXT Before mainnet the project needs repeatable releases, nightly integration runs, observability for deployed contracts and clear operational documentation.
+#OOS Feature work on contracts or SDK APIs.
+Add a nightly testnet integration workflow for all contracts | ci,testing | med | `testnet-smoke.yml` exists, but coverage should include every deployed contract. | Deploy fresh contracts nightly; Run read and write smoke tests; Post failures to an issue | A failing night opens an issue
+Cache the Rust build and WASM artifacts across CI jobs | ci | gfi | Slow CI discourages contributors. | Tune cache keys; Share artifacts between jobs; Report timing | CI time drops by a measured amount
+Add a matrix test for Node 20 and 22 in SDK CI | sdk,ci | gfi | Supported Node versions need coverage. | Add a matrix; Document supported versions | Both pass
+Add a release checklist issue template | ci,docs | gfi | Releases are error prone. | Add a template with signing, hashes and changelog steps | Template available
+Automate GitHub Releases with WASM artifacts and hashes | ci | med | Releases ship artifacts manually. | Upload WASM and `SHA256SUMS` on tag; Generate notes from the changelog | Tag creates a release
+Sign release artifacts with Sigstore | ci,security | med | Consumers want to verify artifacts. | Sign WASM and checksums with cosign keyless; Document verification | Verification command works
+Generate an SBOM for the SDK and contracts | ci,security | gfi | Supply-chain transparency. | Produce CycloneDX output on release; Attach to the release | SBOM attached
+Add a CodeQL scan for TypeScript | ci,security | gfi | Static analysis. | Enable CodeQL for `sdk/`; Triage findings | Scan runs weekly
+Add OpenSSF Scorecard and fix low scores | ci,security | med | Public security posture. | Add the workflow; Fix top findings | Score published in README
+Add branch protection documentation and enforcement checklist | docs,ci | gfi | Rules should be written down. | Document required checks and reviews; Add a settings checklist | Document merged
+Add a Docker image for local development network | tooling | med | Local testing without testnet. | Build an image with stellar quickstart; Add compose file; Document | `docker compose up` starts a local network
+Add a local deploy script targeting the quickstart network | tooling | gfi | Companion to the image. | Extend `deploy.sh` with a `local` network; Document funding | Local deploy succeeds
+Add a script to export a contract's current state for debugging | tooling | med | Helpful for support. | Dump instance and key storage entries to JSON | Output is readable
+Add a log decoder for diagnostic events | tooling | gfi | Debug output is opaque. | Decode diagnostic events from a transaction hash | Decoder prints readable data
+Add Prometheus metrics to the reference indexer | tooling | med | Operators need metrics. | Expose lag, events per second and errors | Metrics endpoint works
+Add a Grafana dashboard definition for protocol health | tooling | med | Visibility. | Provide JSON for balances, mints and pauses | Dashboard imports cleanly
+Add alert rules for admin actions | tooling,security | med | Detect misuse. | Define alerts on rotations, pauses and overrides | Test alert fires
+Add Discord or Slack webhook notifications for protocol events | tooling | gfi | Team awareness. | Add a notifier consuming indexer events | Webhook receives a test event
+Document RPC provider selection and failover | docs | gfi | RPC reliability. | Compare public and paid providers; Describe failover in the SDK | Doc merged
+Add an RPC failover option to the SDK | sdk | med | Single RPC is a point of failure. | Accept a list of URLs; Rotate on error; Add tests | Failover test passes
+Document fee budgeting and sponsored transaction operations | docs | gfi | Sponsors need cost planning. | Explain fee bumps, budgets and monitoring | Doc merged
+Add a TTL extender bot for critical ledger entries | tooling | med | Entries archive when TTL lapses. | Scan manifest contracts; Extend TTL before a threshold; Log actions | Bot extends a test entry
+Document state archival and restore procedures | docs | med | Soroban archives entries. | Explain detection and restore with CLI examples | Doc merged
+Test archival and restore for a contract instance on testnet | contracts,testing | med | Prove the procedure. | Let TTL lapse; Restore; Verify functions | Result documented
+Add a disaster recovery plan for lost infrastructure | docs | med | Operational resilience. | Cover RPC loss, key loss and indexer rebuild | Plan merged
+Add a data retention and privacy policy for the indexer | docs | gfi | Compliance with privacy laws. | Describe stored data and deletion | Policy merged
+Add load testing for the reference indexer | tooling,testing | med | Know the limits. | Replay a large event set; Report throughput | Report merged
+Add a performance benchmark suite for the SDK | sdk,testing | gfi | Track regressions. | Benchmark parsing and building; Store results | Benchmarks run in CI
+Add an end to end release rehearsal on testnet | ci,docs | med | De-risk the real release. | Run the full release flow with test keys; Record problems | Rehearsal report merged
+Create a v1.0 SDK stabilization checklist | sdk,docs | gfi | Gate for the 1.0 release. | List API freeze, docs, tests and migration notes | Checklist merged

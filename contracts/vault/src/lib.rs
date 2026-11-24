@@ -548,6 +548,26 @@ impl VaultContract {
         bal - (bal % cfg.exchange_rate)
     }
 
+    /// Returns the number of shares minted for a given `amount` of underlying asset (#220, #218).
+    pub fn preview_deposit(env: Env, amount: i128) -> i128 {
+        let cfg = Self::config(env);
+        if cfg.exchange_rate <= 0 || amount <= 0 {
+            0
+        } else {
+            amount * cfg.exchange_rate
+        }
+    }
+
+    /// Returns the underlying units redeemed for a given number of `shares` (#220).
+    pub fn preview_redeem(env: Env, shares: i128) -> i128 {
+        let cfg = Self::config(env);
+        if cfg.exchange_rate <= 0 || shares <= 0 {
+            0
+        } else {
+            shares / cfg.exchange_rate
+        }
+    }
+
     // ── Multi-Source NAV & Oracles (#59) ───────────────────────────────────────
 
     /// Configures the primary and optional secondary SEP-40 oracle sources (admin only).

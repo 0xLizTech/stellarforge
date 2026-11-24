@@ -1,4 +1,4 @@
-.PHONY: all build test fmt lint clean sdk-install sdk-build sdk-test sdk-lint sdk-typecheck deploy-testnet udeps hooks help
+.PHONY: all build test fmt lint clean sdk-install sdk-build sdk-test sdk-lint sdk-typecheck deploy-testnet udeps hooks doctor help
 
 # ─── Variables ────────────────────────────────────────────────────────────────
 NETWORK        ?= testnet
@@ -60,6 +60,9 @@ hooks: ## Install the pre-commit Git hooks (install: pip install pre-commit)
 	pre-commit install
 	pre-commit install --hook-type commit-msg
 	@echo "Pre-commit hooks installed. Run 'pre-commit run --all-files' to check the tree."
+
+doctor: ## Check local Rust, stellar-cli, and Node toolchain against pinned versions
+	./scripts/doctor.sh
 
 ##@ Release
 deploy-testnet: ## Deploy all four contracts to Stellar testnet

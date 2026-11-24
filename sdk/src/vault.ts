@@ -540,6 +540,38 @@ export class VaultClient extends ContractClient {
     return scValToNative(result) as bigint;
   }
 
+  /** Preview shares minted for underlying deposit amount. */
+  async previewDeposit(amount: bigint): Promise<bigint> {
+    const result = await this.simulateReadOnly("preview_deposit", [
+      nativeToScVal(amount, { type: "i128" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
+  /** Preview underlying amount redeemed for share count. */
+  async previewRedeem(shares: bigint): Promise<bigint> {
+    const result = await this.simulateReadOnly("preview_redeem", [
+      nativeToScVal(shares, { type: "i128" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
+  /** Maximum deposit amount accepted from `userAddress`. */
+  async maxDeposit(userAddress: string): Promise<bigint> {
+    const result = await this.simulateReadOnly("max_deposit", [
+      nativeToScVal(userAddress, { type: "address" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
+  /** Maximum shares redeemable by `holderAddress`. */
+  async maxRedeem(holderAddress: string): Promise<bigint> {
+    const result = await this.simulateReadOnly("max_redeem", [
+      nativeToScVal(holderAddress, { type: "address" }),
+    ]);
+    return scValToNative(result) as bigint;
+  }
+
   /** Whether vault operations are currently paused. */
   async paused(): Promise<boolean> {
     const result = await this.simulateReadOnly("paused", []);

@@ -1,0 +1,58 @@
+#STAGE Stage 8: Phase 5 - Full DAO, Insurance, Treasury and Reporting
+#PHASE phase-5
+#CONTEXT Phase 5 (target Q1-Q2 2028) delivers the `insurance-pool` contract, full DAO migration with optimistic governance, a protocol treasury, institutional custody adapters and a regulatory reporting module. See ROADMAP.md Phase 5 and PRD sections 5.10, 11.5 and 13.3.
+#OOS Research tracks listed under Beyond Phase 5.
+Write ADR-015: insurance pool economics | docs,contracts,research | hard | Premium pricing and solvency rules decide whether the pool survives. | Model premiums, collateral and payout scenarios; Set the 150 percent minimum ratio rule; Record assumptions | ADR merged with the model
+Scaffold the insurance-pool crate | contracts | gfi | No crate exists. | Create crate files; Add to workspace | Crate builds
+Implement collateral staking by insurance providers | contracts | hard | Backing for policies. | Accept deposits; Track shares of the pool; Add lock rules | Providers stake and withdraw per rules
+Implement policy purchase with premium payment | contracts | hard | Permissionless coverage. | Accept coverage amount and duration; Compute premium; Mint a policy record | Policy is stored and premium split correctly
+Implement premium pricing curves | contracts | hard | Price reflects risk and utilization. | Implement a utilization-based curve; Add parameters; Add tests | Price rises with utilization
+Enforce the minimum coverage solvency ratio | contracts,security | hard | PRD requires at least 150 percent. | Reject policies that break the ratio; Add tests at the boundary | Boundary test passes
+Implement coverage scope definitions | contracts | med | Bugs, oracle manipulation and bridge exploits are covered. | Encode scopes per policy; Validate on claim; Add tests | Out-of-scope claims fail
+Implement claim submission with evidence hash | contracts | med | Claims need evidence. | Accept claim data and evidence hash; Bond the claimant; Emit events | Claim is stored
+Implement DAO adjudication of claims | contracts | hard | Claims decided by vote. | Create a governance proposal per claim; Pay on approval; Add tests | Approved claim pays out
+Implement payout and pro-rata loss sharing | contracts | hard | Pool losses are shared. | Reduce provider shares on payout; Add tests | Losses reconcile
+Implement policy expiry and premium earning | contracts | med | Premiums accrue over time. | Release premiums linearly; Add tests | Accrual matches the schedule
+Add insurance pool pause and wind-down | contracts,security | med | Failure handling. | Add pause and wind-down; Add tests | Providers withdraw after wind-down
+Add insurance events and snapshot tests | contracts,testing | gfi | IR-03 practice. | Define events; Snapshot; Document | Tests exist
+Add admin rotation and constructor auth tests to insurance-pool | contracts,testing,security | gfi | IR-04 and IR-17. | Add `transfer_admin` and the auth test | Tests mutation-checked
+Property test insurance solvency | contracts,testing | hard | The pool must never go insolvent silently. | Randomize policies, claims and withdrawals; Assert the ratio rule | No violation in 100,000 cases
+Run a 90-day solvency simulation | research,testing | hard | Phase 5 exit criterion. | Build an agent simulation; Report ratio over time | Report shows ratio above 200 percent
+Add InsurancePoolClient to the SDK | sdk | med | SDK parity. | Wrap functions; Add tests | Covers the ABI
+Add an insurance dashboard page | frontend | med | Users buy coverage. | Quote, buy and view policies | Purchase works on testnet
+Write the insurance pool threat model | docs,security | hard | Mandatory. | Cover adjudication capture, oracle abuse and bank-run dynamics | Merged
+Write the insurance disclaimer and risk copy | docs | gfi | Avoid misleading users. | Draft plain-language risk text; Review with legal | Copy merged
+Write ADR-016: optimistic governance and veto council | docs,contracts,security | hard | Phase 5 uses a 48-hour timelock with a veto. | Define flow, veto rules and council election | ADR merged
+Implement optimistic execution with a 48h timelock | contracts | hard | Proposals execute unless vetoed. | Add optimistic path; Add tests | Unvetoed proposal executes after 48h
+Implement the 3-of-7 emergency veto council | contracts,security | hard | PRD defines it. | Add council membership and veto votes; Add tests | Three vetoes block execution
+Implement council election and rotation | contracts | hard | Elected community members. | Add elections by SFORGE vote; Add terms; Add tests | Council changes by election
+Implement vote delegation limits and anti-capture checks | contracts,security | med | Prevent concentration. | Add per-delegate caps or warnings; Add tests | Cap enforced
+Add proposal categories with different thresholds | contracts | med | Parameter changes differ from upgrades. | Add categories and quorum per category; Add tests | Upgrades need higher quorum
+Add on-chain proposal metadata hash for off-chain discussion | contracts | gfi | PRD 5.7 plans this. | Store a metadata hash; Emit it; Add tests | Hash retrievable
+Migrate all admin keys to governance | contracts,security | hard | Exit criterion. | Run the rotation across all contracts on testnet; Verify no admin keys remain | Verification script clean
+Relinquish upgrade authority behind a governance-only path | contracts,security | hard | No admin keys. | Move the upgrade right to governance; Test an upgrade by proposal | Upgrade proposal executes on testnet
+Approve and execute a fee change by DAO vote on testnet | contracts,testing | med | Exit criterion. | Run the full flow; Record hashes | Evidence published
+Write ADR-017: protocol treasury design | docs,contracts | med | Defines holdings and spending rules. | Specify accounts, spend limits and reporting | ADR merged
+Scaffold the treasury crate | contracts | gfi | No crate exists. | Create crate files; Add to workspace | Crate builds
+Implement fee accumulation from protocol modules | contracts | med | Fees flow to the treasury. | Accept fees from authorized modules; Track per token; Add tests | Balances reconcile
+Implement DAO-controlled spending with limits | contracts,security | hard | Spending needs guardrails. | Add per-proposal and per-period caps; Add tests | Over-cap spend fails
+Implement the grant program module | contracts | hard | PRD lists ecosystem grants. | Add milestones and clawback; Add tests | Grant releases per milestone
+Implement buyback-and-burn for SFORGE | contracts | hard | PRD lists it. | Swap through a DEX adapter; Burn tokens; Add slippage limits | Burn event emitted in tests
+Add treasury reporting views | contracts | gfi | Transparency. | Add balance and flow views; Add tests | Views match state
+Add TreasuryClient to the SDK | sdk | med | SDK parity. | Wrap functions; Add tests | Covers the ABI
+Add a public treasury dashboard | frontend | med | Transparency. | Show balances, flows and grants | Page renders testnet data
+Write ADR-018: institutional custody adapter interface | docs,contracts | med | Fireblocks, Copper and BitGo differ. | Define a common signing and policy interface; Document differences | ADR merged
+Implement a Fireblocks signer adapter | sdk,tooling | hard | Enterprise issuers. | Use the Fireblocks API to sign Soroban transactions; Add mocks and tests | Signs a testnet transaction
+Implement a Copper signer adapter | sdk,tooling | hard | Same. | Implement against the Copper API; Add tests | Signs a testnet transaction
+Implement a BitGo signer adapter | sdk,tooling | hard | Same. | Implement against the BitGo API; Add tests | Signs a testnet transaction
+Add custody policy templates for issuers | docs | gfi | Safe defaults. | Provide policy examples for mint approvals; Document | Templates merged
+Write ADR-019: regulatory reporting data model | docs,contracts | med | MiCA, SEC Reg D/A+ and MAS differ. | Map required fields to on-chain data; Identify gaps | ADR merged
+Scaffold the reporting module crate | contracts | gfi | No crate exists. | Create crate files; Add to workspace | Crate builds
+Implement the on-chain issuance ledger | contracts | hard | Canonical issuance record. | Record issuance and redemption entries; Hash entries; Add tests | Ledger entries are append-only
+Implement a holder snapshot export | contracts,tooling | med | Reports need holder lists. | Provide a bounded paged view and an off-chain exporter; Add tests | Export matches balances
+Implement MiCA report generator (off-chain) | tooling | hard | Regulatory output. | Generate the required fields from chain data; Add sample output | Sample report generated
+Implement SEC Reg D and A+ report generator | tooling | hard | Same. | Generate required data; Add sample | Sample report generated
+Implement MAS report generator | tooling | hard | Same. | Generate required data; Add sample | Sample report generated
+Add report signing and timestamping | tooling,security | med | Reports need integrity. | Sign output with a configured key; Include ledger references | Signature verifies
+Write the Phase 5 external audit scope | docs,security | med | ROADMAP lists it. | List contracts and commits; Estimate effort | Scope doc merged
+Prepare the Phase 4 mainnet deployment plan | docs | med | ROADMAP lists it. | Define order and checks | Plan merged

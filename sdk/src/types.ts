@@ -1,3 +1,5 @@
+import type { Transaction } from "@stellar/stellar-sdk";
+
 // ─── Core Protocol Types ──────────────────────────────────────────────────────
 
 export type AssetClass =
@@ -51,9 +53,19 @@ export interface ContractAddresses {
   oracleAdapter?: string;
 }
 
+/** Signs a prepared transaction for the account identified by `publicKey`. */
+export interface Signer {
+  /** The Stellar public key this signer controls. */
+  readonly publicKey: string;
+  /** Signs a transaction and returns the signed transaction for submission. */
+  signTransaction(transaction: Transaction, networkPassphrase: string): Promise<Transaction>;
+}
+
 export interface StellarForgeConfig extends NetworkConfig {
   contracts: ContractAddresses;
-  /** Optional signing keypair (StrKey secret, `S...`) — only for server-side use */
+  /** Preferred transaction signer. Use `signerSecret` only for legacy server-side configurations. */
+  signer?: Signer;
+  /** @deprecated Use `signer` with a {@link Signer} adapter instead. Server-side only. */
   signerSecret?: string;
 }
 

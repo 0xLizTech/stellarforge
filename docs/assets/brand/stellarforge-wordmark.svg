@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="160" viewBox="0 0 640 160" role="img" aria-label="StellarForge">
+  <title>StellarForge</title>
+  <g fill="none">
+    <circle cx="80" cy="80" r="34" stroke="#0B1220" stroke-width="6"/>
+    <ellipse cx="80" cy="80" rx="54" ry="20" stroke="#F59E0B" stroke-width="6" transform="rotate(-24 80 80)"/>
+  </g>
+  <circle cx="80" cy="80" r="10" fill="#F59E0B"/>
+  <text x="170" y="98" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="56" font-weight="700" fill="#0B1220">StellarForge</text>
+</svg>
