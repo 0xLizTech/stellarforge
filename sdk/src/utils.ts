@@ -1,4 +1,4 @@
-import { StrKey, rpc } from "@stellar/stellar-sdk";
+import { MuxedAccount, StrKey, rpc } from "@stellar/stellar-sdk";
 import { createHash } from "node:crypto";
 import { InvalidAddressError } from "./errors.js";
 
@@ -22,17 +22,49 @@ export function isValidContractId(id: string): boolean {
   }
 }
 
+/** Returns true if the string is a valid Stellar multiplexed address (M-address, SEP-23). */
+export function isValidMuxedAddress(address: string): boolean {
+  try {
+    return StrKey.isValidMed25519PublicKey(address);
+  } catch {
+    return false;
+  }
+}
+
+/** Result of parsing a Stellar multiplexed address (SEP-23). */
+export interface ParsedMuxedAddress {
+  /** The underlying Stellar public key (G-address). */
+  address: string;
+  /** The 64-bit multiplexed account ID (memo ID). */
+  id: bigint;
+}
+
+/**
+ * Parses a Stellar M-address (SEP-23) into its underlying G-address and 64-bit muxed ID.
+ * Returns null if `address` is not a valid M-address.
+ */
+export function parseMuxedAddress(address: string): ParsedMuxedAddress | null {
+  if (!isValidMuxedAddress(address)) {
+    return null;
+  }
+  const muxed = MuxedAccount.fromAddress(address, "0");
+  return {
+    address: muxed.baseAccount().accountId(),
+    id: BigInt(muxed.id()),
+  };
+}
+
 /** Validates that an address is a valid Stellar G, C, or M address, or throws InvalidAddressError. */
 export function validateAddress(address: string, parameterName?: string): void {
   if (
     !isValidStellarAddress(address) &&
     !isValidContractId(address) &&
+    !isValidMuxedAddress(address) &&
     !(typeof address === "string" && address.startsWith("M") && address.length === 69)
   ) {
     throw new InvalidAddressError(address, parameterName);
   }
 }
-
 // ─── Amount Utilities ─────────────────────────────────────────────────────────
 
 /** Largest `decimals` the contract accepts, mirroring `MAX_DECIMALS` in `rwa-asset`. */
@@ -63,7 +95,7 @@ function assertDecimals(decimals: number): void {
  * - A `number` must be a safe integer. Pass fractional or large amounts as a
  *   string: a `number` has already lost precision before this function sees it.
  */
-export function toStroops(amount: number | string, decimals = 7): bigint {
+export function toStroops(amount: number | string | bigint, decimals = 7): bigint {
   assertDecimals(decimals);
   if (typeof amount === "number" && !Number.isSafeInteger(amount)) {
     throw new RangeError(
@@ -99,6 +131,81 @@ export function fromStroops(stroops: bigint, decimals = 7): string {
   const integer = digits.slice(0, digits.length - decimals);
   const fraction = digits.slice(digits.length - decimals).replace(/0+$/, "");
   return `${sign}${integer}${fraction ? `.${fraction}` : ""}`;
+}
+
+/**
+ * Formats an amount into a grouped, locale-aware display string (e.g. "1,234.56" or "1.234,56").
+ *
+ * Avoids floating-point arithmetic so that amounts up to and beyond 1e30 are formatted with
+ * 100% exact precision.
+ *
+ * - If `amount` is a `bigint`, it is treated as base units (stroops) and converted to decimal
+ *   using `fromStroops(amount, decimals)`.
+ * - If `amount` is a `string`, it must be plain decimal notation.
+ * - If `amount` is a `number`, it must be a safe integer (pass fractional or large amounts as
+ *   string or bigint to prevent JavaScript floating-point precision loss).
+ *
+ * @param amount - The amount to format (base units as bigint, or decimal string/safe integer).
+ * @param decimals - The asset's decimal places (0 to 18, defaults to 7).
+ * @param locale - BCP 47 language tag (e.g. "en-US", "de-DE", defaults to "en-US").
+ * @returns Formatted locale-aware string with digit grouping.
+ */
+export function formatAmount(
+  amount: bigint | string | number,
+  decimals = 7,
+  locale = "en-US",
+): string {
+  assertDecimals(decimals);
+
+  let decStr: string;
+  if (typeof amount === "bigint") {
+    decStr = fromStroops(amount, decimals);
+  } else if (typeof amount === "number") {
+    if (!Number.isSafeInteger(amount)) {
+      throw new RangeError(
+        `${amount} is not a safe integer; pass fractional or large amounts as a string or bigint`,
+      );
+    }
+    decStr = String(amount);
+  } else if (typeof amount === "string") {
+    const text = amount.trim();
+    if (!DECIMAL_AMOUNT.test(text)) {
+      throw new SyntaxError(
+        `Invalid amount ${JSON.stringify(amount)}: expected plain decimal notation such as "12.5"`,
+      );
+    }
+    const [, fraction = ""] = text.split(".");
+    if (/[^0]/.test(fraction.slice(decimals))) {
+      throw new RangeError(
+        `Amount ${text} has ${fraction.length} decimal places, more than the ${decimals} allowed`,
+      );
+    }
+    decStr = text;
+  } else {
+    throw new TypeError(`Expected amount to be bigint, number, or string, got ${typeof amount}`);
+  }
+
+  const isNegative = decStr.startsWith("-");
+  const unsigned = isNegative ? decStr.slice(1) : decStr;
+  const [intPart = "0", fracPart = ""] = unsigned.split(".");
+
+  // Format integer part using BigInt and Intl.NumberFormat to avoid floating point precision loss
+  const intBigInt = BigInt(intPart);
+  const formatter = new Intl.NumberFormat(locale, { useGrouping: true });
+  const formattedInt = formatter.format(intBigInt);
+
+  // Preserve negative sign (including for -0.xx where BigInt(0) has no sign)
+  const signedInt = isNegative ? `-${formattedInt}` : formattedInt;
+
+  if (!fracPart) {
+    return signedInt;
+  }
+
+  // Obtain the locale's decimal separator
+  const parts = formatter.formatToParts(1.1);
+  const decimalSep = parts.find((p) => p.type === "decimal")?.value ?? ".";
+
+  return `${signedInt}${decimalSep}${fracPart}`;
 }
 
 // ─── Document Hashing ─────────────────────────────────────────────────────────

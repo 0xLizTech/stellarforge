@@ -65,6 +65,6 @@ export class InvalidAddressError extends Error {
     );
     this.name = "InvalidAddressError";
     this.address = address;
-    this.parameterName = parameterName;
+    if (parameterName !== undefined) this.parameterName = parameterName;
   }
 }

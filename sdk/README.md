@@ -37,10 +37,24 @@ console.log(`${meta.symbol}: ${fromStroops(supply, meta.decimals)}`);
 ```
 
 Amounts are `bigint`, because the contracts store them as `i128` and a `number`
-would lose precision silently. Use `toStroops` and `fromStroops` to convert.
-`toStroops` throws rather than guess. It rejects anything but plain decimal
-notation, more decimal places than the asset allows, and a `number` that is not
-a safe integer, so pass user-entered amounts as strings.
+would lose precision silently. Use `toStroops` and `fromStroops` to convert between
+human-readable decimal strings and base units. Both accept a custom `decimals`
+parameter (0 to 18, defaulting to Stellar's 7). `toStroops` throws rather than guess:
+it rejects anything but plain decimal notation, more decimal places than the asset allows,
+and a `number` that is not a safe integer.
+
+To format amounts for UI display, use `formatAmount(amount, decimals, locale)`:
+
+```typescript
+import { formatAmount } from "@stellarforge-protocol/sdk";
+
+// Formats base units (bigint) into grouped, locale-aware strings
+formatAmount(1_234_567_890_123n, 7, "en-US"); // "123,456.7890123"
+formatAmount(1_234_567_890_123n, 7, "de-DE"); // "123.456,7890123"
+
+// Exact for 1e30 values and beyond without floating-point precision loss
+formatAmount(10n ** 30n, 0, "en-US"); // "1,000,000,000,000,000,000,000,000,000,000"
+```
 
 ## Runnable testnet examples
 
@@ -134,6 +148,25 @@ Two things worth knowing before you use either:
 - **Building simulates.** A call the contract would reject — a bad amount, a
   paused asset, a party failing compliance — fails while building, with the
   contract's own error, before anything is signed or submitted.
+
+### Multiplexed Addresses (SEP-23)
+
+Transfer operations (`transfer`, `buildTransferTx`, `buildSponsoredTransferTx`) accept
+both standard Stellar addresses (`G...` or contract `C...`) and multiplexed addresses
+(`M...`, SEP-23). When transferring to an `M...` address, value is credited to the underlying
+`G...` address on-chain and the 64-bit muxed ID travels in the transfer contract event
+for recipient routing.
+
+Use `isValidMuxedAddress` and `parseMuxedAddress` to validate and inspect M-addresses:
+
+```typescript
+import { isValidMuxedAddress, parseMuxedAddress } from "@stellarforge-protocol/sdk";
+
+if (isValidMuxedAddress(to)) {
+  const { address, id } = parseMuxedAddress(to)!;
+  console.log(`Routing to underlying account ${address} with memo ID ${id}`);
+}
+```
 
 ## Clients
 
@@ -342,6 +375,29 @@ Weight is deliberately unverified rather than read from a live balance, which
 would be worse: a holder could vote, transfer the same tokens onward, and vote
 again from the recipient. Correct weighting needs balances snapshotted at
 proposal creation, which arrives with `SFORGE` in Phase 2/3.
+
+## SEP-41 Token Compatibility
+
+`RwaAssetClient` conforms to the Stellar Soroban [SEP-41 Token Interface](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md), allowing RWA tokens to integrate seamlessly with standard Soroban wallets and DEXs.
+
+| SEP-41 Method | Signature | Supported | Description |
+|---|---|---|---|
+| `allowance` | `allowance(owner, spender) -> i128` | Yes | Reads spender's remaining allowance |
+| `approve` | `approve(owner, spender, amount, liveUntilLedger)` | Yes | Grants allowance spendable until `liveUntilLedger` |
+| `balance` | `balance(id) -> i128` | Yes | Reads account balance in base units (stroops) |
+| `transfer` | `transfer(from, to, amount)` | Yes | Transfers tokens; accepts standard and MuxedAccount (`M...`) destinations |
+| `transfer_from` | `transferFrom(spender, from, to, amount)` | Yes | Spender-authorized transfer from `from` |
+| `burn` | `burn(from, amount)` | Yes | Holder-authorized token burn |
+| `burn_from` | `burnFrom(spender, from, amount)` | Yes | Spender-authorized token burn drawing on allowance |
+| `decimals` | `decimals() -> u32` | Yes | Returns asset decimals (0 to 18) |
+| `name` | `name() -> String` | Yes | Returns asset display name |
+| `symbol` | `symbol() -> String` | Yes | Returns asset ticker symbol |
+
+### Interoperability Notes
+
+- **Compliance Screening**: Transfer operations (`transfer`, `transferFrom`, `mint`) verify that both sender and recipient are compliant with the asset's configured compliance contract (if active) and not frozen/locked.
+- **Multiplexed Addresses**: Destinations (`to`) in `transfer` accept SEP-23 M-addresses; the 64-bit muxed ID is emitted in contract events for off-chain accounting.
+- **Generic Clients**: The SDK exports `Sep41TokenClient`, an interface that any SEP-41 compliant token client satisfies.
 
 ## Subpath Exports & Tree-Shaking
 

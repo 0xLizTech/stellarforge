@@ -23,7 +23,6 @@ import {
   DEFAULT_AUTH_VALIDITY_LEDGERS,
 } from "./sponsored.js";
 import { KeypairSigner } from "./signers.js";
-import { authEntryAddress, checkSignedAuthEntry } from "./sponsored.js";
 import type { SponsoredTransaction } from "./sponsored.js";
 import type { StellarForgeConfig, TxResult } from "./types.js";
 
