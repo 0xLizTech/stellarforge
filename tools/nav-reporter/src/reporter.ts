@@ -166,6 +166,7 @@ export async function submitSignedAppraisal(
               success: false,
               exitCode: ExitCode.PreflightFailure,
               action: "rejected",
+              error: `Deviation limit exceeded: price moved beyond ${assetConfig.maxDeviationBps} basis points (admin override required)`,
               error: `Deviation limit exceeded: price move is outside ${assetConfig.maxDeviationBps} bps (admin override required)`,
             };
           }
@@ -206,6 +207,9 @@ export async function submitSignedAppraisal(
     );
 
     // Sign reporter auth entries
+    const signedEntries = await client.authorizeEntries(sponsored, config.reporterKeypair.secret());
+    // The SDK finalizes and submits the sponsored transaction with the
+    // configured fee payer (the relayer, or the reporter when none is set).
     const networkPassphrase = config.networkName === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
     const server = new rpc.Server(config.rpcUrl ?? "https://soroban-testnet.stellar.org", { allowHttp: false });
     const { sequence: latestLedger } = await server.getLatestLedger();

@@ -1,3 +1,8 @@
+import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Keypair } from "@stellar/stellar-sdk";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { Keypair, rpc } from "@stellar/stellar-sdk";
 import * as sdk from "@stellarforge-protocol/sdk";
@@ -8,6 +13,63 @@ import {
   submitSignedAppraisal,
 } from "../src/index.js";
 import { ExitCode, type SignedAppraisalFile } from "../src/types.js";
+import { runCli } from "../src/cli.js";
+
+describe("NAV reporter CLI JSON output", () => {
+  it("keeps required-argument errors as one parseable JSON stdout line", async () => {
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const code = await runCli(["--json"]);
+      expect(code).toBe(ExitCode.PreflightFailure);
+      expect(stdout).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toMatchObject({
+        success: false,
+        exitCode: ExitCode.PreflightFailure,
+      });
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
+  it("keeps malformed-file errors parseable and sends no diagnostics to stdout", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nav-reporter-cli-"));
+    const appraisal = join(dir, "appraisal.json");
+    writeFileSync(appraisal, "not-json");
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const code = await runCli(["--json", "--appraisal", appraisal, "--oracle", "C..."]);
+      expect(code).toBe(ExitCode.PreflightFailure);
+      expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toMatchObject({
+        success: false,
+        exitCode: ExitCode.PreflightFailure,
+        error: expect.stringContaining("Malformed appraisal JSON"),
+      });
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns help as JSON when --json is present", async () => {
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await runCli(["--help", "--json"])).toBe(ExitCode.Success);
+      expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toMatchObject({
+        success: true,
+        exitCode: ExitCode.Success,
+        help: expect.stringContaining("--appraisal"),
+      });
+    } finally {
+      stdout.mockRestore();
+    }
+  });
+});
 
 beforeEach(() => {
   vi.spyOn(rpc.Server.prototype, "getLatestLedger").mockResolvedValue({ sequence: 1234 } as any);
@@ -21,7 +83,7 @@ function createMockSignedAppraisal(
   const payload = {
     asset: { type: "other", symbol: "REALESTATE" } as OracleAsset,
     price: "1234.56",
-    observedAt: "2026-09-30T12:00:00Z",
+    observedAt: new Date(Date.now() - 60_000).toISOString(),
     appraiser: "Certified Institutional Appraiser",
     documentSha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     ...overrides,
@@ -63,7 +125,7 @@ describe("submitSignedAppraisal", () => {
       isReporter: vi.fn().mockResolvedValue(true),
       lastprice: vi.fn().mockResolvedValue({
         price: 1000_0000000n,
-        timestamp: 1790000000n,
+        timestamp: BigInt(Math.floor(Date.now() / 1000) - 100_000),
       }),
       assetConfig: vi.fn().mockResolvedValue({
         maxDeviationBps: 500, // 5%
@@ -172,7 +234,8 @@ describe("submitSignedAppraisal", () => {
     const mockClient = createMockOracleClient({
       lastprice: vi.fn().mockResolvedValue({
         price: 1000_0000000n,
-        timestamp: BigInt(Math.floor(Date.now() / 1000) - 100000),
+        // Keep this in the preceding daily tick at any time of day.
+        timestamp: BigInt(Math.floor(Date.now() / 1000) - 200_000),
       }),
       assetConfig: vi.fn().mockResolvedValue({
         maxDeviationBps: 500, // 5%

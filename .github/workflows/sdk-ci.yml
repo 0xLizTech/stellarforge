@@ -55,12 +55,12 @@ jobs:
     needs: [oracle-parity]
     strategy:
       matrix:
-        # 22.12 is the engines floor (package.json) — tested exactly so a
-        # breaking dependency that raises it fails CI instead of users.
-        # 24 is the current LTS line. Node 20 is below the floor: the
+        # 22.13 satisfies the lint toolchain's engine floor while staying close
+        # to the package's 22.12 runtime minimum. 24 is the current LTS line.
+        # Node 20 is below the floor: the
         # CommonJS build requires ESM-only deps, which Node supports without a
         # flag only from 22.12.
-        node-version: ["22.12", "24"]
+        node-version: ["22.13", "24"]
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -84,6 +84,11 @@ jobs:
         working-directory: sdk
         run: npm run typecheck
 
+      - name: Typecheck runnable examples
+        working-directory: sdk
+        run: npm run examples:check
+
+      - name: Run tests
       - name: Run tests with coverage threshold
         working-directory: sdk
         run: npm run test:coverage
@@ -102,6 +107,33 @@ jobs:
       - name: Run browser compatibility tests
         working-directory: sdk
         run: npm run test:browser
+
+  alternate-runtimes:
+    name: Deno and Bun SDK Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.13"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.x"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.x"
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: npm ci
+      - name: Build SDK package
+        working-directory: sdk
+        run: npm run build
+      - name: Deno read smoke test
+        run: deno run --allow-read --allow-env sdk/runtime-smoke.mjs
+      - name: Bun read smoke test
+        run: bun run sdk/runtime-smoke.mjs
 
   build:
     name: Build Package

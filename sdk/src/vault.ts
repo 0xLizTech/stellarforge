@@ -120,6 +120,7 @@ export const VAULT_ERROR_MESSAGES: Record<VaultErrorCode, string> = {
 export class VaultError extends Error {
   readonly code?: number | undefined;
 
+  /** Creates a typed vault error with an optional contract error code. */
   constructor(message: string, code?: number | undefined) {
     super(message);
     this.name = "VaultError";
@@ -139,6 +140,7 @@ export class NavRefusalError extends VaultError {
   readonly source: string;
   readonly reason: string;
 
+  /** Creates a NAV refusal that identifies its source and reason. */
   constructor(reason: string, source: string, code?: number | undefined) {
     super(`NAV refusal from source ${source}: ${reason}`, code);
     this.name = "NavRefusalError";
@@ -187,6 +189,7 @@ export function parseVaultError(err: unknown): VaultError | null {
 
 // ─── Vault Events ──────────────────────────────────────────────────────────────
 
+/** Decoded vault deposit event. */
 export interface DepositEvent {
   type: "deposit";
   caller: string;
@@ -196,6 +199,7 @@ export interface DepositEvent {
   ledger: number;
 }
 
+/** Decoded vault redemption event. */
 export interface RedeemEvent {
   type: "redeem";
   caller: string;
@@ -205,6 +209,7 @@ export interface RedeemEvent {
   ledger: number;
 }
 
+/** Decoded vault share transfer event. */
 export interface TransferEvent {
   type: "transfer";
   from: string;
@@ -213,6 +218,7 @@ export interface TransferEvent {
   ledger: number;
 }
 
+/** Decoded vault share allowance event. */
 export interface ApproveEvent {
   type: "approve";
   from: string;
@@ -222,6 +228,7 @@ export interface ApproveEvent {
   ledger: number;
 }
 
+/** Decoded vault pause-state update event. */
 export interface SetPausedEvent {
   type: "set_paused";
   admin: string;
@@ -229,6 +236,7 @@ export interface SetPausedEvent {
   ledger: number;
 }
 
+/** Decoded vault oracle-set update event. */
 export interface SetOraclesEvent {
   type: "set_oracles";
   admin: string;
@@ -236,6 +244,7 @@ export interface SetOraclesEvent {
   ledger: number;
 }
 
+/** A vault contract event whose topic is not recognized by this SDK version. */
 export interface AdminTransferredEvent {
   type: "transfer_admin";
   previous: string;
@@ -256,6 +265,7 @@ export interface UnknownVaultEvent {
   raw?: unknown;
 }
 
+/** Union of event shapes decoded from the vault contract. */
 export type VaultEvent =
   | DepositEvent
   | RedeemEvent
@@ -581,6 +591,7 @@ export function decodeVaultEvents(getEventsResponse: unknown): VaultEvent[] {
  * - Sponsored writes with multi-contract authorization tree verification
  */
 export class VaultClient extends ContractClient {
+  /** Creates a vault client for the configured deployment. */
   constructor(config: StellarForgeConfig) {
     super(config, config.contracts.vault, "vault");
   }

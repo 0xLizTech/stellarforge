@@ -31,6 +31,7 @@ import type {
  * Do not gate anything privileged on an outcome read through this client.
  */
 export class GovernanceClient extends ContractClient {
+  /** Creates a governance client for the configured deployment. */
   constructor(config: StellarForgeConfig) {
     super(config, config.contracts.governance, "governance");
   }
@@ -124,6 +125,7 @@ export class GovernanceClient extends ContractClient {
     return this.buildWriteTx(admin, "set_quorum", [nativeToScVal(quorum, { type: "i128" })]);
   }
 
+  /** Sets the minimum declared vote weight required for a proposal to pass. */
   async setQuorum(admin: string, quorum: bigint): Promise<TxResult> {
     return this.submit(await this.buildSetQuorumTx(admin, quorum), admin);
   }
@@ -135,6 +137,7 @@ export class GovernanceClient extends ContractClient {
     ]);
   }
 
+  /** Sets the required share of declared votes in basis points. */
   async setPassThresholdBps(admin: string, passThresholdBps: number): Promise<TxResult> {
     return this.submit(await this.buildSetPassThresholdBpsTx(admin, passThresholdBps), admin);
   }
@@ -201,6 +204,7 @@ export class GovernanceClient extends ContractClient {
     ]);
   }
 
+  /** Casts a support or opposition vote with the caller-declared weight. */
   async vote(
     voter: string,
     proposalId: bigint,
@@ -224,6 +228,7 @@ export class GovernanceClient extends ContractClient {
     return this.buildWriteTx(source, "finalize", [nativeToScVal(proposalId, { type: "u64" })]);
   }
 
+  /** Finalizes a proposal after its voting deadline has passed. */
   async finalize(source: string, proposalId: bigint): Promise<TxResult> {
     return this.submit(await this.buildFinalizeTx(source, proposalId), source);
   }

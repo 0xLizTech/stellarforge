@@ -12,8 +12,8 @@ npm install @stellarforge-protocol/sdk
 
 Requires Node.js 22.12 or newer, which is what `@stellar/stellar-sdk` 17 requires. Its CommonJS build loads ESM-only dependencies with `require()`, and Node supports that without a flag only from 22.12.
 
-Supported versions: **22.12 (the exact minimum) and 24 (current LTS)**. CI
-(`.github/workflows/sdk-ci.yml`) runs the test matrix over both. Node.js 20 and
+Supported versions: **Node.js 22.12 or newer and 24 (current LTS)**. CI
+(`.github/workflows/sdk-ci.yml`) tests Node 22.13 and 24. Node.js 20 and
 older are not supported and are not tested — they are below the `engines` floor
 and fail at import time.
 
@@ -41,6 +41,33 @@ would lose precision silently. Use `toStroops` and `fromStroops` to convert.
 `toStroops` throws rather than guess. It rejects anything but plain decimal
 notation, more decimal places than the asset allows, and a `number` that is not
 a safe integer, so pass user-entered amounts as strings.
+
+## Runnable testnet examples
+
+The [`examples/`](examples/) directory has complete mint, transfer, KYC,
+governance proposal, and vote flows. They submit real testnet transactions, so
+use a funded testnet signer and the matching deployed contract IDs. Never use a
+mainnet secret. Install dependencies with `npm ci` in this directory, then run
+the chosen script with `npm run example -- examples/mint.ts` (replace `mint.ts`
+with `transfer.ts`, `kyc.ts`, `propose.ts`, or `vote.ts`).
+
+Every example needs `SIGNER_SECRET` and the contract-specific ID:
+`RWA_ASSET_CONTRACT_ID`, `COMPLIANCE_CONTRACT_ID`, or
+`GOVERNANCE_CONTRACT_ID`. `SOROBAN_RPC_URL` optionally overrides the public testnet RPC. CI
+typechecks all examples without sending transactions using
+`npm run examples:check`.
+
+| Example | Required action variables |
+|---|---|
+| `mint.ts` | `MINT_TO_ADDRESS`, `MINT_AMOUNT` |
+| `transfer.ts` | `TRANSFER_TO_ADDRESS`, `TRANSFER_AMOUNT` |
+| `kyc.ts` | `KYC_SUBJECT_ADDRESS`, `KYC_LEVEL` |
+| `propose.ts` | `PROPOSAL_TITLE`, `PROPOSAL_DESCRIPTION_SHA256` (optional; defaults shown in code) |
+| `vote.ts` | `PROPOSAL_ID`, `VOTE_SUPPORT` |
+
+Alternate runtime smoke coverage is provided for Deno 2 and Bun 1. It imports
+the built package and performs a read through an in-memory testnet RPC response;
+it does not need a deployed contract or send a transaction.
 
 ## Networks
 

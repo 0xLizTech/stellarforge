@@ -23,6 +23,9 @@ Entry template (include only applicable sections in each release):
 - <security change> (#issue)
 -->
 
+- The SDK includes runnable testnet examples for mint, transfer, KYC, governance proposals and voting; CI typechecks them and exercises package import/read behavior under Deno 2 and Bun 1 (#188, #185).
+- The SDK's public TypeScript API now requires TSDoc comments in lint, and the NAV reporter's `--json` mode has CLI tests guaranteeing machine-readable stdout with diagnostics on stderr (#187, #190).
+
 - Stage 3 SDK maturity enhancements (#181, #182, #183, #184):
   - ESM and CommonJS import and type resolution tests from packed tarball (`scripts/test-package-imports.mjs`, `tests/package-import.test.ts`), wired into `.github/workflows/sdk-ci.yml` and `.github/workflows/publish-sdk.yml` (#181).
   - Bundle size tracking via `size-limit` with configured budgets and regression checks (`tests/bundle-size.test.ts`, `npm run size`), integrated into the SDK build CI workflow (#182).
