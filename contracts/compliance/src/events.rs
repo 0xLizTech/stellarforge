@@ -59,8 +59,6 @@ pub struct JurisdictionDeniedSet {
     #[topic]
     pub jurisdiction: String,
     pub denied: bool,
-}
-
 /// Published by `set_paused`, matching `rwa-asset::events::Paused`.
 #[contractevent(topics = ["paused"], data_format = "single-value")]
 #[derive(Clone, Debug, Eq, PartialEq)]

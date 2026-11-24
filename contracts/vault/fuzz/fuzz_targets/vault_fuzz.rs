@@ -1,12 +1,14 @@
 #![no_main]
 
+use contracts_vault::{
+    UnderlyingTokenInterface, VaultConfig, VaultContract, VaultContractClient,
+};
 use libfuzzer_sys::fuzz_target;
 use soroban_sdk::{
     contract, contractimpl,
     testutils::{Address as _, Ledger},
     Address, Env, MuxedAddress, String,
 };
-use vault::{UnderlyingTokenInterface, VaultConfig, VaultContract, VaultContractClient};
 
 #[contract]
 struct MockUnderlying;

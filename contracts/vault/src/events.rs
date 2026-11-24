@@ -77,21 +77,6 @@ pub struct Redeem {
     pub amount: i128,
 }
 
-/// Published when a fee is assessed and paid out of a deposit or redemption.
-///
-/// `payer` is the account whose underlying assets or shares the fee was taken
-/// from, `amount` is denominated in the asset being moved, and `recipient` is
-/// the treasury or fee collector that received it. Indexers can track protocol
-/// revenue by filtering on the `fee` topic.
-#[contractevent(topics = ["fee"], data_format = "map")]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Fee {
-    #[topic]
-    pub payer: Address,
-    pub amount: i128,
-    pub recipient: Address,
-}
-
 /// Published by `set_oracles`: `admin` as topic, and data with list of configured oracle addresses.
 #[contractevent(topics = ["set_oracles"], data_format = "map")]
 #[derive(Clone, Debug, Eq, PartialEq)]

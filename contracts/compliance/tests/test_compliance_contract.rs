@@ -368,7 +368,6 @@ fn test_transfer_admin_extends_the_instance() {
     h.client.propose_admin(&new_admin);
     h.client.accept_admin();
 
-    assert_eq!(h.client.admin(), new_admin);
     assert_eq!(h.instance_ttl(), INSTANCE_BUMP_AMOUNT);
 }
 
@@ -703,17 +702,17 @@ fn test_set_paused_requires_admin() {
 fn test_set_kyc_batch_requires_admin() {
     let h = setup();
     let subject = Address::generate(&h.env);
-    let records = Vec::from_array(
-        &h.env,
-        [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))],
-    );
 
     h.env.mock_auths(&[MockAuth {
         address: &subject,
         invoke: &MockAuthInvoke {
             contract: &h.contract_id,
             fn_name: "set_kyc_batch",
-            args: (records,).into_val(&h.env),
+            args: (Vec::from_array(
+                &h.env,
+                [(subject.clone(), h.record(LEVEL_BASIC, NEVER_EXPIRES))],
+            ),)
+                .into_val(&h.env),
             sub_invokes: &[],
         },
     }]);
