@@ -6,14 +6,22 @@ on:
     paths:
       - "sdk/**"
       - "contracts/oracle-adapter/**"
+      - "contracts/vault/src/**"
       - "scripts/generate-oracle-parity-table.cjs"
+      - "scripts/generate-vault-parity-table.cjs"
+      - "tools/vault-math-parity/**"
+      - "tools/nav-reporter/**"
       - ".github/workflows/sdk-ci.yml"
   pull_request:
     branches: [main, develop]
     paths:
       - "sdk/**"
       - "contracts/oracle-adapter/**"
+      - "contracts/vault/src/**"
       - "scripts/generate-oracle-parity-table.cjs"
+      - "scripts/generate-vault-parity-table.cjs"
+      - "tools/vault-math-parity/**"
+      - "tools/nav-reporter/**"
 
 jobs:
   oracle-parity:
@@ -30,16 +38,20 @@ jobs:
         with:
           key: ${{ runner.os }}-oracle-parity-${{ hashFiles('**/Cargo.lock') }}
 
-      # Regenerates nothing; asserts the committed fixture matches values from
-      # oracle_adapter::tick_of / check_price_deviation (contract pure math).
-      - name: Validate oracle-parity-table.json against contract math
+      # Regenerates nothing; asserts committed fixtures match their Rust sources.
+      - name: Validate SDK parity fixtures against contract math
         run: |
           cargo test -p oracle-adapter --features testutils \
             test_generate_sdk_parity_table -- --exact
+          cargo test --manifest-path tools/vault-math-parity/Cargo.toml \
+            test_generate_sdk_vault_math_parity_table -- --exact
 
   test:
     name: TypeScript Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [oracle-parity]
     strategy:
       matrix:
@@ -72,9 +84,20 @@ jobs:
         working-directory: sdk
         run: npm run typecheck
 
-      - name: Run tests
+      - name: Run tests with coverage threshold
         working-directory: sdk
-        run: npm test
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        if: matrix.node-version == '24'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: sdk/coverage/lcov.info
+          disable_search: true
+          fail_ci_if_error: true
+          use_oidc: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build:
     name: Build Package
@@ -102,3 +125,41 @@ jobs:
           name: sdk-dist
           path: sdk/dist/
           retention-days: 7
+
+  nav-reporter:
+    name: NAV Reporter CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.12"
+          cache: "npm"
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: npm ci
+
+      - name: Build SDK dependency
+        working-directory: sdk
+        run: npm run build
+
+      - name: Install NAV reporter dependencies
+        working-directory: tools/nav-reporter
+        run: npm ci
+
+      - name: Test config merging and completion generation
+        working-directory: tools/nav-reporter
+        run: npm test
+
+      - name: Type check and build
+        working-directory: tools/nav-reporter
+        run: npm run typecheck && npm run build
+
+      - name: Verify committed completions are current
+        working-directory: tools/nav-reporter
+        run: |
+          npm run generate-completions
+          git diff --exit-code -- completions/

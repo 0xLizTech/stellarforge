@@ -14,6 +14,7 @@
 mod compliance;
 mod error;
 mod events;
+mod math;
 mod oracle;
 #[cfg(test)]
 mod test;
@@ -456,6 +457,7 @@ impl VaultContract {
 
         Self::accrue_management_fee(&env);
         let cfg = Self::config(env.clone());
+        let shares = match math::shares_for_deposit(amount, cfg.exchange_rate) {
         let fees = Self::fee_config(env.clone());
         let fee = Self::fee_amount(&env, amount, fees.deposit_bps);
         let net_amount = amount - fee;
@@ -533,10 +535,10 @@ impl VaultContract {
 
         Self::accrue_management_fee(&env);
         let cfg = Self::config(env.clone());
-        if shares % cfg.exchange_rate != 0 {
-            panic_with_error!(&env, VaultError::NotMultipleOfExchangeRate);
-        }
-
+        let units = match math::underlying_for_redeem(shares, cfg.exchange_rate) {
+            Some(units) => units,
+            None => panic_with_error!(&env, VaultError::NotMultipleOfExchangeRate),
+        };
         Self::require_unlocked(&env, &holder);
 
         let units = shares / cfg.exchange_rate;

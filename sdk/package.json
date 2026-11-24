@@ -30,6 +30,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:smoke": "vitest run tests/smoke.testnet.test.ts",
     "test:smoke:write": "vitest run tests/smoke.write.testnet.test.ts",
@@ -60,6 +61,7 @@
     "@commitlint/load": "^21.2.4",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.5.0",
+    "@vitest/coverage-v8": "^5.1.1",
     "eslint": "^10.13.0",
     "tsup": "^9.0.0",
     "typescript": "^5.7.0",
