@@ -290,11 +290,16 @@ describe("Stage 1 repository and CI tooling (#91, #93, #94, #95)", () => {
       expect(res.ok).toBe(true);
       expect(res.errors).toEqual([]);
       expect(res.workspaceVersion).toBe("29.0.1");
+      const cargoToml = fs.readFileSync(path.join(REPO_ROOT, "Cargo.toml"), "utf8");
+      const workspaceVersion = cargoToml.match(/^soroban-sdk\s*=\s*\{\s*version\s*=\s*"([^"]+)"/m)?.[1];
+      expect(workspaceVersion).toBeDefined();
+      expect(res.workspaceVersion).toBe(workspaceVersion);
       expect(res.checkedMembers).toContain("contracts/rwa-asset");
       expect(res.checkedMembers).toContain("contracts/registry");
       expect(res.checkedMembers).toContain("contracts/compliance");
       expect(res.checkedMembers).toContain("contracts/governance");
       expect(res.checkedMembers).toContain("contracts/oracle-adapter");
+      expect(res.checkedMembers).toContain("contracts/vault");
     });
 
     it("fails when a workspace crate pins its own soroban-sdk version", () => {

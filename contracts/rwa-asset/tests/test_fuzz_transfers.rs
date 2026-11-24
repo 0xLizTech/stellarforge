@@ -1,9 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{
-    testutils::Address as _,
-    Address, Bytes, Env, String,
-};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String};
 
 use rwa_asset::{AssetMetadata, RwaAssetContract, RwaAssetContractClient};
 
@@ -43,7 +40,7 @@ fn setup_fuzz_env() -> (Env, Address, Address, RwaAssetContractClient<'static>) 
         symbol: String::from_str(&env, "FUZZ"),
         decimals: 7,
         asset_class: String::from_str(&env, "fuzz"),
-        legal_doc_hash: Bytes::from_array(&env, &[0u8; 32]),
+        legal_doc_hash: Bytes::from_array(&env, &[1u8; 32]),
         max_supply: 1_000_000_000_000,
     };
 
@@ -119,7 +116,9 @@ fn test_fuzz_transfers_and_allowance_invariant() {
                 if allowed >= amount && bal >= amount {
                     client.transfer_from(user2, user1, user2, &amount);
                 } else {
-                    assert!(client.try_transfer_from(user2, user1, user2, &amount).is_err());
+                    assert!(client
+                        .try_transfer_from(user2, user1, user2, &amount)
+                        .is_err());
                 }
             }
             3 => {

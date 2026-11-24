@@ -1,5 +1,6 @@
 import { MuxedAccount, StrKey } from "@stellar/stellar-sdk";
 import { createHash } from "node:crypto";
+import { InvalidAddressError } from "./errors.js";
 
 // ─── Address Utilities ────────────────────────────────────────────────────────
 
@@ -53,6 +54,17 @@ export function parseMuxedAddress(address: string): ParsedMuxedAddress | null {
   };
 }
 
+/** Validates that an address is a valid Stellar G, C, or M address, or throws InvalidAddressError. */
+export function validateAddress(address: string, parameterName?: string): void {
+  if (
+    !isValidStellarAddress(address) &&
+    !isValidContractId(address) &&
+    !isValidMuxedAddress(address) &&
+    !(typeof address === "string" && address.startsWith("M") && address.length === 69)
+  ) {
+    throw new InvalidAddressError(address, parameterName);
+  }
+}
 // ─── Amount Utilities ─────────────────────────────────────────────────────────
 
 /** Largest `decimals` the contract accepts, mirroring `MAX_DECIMALS` in `rwa-asset`. */
