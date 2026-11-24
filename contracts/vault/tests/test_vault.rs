@@ -815,6 +815,9 @@ fn test_set_oracles_and_nav() {
     assert_eq!(nav.value, 100_0000000);
     assert_eq!(nav.decimals, NAV_DECIMALS);
 
+    let total_assets = h.client.total_assets();
+    assert_eq!(total_assets, 100_0000000);
+
     let nav_per_share = h.client.nav_per_share();
     assert_eq!(nav_per_share.value, 5_000_000);
     assert_eq!(nav_per_share.decimals, NAV_DECIMALS);

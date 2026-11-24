@@ -647,6 +647,12 @@ impl VaultContract {
         }
     }
 
+    /// Pure query returning the total assets under management (AUM) in base asset terms.
+    /// Calculated as NAV times underlying held balance.
+    pub fn total_assets(env: Env) -> i128 {
+        Self::nav(env).value
+    }
+
     /// Pure query returning the Net Asset Value of one whole fractional share.
     pub fn nav_per_share(env: Env) -> NavData {
         let (price, timestamp) = Self::get_effective_price_and_timestamp(&env);
