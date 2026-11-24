@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Account, Keypair, MuxedAccount } from "@stellar/stellar-sdk";
+import { Account, Keypair, MuxedAccount, StrKey } from "@stellar/stellar-sdk";
 import {
   toStroops,
   fromStroops,
@@ -10,8 +10,10 @@ import {
   isValidContractId,
   isValidMuxedAddress,
   parseMuxedAddress,
+  validateAddress,
   truncateAddress,
 } from "../src/utils.js";
+import { InvalidAddressError } from "../src/errors.js";
 
 describe("toStroops", () => {
   it("converts integer amounts", () => {
@@ -346,5 +348,27 @@ describe("isValidMuxedAddress and parseMuxedAddress (#179)", () => {
     expect(parseMuxedAddress(baseGAddr)).toBeNull();
     expect(parseMuxedAddress("C" + "A".repeat(55))).toBeNull();
     expect(parseMuxedAddress("invalid")).toBeNull();
+  });
+});
+
+describe("validateAddress", () => {
+  it("accepts valid G, C, and M addresses", () => {
+    const keypair = Keypair.random();
+    const muxed = new MuxedAccount(new Account(keypair.publicKey(), "0"), "42").accountId();
+    validateAddress(keypair.publicKey());
+    validateAddress(StrKey.encodeContract(new Uint8Array(32).fill(1)));
+    validateAddress(muxed);
+  });
+
+  it("rejects invalid addresses with the optional parameter name", () => {
+    expect(() => validateAddress("M" + "A".repeat(68), "recipient")).toThrow(InvalidAddressError);
+    let caught: unknown;
+    try {
+      validateAddress("bad", "recipient");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(InvalidAddressError);
+    expect((caught as InvalidAddressError).parameterName).toBe("recipient");
   });
 });
