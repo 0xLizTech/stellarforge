@@ -6,7 +6,7 @@ use soroban_sdk::{
         storage::{Instance as _, Persistent as _},
         Address as _, Events as _, Ledger, MuxedAddress as _,
     },
-    Address, Env, MuxedAddress, String,
+    Address, Env, Event, MuxedAddress, String,
 };
 
 use compliance::{ComplianceContract, ComplianceContractClient, KycRecord};
@@ -61,7 +61,10 @@ impl MockOracle {
             .instance()
             .get(&soroban_sdk::symbol_short!("TS"))
             .unwrap_or(env.ledger().timestamp());
-        Some(PriceData { price, timestamp: ts })
+        Some(PriceData {
+            price,
+            timestamp: ts,
+        })
     }
 }
 
@@ -795,10 +798,7 @@ fn test_set_oracles_and_nav() {
             oracle: oracle1.clone(),
             asset: asset.clone(),
         },
-        secondary: Some(OracleSource {
-            oracle: oracle2.clone(),
-            asset,
-        }),
+        secondary: Some(oracle2.clone()),
         max_staleness_secs: 86400,
         max_divergence_bps: 500,
     };
@@ -827,10 +827,16 @@ fn test_oracle_divergence_and_staleness() {
     let oracle2 = h.env.register(MockOracle, ());
 
     h.env.as_contract(&oracle1, || {
-        h.env.storage().instance().set(&soroban_sdk::symbol_short!("PRICE"), &10_000_000_i128);
+        h.env
+            .storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("PRICE"), &10_000_000_i128);
     });
     h.env.as_contract(&oracle2, || {
-        h.env.storage().instance().set(&soroban_sdk::symbol_short!("PRICE"), &12_000_000_i128);
+        h.env
+            .storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("PRICE"), &12_000_000_i128);
     });
 
     let asset = Asset::Other(soroban_sdk::symbol_short!("USD"));
@@ -839,10 +845,7 @@ fn test_oracle_divergence_and_staleness() {
             oracle: oracle1.clone(),
             asset: asset.clone(),
         },
-        secondary: Some(OracleSource {
-            oracle: oracle2,
-            asset,
-        }),
+        secondary: Some(oracle2),
         max_staleness_secs: 86400,
         max_divergence_bps: 100,
     };
@@ -866,13 +869,12 @@ fn test_oracle_divergence_and_staleness() {
     h.client.set_oracles(&Some(oracle_single));
 
     h.env.as_contract(&oracle1, || {
-        h.env.storage().instance().set(&soroban_sdk::symbol_short!("TS"), &100_u64);
+        h.env
+            .storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("TS"), &100_u64);
     });
     h.env.ledger().set_timestamp(1_000);
 
-    assert_eq!(
-        h.client.try_nav(),
-        Err(Ok(VaultError::StalePrice.into()))
-    );
+    assert_eq!(h.client.try_nav(), Err(Ok(VaultError::StalePrice.into())));
 }
-
