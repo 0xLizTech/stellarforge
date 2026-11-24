@@ -2,10 +2,11 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, Networks } from "@stellar/stellar-sdk";
 import { OracleAdapterClient } from "@stellarforge-protocol/sdk";
 import { submitSignedAppraisal } from "./reporter.js";
 import { ExitCode, type SignedAppraisalFile } from "./types.js";
+import { resolveCliOptions } from "./options.js";
 
 function printUsage(): void {
   console.log(`
@@ -28,7 +29,10 @@ Operational Options:
   --json                       Emit structured machine-readable JSON output
   --network <name>             Network name: 'testnet' (default) or 'mainnet'
   --rpc-url <url>              Custom Soroban RPC URL
+  --config <path>              Load options from sforge.config.json (default: ./sforge.config.json)
   -h, --help                   Display this help message
+
+Configuration precedence: command-line flags > environment variables > config file > defaults.
 
 Exit Codes:
   0: Success (or dry-run verified, or idempotent duplicate)
@@ -47,43 +51,19 @@ function loadSecret(envVar: string, filePath?: string): string | undefined {
 }
 
 export async function runCli(args: string[]): Promise<number> {
-  let appraisalPath: string | undefined;
-  let oracleContractId: string | undefined;
-  let appraiserKey: string | undefined = process.env.APPRAISER_PUBLIC_KEY;
-  let reporterKeyFile: string | undefined;
-  let relayerKeyFile: string | undefined;
-  let networkName: "testnet" | "mainnet" =
-    (process.env.NETWORK as "testnet" | "mainnet") || "testnet";
-  let rpcUrl: string | undefined = process.env.SOROBAN_RPC_URL;
-  let dryRun = false;
-  let jsonOutput = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "-h" || arg === "--help") {
-      printUsage();
-      return 0;
-    }
-    if (arg === "--appraisal" && i + 1 < args.length) {
-      appraisalPath = args[++i];
-    } else if (arg === "--oracle" && i + 1 < args.length) {
-      oracleContractId = args[++i];
-    } else if (arg === "--appraiser-key" && i + 1 < args.length) {
-      appraiserKey = args[++i];
-    } else if (arg === "--reporter-key-file" && i + 1 < args.length) {
-      reporterKeyFile = args[++i];
-    } else if (arg === "--relayer-key-file" && i + 1 < args.length) {
-      relayerKeyFile = args[++i];
-    } else if (arg === "--network" && i + 1 < args.length) {
-      networkName = args[++i] as "testnet" | "mainnet";
-    } else if (arg === "--rpc-url" && i + 1 < args.length) {
-      rpcUrl = args[++i];
-    } else if (arg === "--dry-run") {
-      dryRun = true;
-    } else if (arg === "--json") {
-      jsonOutput = true;
-    }
+  if (args.includes("-h") || args.includes("--help")) {
+    printUsage();
+    return 0;
   }
+  let options;
+  try {
+    options = resolveCliOptions(args);
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    return ExitCode.PreflightFailure;
+  }
+  const { appraisalPath, oracleContractId, appraiserKey, reporterKeyFile, relayerKeyFile,
+    networkName, rpcUrl, dryRun, jsonOutput } = options;
 
   if (!appraisalPath || !oracleContractId) {
     if (!jsonOutput) {
@@ -195,16 +175,27 @@ export async function runCli(args: string[]): Promise<number> {
     }
   }
 
+  if (networkName === "mainnet" && !rpcUrl) {
+    const error = "Mainnet reporting requires --rpc-url or SOROBAN_RPC_URL.";
+    if (jsonOutput) console.log(JSON.stringify({ success: false, exitCode: ExitCode.PreflightFailure, error }));
+    else console.error(`Error: ${error}`);
+    return ExitCode.PreflightFailure;
+  }
+
   const oracleClient = new OracleAdapterClient({
     network: networkName,
-    contractId: oracleContractId,
-    rpcUrl,
+    networkPassphrase: networkName === "mainnet" ? Networks.PUBLIC : Networks.TESTNET,
+    rpcUrl: rpcUrl ?? "https://soroban-testnet.stellar.org",
+    contracts: { oracleAdapter: oracleContractId },
+    signerSecret: relayerSecret ?? reporterSecret,
   });
 
   const result = await submitSignedAppraisal(signedAppraisal, {
     oracleClient,
     reporterKeypair,
     relayerKeypair,
+    rpcUrl,
+    networkName,
     expectedAppraiserPublicKey: appraiserKey,
     dryRun,
   });

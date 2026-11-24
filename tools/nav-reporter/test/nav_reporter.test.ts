@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
-import { Keypair } from "@stellar/stellar-sdk";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { Keypair, rpc } from "@stellar/stellar-sdk";
+import * as sdk from "@stellarforge-protocol/sdk";
 import type { OracleAdapterClient, OracleAsset } from "@stellarforge-protocol/sdk";
 import {
   canonicalJsonStringify,
@@ -7,6 +8,11 @@ import {
   submitSignedAppraisal,
 } from "../src/index.js";
 import { ExitCode, type SignedAppraisalFile } from "../src/types.js";
+
+beforeEach(() => {
+  vi.spyOn(rpc.Server.prototype, "getLatestLedger").mockResolvedValue({ sequence: 1234 } as any);
+  vi.spyOn(sdk, "authorizeEntries").mockImplementation(async (entries) => [...entries]);
+});
 
 function createMockSignedAppraisal(
   appraiserKeypair: Keypair,
@@ -22,7 +28,7 @@ function createMockSignedAppraisal(
   };
 
   const canonicalBytes = Buffer.from(canonicalJsonStringify(payload), "utf8");
-  const signature = appraiserKeypair.sign(canonicalBytes).toString("hex");
+  const signature = Buffer.from(appraiserKeypair.sign(canonicalBytes)).toString("hex");
 
   return {
     payload,
@@ -62,7 +68,7 @@ describe("submitSignedAppraisal", () => {
       assetConfig: vi.fn().mockResolvedValue({
         maxDeviationBps: 500, // 5%
       }),
-      buildSponsoredReportTx: vi.fn().mockResolvedValue({} as any),
+      buildSponsoredReportTx: vi.fn().mockResolvedValue({ authEntries: [] } as any),
       authorizeEntries: vi.fn().mockReturnValue({} as any),
       finalizeSponsoredTx: vi.fn().mockReturnValue({
         sign: vi.fn(),

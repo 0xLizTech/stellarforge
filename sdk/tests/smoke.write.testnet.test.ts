@@ -21,6 +21,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { Account, Keypair, MuxedAccount, Networks, rpc, scValToNative } from "@stellar/stellar-sdk";
 
 import { ComplianceClient, RwaAssetClient } from "../src/client.js";
+import { VaultClient } from "../src/vault.js";
 import { DEFAULT_AUTH_VALIDITY_LEDGERS, authorizeEntries } from "../src/sponsored.js";
 import { TESTNET_CONFIG } from "../src/types.js";
 import { isValidContractId, isValidStellarAddress, sha256Hex } from "../src/utils.js";
@@ -29,6 +30,7 @@ import type { KycRecord, StellarForgeConfig } from "../src/types.js";
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const ASSET_ID = process.env["SMOKE_WRITE_RWA_ASSET_ID"];
+const VAULT_ID = process.env["SMOKE_WRITE_VAULT_ID"];
 const ISSUER_SECRET = process.env["SMOKE_WRITE_ISSUER_SECRET"];
 /** Admin of the asset and the compliance contract. A default deploy makes the issuer both. */
 const ADMIN_SECRET = process.env["SMOKE_WRITE_ADMIN_SECRET"] ?? ISSUER_SECRET;
@@ -455,6 +457,149 @@ describe.runIf(ASSET_ID)("live RwaAssetClient writes", () => {
 
       expect(await issuerClient.admin()).toBe(spender);
       expect(await issuerClient.pendingAdmin()).toBeNull();
+    },
+    WRITE_TIMEOUT,
+  );
+});
+
+// ─── Vault write path ─────────────────────────────────────────────────────────
+
+const VAULT_DEPOSIT_AMOUNT = 100n;
+const VAULT_SPONSORED_DEPOSIT_AMOUNT = 50n;
+
+describe.runIf(VAULT_ID)("live VaultClient writes", () => {
+  let depositorVault: VaultClient;
+  let sponsorVault: VaultClient;
+  let server: rpc.Server;
+  let depositor: string;
+  let sponsor: string;
+
+  interface VaultSnapshot {
+    underlyingHeld: bigint;
+    totalSupply: bigint;
+    depositorShares: bigint;
+  }
+
+  async function vaultSnapshot(): Promise<VaultSnapshot> {
+    const [underlyingHeld, totalSupply, depositorShares] = await Promise.all([
+      depositorVault.underlyingHeld(),
+      depositorVault.totalSupply(),
+      depositorVault.balance(depositor),
+    ]);
+    return { underlyingHeld, totalSupply, depositorShares };
+  }
+
+  beforeAll(async () => {
+    if (NETWORK_PASSPHRASE !== Networks.TESTNET) {
+      throw new Error(
+        `The write smoke test only runs on testnet, but STELLAR_NETWORK_PASSPHRASE is "${NETWORK_PASSPHRASE}"`,
+      );
+    }
+    if (!isValidContractId(VAULT_ID as string)) {
+      throw new Error(`SMOKE_WRITE_VAULT_ID is not a valid contract id: ${VAULT_ID}`);
+    }
+    if (!ISSUER_SECRET || !SPENDER_SECRET) {
+      throw new Error(
+        "SMOKE_WRITE_ISSUER_SECRET and SMOKE_WRITE_SPENDER_SECRET are required when SMOKE_WRITE_VAULT_ID is set",
+      );
+    }
+    if (!RPC_URL.startsWith("https://")) {
+      throw new Error(`SOROBAN_RPC_URL must be https (the clients set allowHttp: false): ${RPC_URL}`);
+    }
+
+    depositor = Keypair.fromSecret(ISSUER_SECRET).publicKey();
+    sponsor = Keypair.fromSecret(SPENDER_SECRET).publicKey();
+    if (depositor === sponsor) {
+      throw new Error("The depositor and sponsor must be different addresses");
+    }
+
+    const baseConfig = {
+      network: "testnet" as const,
+      rpcUrl: RPC_URL,
+      networkPassphrase: NETWORK_PASSPHRASE,
+      contracts: { vault: VAULT_ID as string },
+    };
+    depositorVault = new VaultClient({ ...baseConfig, signerSecret: ISSUER_SECRET });
+    sponsorVault = new VaultClient({ ...baseConfig, signerSecret: SPENDER_SECRET });
+    server = new rpc.Server(RPC_URL);
+  }, WRITE_TIMEOUT);
+
+  it(
+    "deposit locks underlying tokens and mints fractional shares",
+    async () => {
+      const expectedShares = await depositorVault.previewDeposit(VAULT_DEPOSIT_AMOUNT);
+      const before = await vaultSnapshot();
+
+      const { hash, ledger } = await depositorVault.deposit(depositor, VAULT_DEPOSIT_AMOUNT);
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(ledger).toBeGreaterThan(0);
+
+      const after = await vaultSnapshot();
+      expect(after.underlyingHeld - before.underlyingHeld).toBe(VAULT_DEPOSIT_AMOUNT);
+      expect(after.totalSupply - before.totalSupply).toBe(expectedShares);
+      expect(after.depositorShares - before.depositorShares).toBe(expectedShares);
+    },
+    WRITE_TIMEOUT,
+  );
+
+  it(
+    "sponsored deposit: depositor authorizes while sponsor pays fees",
+    async () => {
+      const expectedShares = await depositorVault.previewDeposit(VAULT_SPONSORED_DEPOSIT_AMOUNT);
+      const before = await vaultSnapshot();
+      const depositorSequence = (await server.getAccount(depositor)).sequenceNumber();
+
+      const sponsored = await sponsorVault.buildSponsoredDepositTx(
+        depositor,
+        VAULT_SPONSORED_DEPOSIT_AMOUNT,
+        { feeSource: sponsor },
+      );
+      expect(sponsored.transaction.source).toBe(sponsor);
+      expect(sponsored.authorizers).toEqual([depositor]);
+
+      const { sequence } = await server.getLatestLedger();
+      const signed = await authorizeEntries(
+        sponsored.authEntries,
+        Keypair.fromSecret(ISSUER_SECRET as string),
+        sequence + DEFAULT_AUTH_VALIDITY_LEDGERS,
+        NETWORK_PASSPHRASE,
+      );
+      const { hash } = await sponsorVault.submitSponsoredTx(sponsored, signed);
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+
+      const after = await vaultSnapshot();
+      expect(after.underlyingHeld - before.underlyingHeld).toBe(VAULT_SPONSORED_DEPOSIT_AMOUNT);
+      expect(after.totalSupply - before.totalSupply).toBe(expectedShares);
+      expect(after.depositorShares - before.depositorShares).toBe(expectedShares);
+      expect((await server.getAccount(depositor)).sequenceNumber()).toBe(depositorSequence);
+    },
+    WRITE_TIMEOUT,
+  );
+
+  it(
+    "redeem burns fractional shares and returns underlying tokens when unlocked",
+    async () => {
+      const redeemableShares = await depositorVault.redeemable(depositor);
+      if (redeemableShares === 0n) {
+        // Shares are still within their lock-up period on this deployment.
+        return;
+      }
+      const expectedShares = await depositorVault.previewDeposit(VAULT_DEPOSIT_AMOUNT);
+      if (redeemableShares < expectedShares) {
+        return;
+      }
+
+      const expectedUnderlying = await depositorVault.previewRedeem(expectedShares);
+      const before = await vaultSnapshot();
+
+      const { hash, ledger } = await depositorVault.redeem(depositor, expectedShares);
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(ledger).toBeGreaterThan(0);
+
+      const after = await vaultSnapshot();
+      expect(before.underlyingHeld - after.underlyingHeld).toBe(expectedUnderlying);
+      expect(before.totalSupply - after.totalSupply).toBe(expectedShares);
+      expect(before.depositorShares - after.depositorShares).toBe(expectedShares);
     },
     WRITE_TIMEOUT,
   );
