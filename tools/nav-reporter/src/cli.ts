@@ -4,8 +4,11 @@ import * as fs from "fs";
 import * as path from "path";
 import { Keypair } from "@stellar/stellar-sdk";
 import { MAINNET_CONFIG, OracleAdapterClient, TESTNET_CONFIG } from "@stellarforge-protocol/sdk";
+import { Keypair, Networks } from "@stellar/stellar-sdk";
+import { OracleAdapterClient } from "@stellarforge-protocol/sdk";
 import { submitSignedAppraisal } from "./reporter.js";
 import { ExitCode, type SignedAppraisalFile } from "./types.js";
+import { resolveCliOptions } from "./options.js";
 
 function usageText(): string {
   return `
@@ -28,7 +31,10 @@ Operational Options:
   --json                       Emit structured machine-readable JSON output
   --network <name>             Network name: 'testnet' (default) or 'mainnet'
   --rpc-url <url>              Custom Soroban RPC URL
+  --config <path>              Load options from sforge.config.json (default: ./sforge.config.json)
   -h, --help                   Display this help message
+
+Configuration precedence: command-line flags > environment variables > config file > defaults.
 
 Exit Codes:
   0: Success (or dry-run verified, or idempotent duplicate)
@@ -85,7 +91,19 @@ export async function runCli(args: string[]): Promise<number> {
     } else if (arg === "--dry-run") {
       dryRun = true;
     }
+  if (args.includes("-h") || args.includes("--help")) {
+    printUsage();
+    return 0;
   }
+  let options;
+  try {
+    options = resolveCliOptions(args);
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    return ExitCode.PreflightFailure;
+  }
+  const { appraisalPath, oracleContractId, appraiserKey, reporterKeyFile, relayerKeyFile,
+    networkName, rpcUrl, dryRun, jsonOutput } = options;
 
   if (!appraisalPath || !oracleContractId) {
     if (!jsonOutput) {
@@ -207,12 +225,22 @@ export async function runCli(args: string[]): Promise<number> {
     }
   }
 
+  if (networkName === "mainnet" && !rpcUrl) {
+    const error = "Mainnet reporting requires --rpc-url or SOROBAN_RPC_URL.";
+    if (jsonOutput) console.log(JSON.stringify({ success: false, exitCode: ExitCode.PreflightFailure, error }));
+    else console.error(`Error: ${error}`);
+    return ExitCode.PreflightFailure;
+  }
+
   const oracleClient = new OracleAdapterClient({
     network: networkName,
     networkPassphrase:
       networkName === "mainnet" ? MAINNET_CONFIG.networkPassphrase : TESTNET_CONFIG.networkPassphrase,
     contracts: { oracleAdapter: oracleContractId },
     rpcUrl: rpcUrl ?? TESTNET_CONFIG.rpcUrl,
+    networkPassphrase: networkName === "mainnet" ? Networks.PUBLIC : Networks.TESTNET,
+    rpcUrl: rpcUrl ?? "https://soroban-testnet.stellar.org",
+    contracts: { oracleAdapter: oracleContractId },
     signerSecret: relayerSecret ?? reporterSecret,
   });
 
@@ -220,6 +248,8 @@ export async function runCli(args: string[]): Promise<number> {
     oracleClient,
     reporterKeypair,
     relayerKeypair,
+    rpcUrl,
+    networkName,
     expectedAppraiserPublicKey: appraiserKey,
     dryRun,
   });

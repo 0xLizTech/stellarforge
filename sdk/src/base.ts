@@ -20,6 +20,8 @@ import {
   checkSignedAuthEntry,
   DEFAULT_AUTH_VALIDITY_LEDGERS,
 } from "./sponsored.js";
+import { KeypairSigner } from "./signers.js";
+import { authEntryAddress, checkSignedAuthEntry } from "./sponsored.js";
 import type { SponsoredTransaction } from "./sponsored.js";
 import type { StellarForgeConfig, TxResult } from "./types.js";
 
@@ -161,32 +163,34 @@ export abstract class ContractClient {
     source: string,
     sponsored = false,
   ): Promise<SubmitOutcome> {
-    const secret = this.clientConfig.signerSecret;
-    if (!secret) {
+    const configuredSigner = this.clientConfig.signer;
+    const signer = configuredSigner ?? (this.clientConfig.signerSecret
+      ? KeypairSigner.fromSecret(this.clientConfig.signerSecret)
+      : undefined);
+    if (!signer) {
       throw new Error(
-        "config.signerSecret is required to submit a transaction. " +
+        "config.signer or config.signerSecret is required to submit a transaction. " +
           "Use the matching build*Tx method to sign with a wallet instead.",
       );
     }
 
-    const keypair = Keypair.fromSecret(secret);
-
     // The signer has to be the transaction source. Catching it here beats a
     // protocol-level bad-auth failure, or a require_auth failure after the fee
     // is spent.
-    if (keypair.publicKey() !== source) {
+    if (signer.publicKey !== source) {
+      const signerName = configuredSigner ? "signer" : "signerSecret";
       throw new Error(
         sponsored
-          ? `signerSecret is for ${keypair.publicKey()} but this sponsored transaction is sourced ` +
+          ? `${signerName} is for ${signer.publicKey} but this sponsored transaction is sourced ` +
               `and paid for by ${source}, which must sign it.`
-          : `signerSecret is for ${keypair.publicKey()} but this call must be authorized by ` +
+          : `${signerName} is for ${signer.publicKey} but this call must be authorized by ` +
               `${source}. To pay from a different account, use a buildSponsored*Tx method.`,
       );
     }
 
-    tx.sign(keypair);
+    const signedTransaction = await signer.signTransaction(tx, this.clientConfig.networkPassphrase);
 
-    const sent = await this.server.sendTransaction(tx);
+    const sent = await this.server.sendTransaction(signedTransaction);
     switch (sent.status) {
       case "ERROR":
         throw new Error(`Transaction ${sent.hash} was rejected on submission`);

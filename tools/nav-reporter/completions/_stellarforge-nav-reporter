@@ -1,0 +1,16 @@
+#compdef stellarforge-nav-reporter
+# Zsh completion for stellarforge-nav-reporter. Regenerate with npm run generate-completions.
+_arguments \
+  '--appraisal[Signed appraisal JSON file]:file:_files' \
+  '--oracle[Oracle adapter contract ID]:contract ID:' \
+  '--appraiser-key[Expected appraiser public key]:public key:' \
+  '--reporter-key-file[Reporter secret key file]:file:_files' \
+  '--relayer-key-file[Relayer secret key file]:file:_files' \
+  '--network[Target Stellar network]:network:(testnet mainnet)' \
+  '--rpc-url[Custom Soroban RPC URL]:URL:' \
+  '--config[Config JSON file]:file:_files' \
+  '--dry-run[Validate without submitting]' \
+  '--no-dry-run[Disable dry-run mode]' \
+  '--json[Emit JSON output]' \
+  '--no-json[Disable JSON output]' \
+  '--help[Show help]'

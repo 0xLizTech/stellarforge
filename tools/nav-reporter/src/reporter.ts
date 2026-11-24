@@ -1,7 +1,9 @@
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, Networks, rpc } from "@stellar/stellar-sdk";
 import {
   OracleAdapterClient,
+  authorizeEntries,
   checkDeviation,
+  DEFAULT_AUTH_VALIDITY_LEDGERS,
   tickOf,
 } from "@stellarforge-protocol/sdk";
 import type { OracleAsset, PriceData } from "@stellarforge-protocol/sdk";
@@ -12,6 +14,8 @@ export interface ReporterConfig {
   oracleClient: OracleAdapterClient;
   reporterKeypair: Keypair;
   relayerKeypair?: Keypair;
+  rpcUrl?: string;
+  networkName?: "testnet" | "mainnet";
   expectedAppraiserPublicKey?: string;
   dryRun?: boolean;
 }
@@ -163,6 +167,7 @@ export async function submitSignedAppraisal(
               exitCode: ExitCode.PreflightFailure,
               action: "rejected",
               error: `Deviation limit exceeded: price moved beyond ${assetConfig.maxDeviationBps} basis points (admin override required)`,
+              error: `Deviation limit exceeded: price move is outside ${assetConfig.maxDeviationBps} bps (admin override required)`,
             };
           }
         } catch (err) {
@@ -205,6 +210,15 @@ export async function submitSignedAppraisal(
     const signedEntries = await client.authorizeEntries(sponsored, config.reporterKeypair.secret());
     // The SDK finalizes and submits the sponsored transaction with the
     // configured fee payer (the relayer, or the reporter when none is set).
+    const networkPassphrase = config.networkName === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+    const server = new rpc.Server(config.rpcUrl ?? "https://soroban-testnet.stellar.org", { allowHttp: false });
+    const { sequence: latestLedger } = await server.getLatestLedger();
+    const signedEntries = await authorizeEntries(
+      sponsored.authEntries,
+      config.reporterKeypair,
+      latestLedger + DEFAULT_AUTH_VALIDITY_LEDGERS,
+      networkPassphrase,
+    );
     const txResult = await client.submitSponsoredTx(sponsored, signedEntries);
     return {
       success: true,

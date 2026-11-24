@@ -51,3 +51,20 @@ export class TransactionOutcomeUnknownError extends Error {
     this.hash = hash;
   }
 }
+
+/**
+ * Thrown when an invalid Stellar address (G, C, or M) is passed to a client method.
+ */
+export class InvalidAddressError extends Error {
+  readonly address: string;
+  readonly parameterName?: string | undefined;
+
+  constructor(address: string, parameterName?: string) {
+    super(
+      `Invalid Stellar address "${address}"${parameterName ? ` for parameter "${parameterName}"` : ""}. Expected a valid G, C, or M address.`,
+    );
+    this.name = "InvalidAddressError";
+    this.address = address;
+    this.parameterName = parameterName;
+  }
+}

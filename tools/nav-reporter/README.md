@@ -38,10 +38,23 @@ import { canonicalJsonStringify } from "@stellarforge-protocol/nav-reporter";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const canonicalBytes = Buffer.from(canonicalJsonStringify(payload), "utf8");
-const signature = keypair.sign(canonicalBytes).toString("hex");
+const signature = Buffer.from(keypair.sign(canonicalBytes)).toString("hex");
 ```
 
 ## CLI Usage
+
+The CLI reads `./sforge.config.json` when present. Use `--config <path>` to
+select a different JSON file. The config can set `appraisal`, `oracle`,
+`appraiserKey`, `reporterKeyFile`, `relayerKeyFile`, `network`, `rpcUrl`,
+`dryRun`, and `json`; see [sforge.config.example.json](sforge.config.example.json).
+Key material stays in environment variables or secret files; do not put secret
+keys in the config file.
+
+Options use this priority order: command-line flags, environment variables,
+config file, then defaults. Environment names are `APPRAISAL_FILE`,
+`ORACLE_CONTRACT_ID`, `APPRAISER_PUBLIC_KEY`, `REPORTER_KEY_FILE`,
+`RELAYER_KEY_FILE`, `NETWORK`, `SOROBAN_RPC_URL`, `DRY_RUN`, and
+`JSON_OUTPUT`.
 
 ```bash
 export REPORTER_SECRET_KEY="S..."
@@ -80,3 +93,30 @@ stellarforge-nav-reporter --appraisal path/to/appraisal.json --oracle ... --json
 | `3` | Pre-flight validation failure (stale tick, future date, lossy conversion, or deviation exceeded) |
 | `4` | Submission failure (network or host error) |
 | `5` | Unknown outcome (timeout where on-chain state could not be verified) |
+
+## Shell Completions
+
+Generated bash, zsh, and fish completions are shipped in the package. For a
+global npm installation, source the bash file from your `~/.bashrc`:
+
+```bash
+source "$(npm root -g)/@stellarforge-protocol/nav-reporter/completions/stellarforge-nav-reporter.bash"
+```
+
+For zsh, add the package's `completions` directory to `fpath` before running
+`compinit`:
+
+```zsh
+fpath+=("$(npm root -g)/@stellarforge-protocol/nav-reporter/completions")
+autoload -Uz compinit && compinit
+```
+
+For fish, copy its completion file into fish's completion directory:
+
+```fish
+cp (npm root -g)/@stellarforge-protocol/nav-reporter/completions/stellarforge-nav-reporter.fish ~/.config/fish/completions/
+```
+
+Regenerate the tracked files after changing CLI options with
+`npm run generate-completions` from `tools/nav-reporter`; the test suite checks
+that generation stays deterministic.

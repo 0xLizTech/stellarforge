@@ -213,6 +213,7 @@ function describeInvocation(inv: xdr.SorobanAuthorizedInvocation, prefix = "", i
   const lines: string[] = [];
   const fn = inv.function;
   let callDesc: string;
+
   if (fn.type === "sorobanAuthorizedFunctionTypeContractFn") {
     const contractFn = fn.contractFn;
     const contractId = Address.fromScAddress(contractFn.contractAddress).toString();

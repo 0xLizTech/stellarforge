@@ -82,6 +82,24 @@ export class GovernanceClient extends ContractClient {
     return scValToNative(result) as bigint;
   }
 
+  /**
+   * Async generator yielding all governance proposals in id order (`1n` through
+   * {@link proposalCount}).
+   *
+   * Reads {@link proposalCount} once, then fetches each proposal with
+   * {@link getProposal}. Missing entries (`null`) are skipped. Stopping
+   * iteration early avoids fetching remaining proposals.
+   */
+  async *proposals(): AsyncGenerator<Proposal, void, unknown> {
+    const count = await this.proposalCount();
+    for (let id = 1n; id <= count; id++) {
+      const proposal = await this.getProposal(id);
+      if (proposal !== null) {
+        yield proposal;
+      }
+    }
+  }
+
   /** The contract admin. */
   async admin(): Promise<string> {
     const result = await this.simulateReadOnly("admin", []);
