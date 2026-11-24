@@ -12,8 +12,11 @@ import {
 
 import {
   VaultClient,
+  VaultError,
   VaultErrorCode,
+  VAULT_ERROR_MESSAGES,
   NavRefusalError,
+  parseVaultError,
   sharesForDeposit,
   underlyingForRedeem,
   maxRedeemable,
@@ -346,6 +349,28 @@ describe("VaultClient reads", () => {
     stubSimulation(succeeds(nativeToScVal(9_000_000n, { type: "i128" })));
     expect(await client.totalSupplyAt(1000)).toBe(9_000_000n);
   });
+
+  it("decodes checkpointCount and supplyCheckpointCount", async () => {
+    stubSimulation(succeeds(nativeToScVal(3, { type: "u32" })));
+    expect(await client.checkpointCount(DEPOSITOR)).toBe(3);
+
+    stubSimulation(succeeds(nativeToScVal(5, { type: "u32" })));
+    expect(await client.supplyCheckpointCount()).toBe(5);
+  });
+
+  it("decodes previewDeposit, previewRedeem, maxDeposit, and maxRedeem", async () => {
+    stubSimulation(succeeds(nativeToScVal(20_000n, { type: "i128" })));
+    expect(await client.previewDeposit(2_000n)).toBe(20_000n);
+
+    stubSimulation(succeeds(nativeToScVal(2_000n, { type: "i128" })));
+    expect(await client.previewRedeem(20_000n)).toBe(2_000n);
+
+    stubSimulation(succeeds(nativeToScVal(100_000n, { type: "i128" })));
+    expect(await client.maxDeposit(DEPOSITOR)).toBe(100_000n);
+
+    stubSimulation(succeeds(nativeToScVal(50_000n, { type: "i128" })));
+    expect(await client.maxRedeem(DEPOSITOR)).toBe(50_000n);
+  });
 });
 
 // ─── 3. VaultClient Writes ─────────────────────────────────────────────────────
@@ -415,6 +440,33 @@ describe("VaultClient writes", () => {
     const op = builtInvocation(tx);
     expect(op.fn).toBe("set_oracles");
     expect(op.args).toEqual([FEE_PAYER, [ORACLE_ID]]);
+  });
+
+  it("buildTransferAdminTx constructs exact contract args", async () => {
+    stubWritePath();
+    const tx = await client.buildTransferAdminTx(FEE_PAYER, ADMIN);
+    const op = builtInvocation(tx);
+    expect(op.fn).toBe("transfer_admin");
+    expect(op.args).toEqual([ADMIN]);
+  });
+
+  it("transferAdmin submits transaction", async () => {
+    stubWritePath();
+    const res = await client.transferAdmin(FEE_PAYER, ADMIN);
+    expect(res.hash).toBe(SUBMITTED_HASH);
+    expect(res.ledger).toBe(42);
+  });
+
+  it("redeem, transfer, approve, transferFrom, setPaused, and setOracles submit transactions", async () => {
+    stubWritePath();
+    expect((await client.redeem(FEE_PAYER, 10_000n)).hash).toBe(SUBMITTED_HASH);
+    expect((await client.transfer(FEE_PAYER, RECIPIENT, 1_000n)).hash).toBe(SUBMITTED_HASH);
+    expect((await client.approve(FEE_PAYER, SPENDER, 2_000n, 5000)).hash).toBe(SUBMITTED_HASH);
+    expect((await client.transferFrom(FEE_PAYER, DEPOSITOR, RECIPIENT, 500n)).hash).toBe(
+      SUBMITTED_HASH,
+    );
+    expect((await client.setPaused(FEE_PAYER, true)).hash).toBe(SUBMITTED_HASH);
+    expect((await client.setOracles(FEE_PAYER, [ORACLE_ID])).hash).toBe(SUBMITTED_HASH);
   });
 });
 
@@ -938,5 +990,73 @@ describe("Event Decoding", () => {
     // Test with empty/null
     expect(decodeVaultEvents(null)).toEqual([]);
     expect(decodeVaultEvents({})).toEqual([]);
+  });
+
+  it("decodes transfer_admin and fee events", () => {
+    const adminEvent = {
+      ledger: 60,
+      topic: [xdr.ScVal.scvSymbol("transfer_admin"), new Address(ADMIN).toScVal()],
+      value: new Address(RECIPIENT).toScVal(),
+    };
+    const decodedAdmin = decodeVaultEvent(adminEvent);
+    expect(decodedAdmin.type).toBe("transfer_admin");
+    if (decodedAdmin.type === "transfer_admin") {
+      expect(decodedAdmin.previous).toBe(ADMIN);
+      expect(decodedAdmin.newAdmin).toBe(RECIPIENT);
+      expect(decodedAdmin.ledger).toBe(60);
+    }
+
+    const feeEvent = {
+      ledger: 61,
+      topic: [xdr.ScVal.scvSymbol("fee"), new Address(DEPOSITOR).toScVal()],
+      value: nativeToScVal({ amount: 250n, recipient: ADMIN }),
+    };
+    const decodedFee = decodeVaultEvent(feeEvent);
+    expect(decodedFee.type).toBe("fee");
+    if (decodedFee.type === "fee") {
+      expect(decodedFee.payer).toBe(DEPOSITOR);
+      expect(decodedFee.amount).toBe(250n);
+      expect(decodedFee.recipient).toBe(ADMIN);
+      expect(decodedFee.ledger).toBe(61);
+    }
+  });
+});
+
+// ─── 6. Typed Vault Errors ─────────────────────────────────────────────────────
+
+describe("Typed VaultError and parseVaultError", () => {
+  it("maps every VaultErrorCode (1..26) to a human-readable message", () => {
+    const codes = Object.values(VaultErrorCode).filter((v): v is VaultErrorCode => typeof v === "number");
+    expect(codes).toHaveLength(26);
+    expect(VaultErrorCode.NotInitialized).toBe(1);
+    expect(VaultErrorCode.SharesLocked).toBe(14);
+    expect(VaultErrorCode.NotMultipleOfExchangeRate).toBe(17);
+    expect(VaultErrorCode.StalePrice).toBe(22);
+    expect(VaultErrorCode.OracleDivergence).toBe(23);
+    expect(VaultErrorCode.LedgerNotClosed).toBe(26);
+    for (const code of codes) {
+      expect(VAULT_ERROR_MESSAGES[code]).toBeTruthy();
+      const err = VaultError.fromCode(code);
+      expect(err).toBeInstanceOf(VaultError);
+      expect(err.code).toBe(code);
+      expect(err.message).toBe(VAULT_ERROR_MESSAGES[code]);
+    }
+  });
+
+  it("parseVaultError parses Soroban contract error codes into VaultError or NavRefusalError", () => {
+    const locked = parseVaultError(new Error("Simulation error: HostError: Error(Contract, #14)"));
+    expect(locked).toBeInstanceOf(VaultError);
+    expect(locked?.code).toBe(VaultErrorCode.SharesLocked);
+
+    const stale = parseVaultError(new Error("HostError: Error(Contract, #22)"));
+    expect(stale).toBeInstanceOf(NavRefusalError);
+    expect(stale?.code).toBe(VaultErrorCode.StalePrice);
+
+    const divergence = parseVaultError(new Error("HostError: Error(Contract, #23)"));
+    expect(divergence).toBeInstanceOf(NavRefusalError);
+    expect(divergence?.code).toBe(VaultErrorCode.OracleDivergence);
+
+    expect(parseVaultError(new Error("Network timeout"))).toBeNull();
+    expect(parseVaultError(new Error("Error(Contract, #999)"))).toBeNull();
   });
 });

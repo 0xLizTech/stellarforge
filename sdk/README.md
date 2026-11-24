@@ -116,7 +116,7 @@ Two things worth knowing before you use either:
 | `ComplianceClient` | `compliance` | `isCompliant` is the pure query, never the TTL-extending `screen`; `getKyc` reads a stored record. Admin: setKyc, revokeKyc |
 | `RegistryClient` | `registry` | Asset directory, paged with `listAssets(start, limit)` or walked with `listAllAssets()`; `register` and `setActive` are admin-only |
 | `GovernanceClient` | `governance` | Proposals and voting — **see the warning below** |
-| `VaultClient` | `vault` | Real estate / RWA share vault: config, balances, historical checkpoints, NAV, sponsored deposits/redeems, and typed event decoders |
+| `VaultClient` | `vault` | Real estate / RWA share vault: config, balances, previews (`previewDeposit`/`previewRedeem`), historical checkpoints (`balanceAt`/`totalSupplyAt`/`checkpointCount`/`supplyCheckpointCount`), NAV, admin (`setPaused`/`setOracles`/`transferAdmin`), sponsored deposits/redeems, typed errors (`VaultErrorCode`/`parseVaultError`), and event decoders |
 | `OracleAdapterClient` | `oracle-adapter` | SEP-40 NAV feed — **see [Oracle adapter](#oracle-adapter)** |
 
 ## Vault & Auth-Tree Verification
