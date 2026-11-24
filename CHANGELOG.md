@@ -23,6 +23,11 @@ Entry template (include only applicable sections in each release):
 - <security change> (#issue)
 -->
 
+- Stage 3 SDK maturity enhancements (#181, #182, #183, #184):
+  - ESM and CommonJS import and type resolution tests from packed tarball (`scripts/test-package-imports.mjs`, `tests/package-import.test.ts`), wired into `.github/workflows/sdk-ci.yml` and `.github/workflows/publish-sdk.yml` (#181).
+  - Bundle size tracking via `size-limit` with configured budgets and regression checks (`tests/bundle-size.test.ts`, `npm run size`), integrated into the SDK build CI workflow (#182).
+  - Tree-shakeable SDK packaging with `"sideEffects": false`, granular subpath exports (`./client`, `./governance`, `./registry`, `./vault`, `./oracle`, `./sponsored`, `./errors`, `./types`, `./utils`, `./base`), multi-entrypoint `tsup` build, and esbuild bundler verification (`tests/treeshaking.test.ts`) (#183).
+  - Browser compatibility test suite (`tests/browser-compatibility.test.ts`) using `happy-dom`, verifying all client instantiations and pure utilities in browser runtimes with zero silent polyfills, and browser support documentation in `sdk/README.md` (#184).
 - SDK V8 line coverage with an 85% threshold and Codecov reporting, plus generated bash, zsh, and fish completions and `sforge.config.json` support for the NAV reporter CLI (#194, #192, #191).
 - Adds Rust-generated parity coverage for vault deposit and redemption arithmetic (#196).
 

@@ -98,6 +98,11 @@ jobs:
           npm pack --dry-run
           test -f LICENSE || { echo "::error::prepack did not produce sdk/LICENSE"; exit 1; }
 
+      # Validate both ESM and CJS imports and type definitions from the packed tarball
+      - name: Verify packed package imports
+        working-directory: sdk
+        run: npm run test:imports
+
       - name: Publish
         if: github.event_name == 'release' || inputs.dry_run == false
         working-directory: sdk
