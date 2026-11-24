@@ -12,9 +12,9 @@ use soroban_sdk::{
 use compliance::{ComplianceContract, ComplianceContractClient, KycRecord};
 use stellarforge_common::storage::INSTANCE_BUMP_AMOUNT;
 use vault::{
-    Asset, DataKey, Deposit, NavData, OracleSet, OracleSource, PriceData, Redeem, SetOracles,
-    Transfer, VaultConfig, VaultContract, VaultContractClient, VaultError, MAX_LOCKUP_SECS,
-    NAV_DECIMALS,
+    Asset, DataKey, Deposit, NavData, OracleSet, OracleSource, PriceData, Redeem, SecondaryOracle,
+    SetOracles, Transfer, VaultConfig, VaultContract, VaultContractClient, VaultError,
+    MAX_LOCKUP_SECS, NAV_DECIMALS,
 };
 
 // ─── Test Helpers & Fixtures ──────────────────────────────────────────────────
@@ -798,6 +798,10 @@ fn test_set_oracles_and_nav() {
             oracle: oracle1.clone(),
             asset: asset.clone(),
         },
+        secondary: SecondaryOracle::Some(OracleSource {
+            oracle: oracle2.clone(),
+            asset,
+        }),
         secondary: Some(oracle2.clone()),
         max_staleness_secs: 86400,
         max_divergence_bps: 500,
@@ -845,6 +849,10 @@ fn test_oracle_divergence_and_staleness() {
             oracle: oracle1.clone(),
             asset: asset.clone(),
         },
+        secondary: SecondaryOracle::Some(OracleSource {
+            oracle: oracle2,
+            asset,
+        }),
         secondary: Some(oracle2),
         max_staleness_secs: 86400,
         max_divergence_bps: 100,
@@ -862,7 +870,7 @@ fn test_oracle_divergence_and_staleness() {
             oracle: oracle1.clone(),
             asset: Asset::Other(soroban_sdk::symbol_short!("USD")),
         },
-        secondary: None,
+        secondary: SecondaryOracle::None,
         max_staleness_secs: 60,
         max_divergence_bps: 100,
     };

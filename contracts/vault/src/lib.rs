@@ -25,8 +25,8 @@ pub use events::{
     AdminTransferred, Approve, Deposit, Fee, Paused, Redeem, SetOracles, Transfer, TransferFrom,
 };
 pub use oracle::{
-    Asset, NavData, OracleSet, OracleSource, PriceData, Sep40OracleClient, Sep40OracleInterface,
-    BPS_DENOMINATOR, NAV_DECIMALS,
+    Asset, NavData, OracleSet, OracleSource, PriceData, SecondaryOracle, Sep40OracleClient,
+    Sep40OracleInterface, BPS_DENOMINATOR, NAV_DECIMALS,
 };
 pub use token::{UnderlyingTokenClient, UnderlyingTokenInterface};
 
@@ -581,7 +581,7 @@ impl VaultContract {
             }
             oracles_list.push_back(cfg.primary.oracle.clone());
 
-            if let Some(ref sec) = cfg.secondary {
+            if let SecondaryOracle::Some(ref sec) = cfg.secondary {
                 if cfg.max_divergence_bps < 1 {
                     panic_with_error!(&env, VaultError::InvalidMetadata);
                 }
