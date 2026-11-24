@@ -23,6 +23,7 @@ Entry template (include only applicable sections in each release):
 - <security change> (#issue)
 -->
 
+- Vault deposits now screen the depositor through the configured compliance contract; the vault documents and tests its pause policy and NAV-per-share calculation, including zero supply. SDK Changesets now open a Version Packages PR for queued releases (#229, #228, #227, #197).
 - The SDK includes runnable testnet examples for mint, transfer, KYC, governance proposals and voting; CI typechecks them and exercises package import/read behavior under Deno 2 and Bun 1 (#188, #185).
 - The SDK's public TypeScript API now requires TSDoc comments in lint, and the NAV reporter's `--json` mode has CLI tests guaranteeing machine-readable stdout with diagnostics on stderr (#187, #190).
 

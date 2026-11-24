@@ -32,6 +32,13 @@ pub struct OracleSource {
     pub asset: Asset,
 }
 
+/// Explicit optional wrapper used because Soroban test utilities cannot derive
+/// ScVal conversions for `Option<OracleSource>` inside a contract type.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OptionalOracleSource {
+    Absent,
+    Present(OracleSource),
 /// Optional secondary oracle source.
 ///
 /// Wrapped in a dedicated `#[contracttype]` enum because `soroban-sdk` 29 does not
@@ -48,6 +55,7 @@ pub enum SecondaryOracle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleSet {
     pub primary: OracleSource,
+    pub secondary: OptionalOracleSource,
     /// Zero or one additional source. Kept as a Soroban vector because the
     /// SDK cannot encode `Option` around this nested contract type.
     pub secondary: soroban_sdk::Vec<OracleSource>,

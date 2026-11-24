@@ -1,5 +1,11 @@
 #![cfg(test)]
 
+use contracts_vault::{VaultConfig, VaultContract, VaultContractClient};
+use soroban_sdk::{
+    contract, contractimpl,
+    testutils::{Address as _, Ledger},
+    Address, Env, MuxedAddress, String,
+};
 //! Randomized property tests for the vault's core accounting invariants (#235).
 //!
 //! The vault promises that shares are a fixed claim on the underlying asset:
@@ -37,6 +43,12 @@ impl MockUnderlying {
     pub fn transfer(_env: Env, _from: Address, _to: MuxedAddress, _amount: i128) {}
 }
 
+/// Pure shadow model for tracking expected state across stateful test transitions.
+struct VaultShadowModel {
+    pub exchange_rate: i128,
+    pub balances: [(Address, i128); 3],
+    pub underlying_held: i128,
+    pub total_supply: i128,
 /// Number of randomized operations the test runs.
 const CASES: u64 = 10_000;
 
@@ -101,6 +113,10 @@ impl Shadow {
         let total_supply = client.total_supply();
         let underlying_held = client.underlying_held();
 
+    pub fn assert_invariants(&self, client: &VaultContractClient) {
+        // Invariant 1: total_supply == underlying_held * exchange_rate
+        let contract_total = client.total_supply();
+        let contract_held = client.underlying_held();
         assert_eq!(
             total_supply,
             underlying_held * EXCHANGE_RATE,
@@ -208,6 +224,63 @@ fn randomized_operations_preserve_the_share_invariant() {
         ),
     );
     let client = VaultContractClient::new(&env, &vault_id);
+    let mut shadow = VaultShadowModel::new(&actors, exchange_rate);
+
+    // Initial check
+    shadow.assert_invariants(&client);
+
+    // Step 1: Actor 0 deposits 10 units -> 100 shares
+    client.deposit(&actors[0], &10);
+    shadow.set_balance(&actors[0], 100);
+    shadow.underlying_held += 10;
+    shadow.total_supply += 100;
+    shadow.assert_invariants(&client);
+
+    // Step 2: Actor 1 deposits 25 units -> 250 shares
+    client.deposit(&actors[1], &25);
+    shadow.set_balance(&actors[1], 250);
+    shadow.underlying_held += 25;
+    shadow.total_supply += 250;
+    shadow.assert_invariants(&client);
+
+    // Step 3: Actor 1 transfers 50 shares to Actor 2
+    client.transfer(&actors[1], &MuxedAddress::from(actors[2].clone()), &50);
+    shadow.set_balance(&actors[1], 200);
+    shadow.set_balance(&actors[2], 50);
+    shadow.assert_invariants(&client);
+
+    // Step 4: Actor 0 redeems 30 shares -> receives 3 underlying units
+    client.redeem(&actors[0], &30);
+    shadow.set_balance(&actors[0], 70);
+    shadow.underlying_held -= 3;
+    shadow.total_supply -= 30;
+    shadow.assert_invariants(&client);
+
+    // Step 5: Actor 2 approves Actor 0 for 20 shares, Actor 0 transfers from Actor 2 to Actor 1
+    client.approve(&actors[2], &actors[0], &20, &500);
+    client.transfer_from(&actors[0], &actors[2], &actors[1], &20);
+    shadow.set_balance(&actors[2], 30);
+    shadow.set_balance(&actors[1], 220);
+    shadow.assert_invariants(&client);
+
+    // Step 6: Advance ledger and verify historical checkpoints match shadow model
+    env.ledger().set_sequence_number(200);
+    assert_eq!(client.balance_at(&actors[0], &150), 70);
+    assert_eq!(client.balance_at(&actors[1], &150), 220);
+    assert_eq!(client.balance_at(&actors[2], &150), 30);
+    assert_eq!(client.total_supply_at(&150), 320);
+
+    // Step 7: Final full redemptions drain vault cleanly
+    client.redeem(&actors[0], &70);
+    client.redeem(&actors[1], &220);
+    client.redeem(&actors[2], &30);
+
+    shadow.set_balance(&actors[0], 0);
+    shadow.set_balance(&actors[1], 0);
+    shadow.set_balance(&actors[2], 0);
+    shadow.underlying_held = 0;
+    shadow.total_supply = 0;
+    shadow.assert_invariants(&client);
 
     let actors = [
         Address::generate(&env),

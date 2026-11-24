@@ -1,5 +1,9 @@
 #![cfg(test)]
 
+use contracts_vault::{
+    Asset, OptionalOracleSource, OracleSet, OracleSource, PriceData, UnderlyingTokenClient,
+    VaultConfig, VaultContract, VaultContractClient, VaultError, MAX_LOCKUP_SECS,
+};
 use soroban_sdk::{
     contract, contractimpl,
     testutils::{Address as _, Ledger},
@@ -34,7 +38,7 @@ struct MockCompliance;
 
 #[contractimpl]
 impl MockCompliance {
-    pub fn screen(env: Env, party: Address, _min_level: u32) -> bool {
+    pub fn is_compliant(env: Env, party: Address, _min_level: u32) -> bool {
         // Look up revoked key
         !env.storage().instance().has(&party)
     }
@@ -178,12 +182,14 @@ fn test_adversarial_lock_bypass() {
 fn test_adversarial_lock_griefing() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().set_timestamp(1_000);
+    env.ledger().set_timestamp(500);
 
     let (client, _admin, _underlying) = setup_adversarial_vault(&env, 500, None, 0);
     let innocent_user = Address::generate(&env);
     let attacker = Address::generate(&env);
 
+    // The attacker deposits first so its lock expires before the innocent
+    // user's later deposit.
     // Give the attacker shares that are already unlocked at timestamp 1000.
     env.ledger().set_timestamp(500);
     client.deposit(&attacker, &10);
@@ -195,6 +201,11 @@ fn test_adversarial_lock_griefing() {
     // Attacker deposits later at timestamp 1400 with a lock target of 1900
     env.ledger().set_timestamp(1_400);
     client.deposit(&attacker, &10);
+    assert_eq!(client.locked_until(&attacker), 1_000);
+
+    env.ledger().set_timestamp(1_000);
+    client.deposit(&innocent_user, &10); // locked until 1500
+    assert_eq!(client.locked_until(&innocent_user), 1_500);
 
     // The attacker is locked until 1900, so the transfer is refused while he
     // is locked; even a successful transfer must not extend InnocentUser's lock.
@@ -294,6 +305,10 @@ fn test_adversarial_oracle_manipulation() {
             oracle: oracle1.clone(),
             asset: asset.clone(),
         },
+        secondary: OptionalOracleSource::Present(OracleSource {
+            oracle: oracle2.clone(),
+            asset: asset.clone(),
+        }),
         secondary: soroban_sdk::Vec::from_array(
             &env,
             [OracleSource {
@@ -311,6 +326,9 @@ fn test_adversarial_oracle_manipulation() {
     client.deposit(&user, &10);
 
     // 1. Normal NAV: 100.0 USD
+    MockOracleClient::new(&env, &oracle1).set_price(&100_00000000000000, &10_000);
+    let nav_data = client.nav();
+    assert_eq!(nav_data.value, 1_000); // Normalized NAV for the raw test deposit.
     env.as_contract(&oracle1, || {
         MockOracle::set_price(env.clone(), 100_00000000000000, 10_000);
     });

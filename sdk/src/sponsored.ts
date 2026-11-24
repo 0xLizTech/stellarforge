@@ -209,8 +209,27 @@ export function checkInvocationTree(
 /**
  * Formats a SorobanAuthorizedInvocation into a human-readable string.
  */
+function describeFunction(fn: xdr.SorobanAuthorizedFunction): string {
+  if (fn.type !== "sorobanAuthorizedFunctionTypeContractFn") return fn.type;
+
+  const contractFn = fn.contractFn;
+  const contractId = Address.fromScAddress(contractFn.contractAddress).toString();
+  const fnName = contractFn.functionName.toString();
+  const args = contractFn.args.map((arg) => {
+    try {
+      const native = scValToNative(arg);
+      if (typeof native === "bigint") return `${native.toString()}n`;
+      return JSON.stringify(native);
+    } catch {
+      return arg.toXdr("base64");
+    }
+  });
+  return `${contractId}.${fnName}(${args.join(", ")})`;
+}
+
 function describeInvocation(inv: xdr.SorobanAuthorizedInvocation, prefix = "", isLast = true): string[] {
   const lines: string[] = [];
+  const callDesc = describeFunction(inv.function);
   const fn = inv.function;
   let callDesc: string;
 
@@ -259,6 +278,7 @@ export function describeAuthTree(entry: xdr.SorobanAuthorizationEntry): string {
   const lines: string[] = [`Authorizer: ${authorizer}`];
 
   const rootInv = entry.rootInvocation;
+  const rootDesc = describeFunction(rootInv.function);
   const fn = rootInv.function;
   let rootDesc: string;
 

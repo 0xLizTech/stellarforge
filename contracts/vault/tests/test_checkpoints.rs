@@ -1,9 +1,10 @@
 #![cfg(test)]
 
+use contracts_vault::{VaultConfig, VaultContract, VaultContractClient, VaultError};
 use soroban_sdk::{
     contract, contractimpl,
     testutils::{Address as _, Ledger},
-    Address, Env, MuxedAddress, String, Vec,
+    Address, Env, MuxedAddress, String,
 };
 use vault::{
     Checkpoint, DataKey, Sep40OracleInterface, UnderlyingTokenClient, UnderlyingTokenInterface,

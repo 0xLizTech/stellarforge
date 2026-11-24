@@ -5,6 +5,7 @@ edition = "2021"
 license = "Apache-2.0"
 
 [lib]
+name = "contracts_vault"
 crate-type = ["cdylib", "rlib"]
 
 [features]
