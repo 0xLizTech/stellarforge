@@ -117,7 +117,7 @@ supports server-side automation; `FreighterSigner` adapts Freighter's
 `signTransaction` API without adding a wallet dependency to the SDK.
 
 ```typescript
-import { FreighterSigner, RwaAssetClient } from "@stellarforge-protocol/sdk";
+import { FreighterSigner, RwaAssetClient, TESTNET_CONFIG } from "@stellarforge-protocol/sdk";
 
 const signer = new FreighterSigner(publicKey, (xdr, options) =>
   freighter.signTransaction(xdr, options),
@@ -125,6 +125,22 @@ const signer = new FreighterSigner(publicKey, (xdr, options) =>
 const client = new RwaAssetClient({ ...TESTNET_CONFIG, contracts, signer });
 const { hash, ledger } = await client.transfer(from, to, amount);
 ```
+
+### Freighter wallet & network passphrases
+
+A runnable browser sample page and TypeScript adapter live in
+[`examples/freighter-wallet/`](examples/freighter-wallet/README.md)
+([`index.html`](examples/freighter-wallet/index.html),
+[`freighter-adapter.ts`](examples/freighter-wallet/freighter-adapter.ts)).
+
+Stellar transactions are hashed with the target network's passphrase
+(`TESTNET_CONFIG.networkPassphrase` for Testnet, `MAINNET_CONFIG.networkPassphrase`
+for Mainnet). `FreighterSigner` forwards the client's `networkPassphrase` to
+Freighter's `signTransaction(xdr, { address, networkPassphrase })` and decodes the
+signed XDR with that same passphrase. In a browser dApp, also check
+`freighter.getNetworkDetails().networkPassphrase` against your client config before
+prompting the user to sign, and ask them to switch networks in Freighter if they do
+not match.
 
 For server-side keypairs, use `new KeypairSigner(keypair)` or
 `KeypairSigner.fromSecret(secret)`. The older `signerSecret` config option remains
