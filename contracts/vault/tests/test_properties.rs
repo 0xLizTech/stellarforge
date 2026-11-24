@@ -14,6 +14,10 @@
 use soroban_sdk::{
     contract, contractimpl, testutils::Address as _, Address, Env, MuxedAddress, String,
 };
+use vault::{
+    Sep40OracleInterface, UnderlyingTokenClient, UnderlyingTokenInterface, VaultConfig,
+    VaultContract, VaultContractClient, VaultError,
+};
 
 use vault::{VaultConfig, VaultContract, VaultContractClient};
 

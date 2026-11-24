@@ -100,3 +100,34 @@ pub struct SetOracles {
     pub admin: Address,
     pub oracles: Vec<Address>,
 }
+
+/// Fee totals charged by a deposit or redemption.
+#[contractevent(topics = ["vault_fee"], data_format = "map")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VaultFee {
+    #[topic]
+    pub payer: Address,
+    pub recipient: Address,
+    pub amount: i128,
+    pub operation: soroban_sdk::Symbol,
+}
+
+/// Shares minted to the management fee recipient.
+#[contractevent(topics = ["management_fee"], data_format = "map")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManagementFee {
+    #[topic]
+    pub recipient: Address,
+    pub shares: i128,
+    pub elapsed_secs: u64,
+}
+
+/// Updated fee rates and their shared revenue recipient.
+#[contractevent(topics = ["fees_configured"], data_format = "map")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeesConfigured {
+    pub deposit_bps: u32,
+    pub redemption_bps: u32,
+    pub management_bps: u32,
+    pub recipient: Option<Address>,
+}

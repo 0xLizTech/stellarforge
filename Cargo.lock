@@ -1969,6 +1969,8 @@ name = "vault"
 version = "0.1.0"
 dependencies = [
  "compliance",
+ "oracle-adapter",
+ "rwa-asset",
  "soroban-sdk",
  "stellarforge-common",
 ]

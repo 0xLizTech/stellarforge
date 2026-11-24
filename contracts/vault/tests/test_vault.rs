@@ -4,8 +4,9 @@ use soroban_sdk::{
     contract, contractimpl,
     testutils::{
         storage::{Instance as _, Persistent as _},
-        Address as _, Events as _, Ledger, MuxedAddress as _,
+        Address as _, Events as _, Ledger, MockAuth, MockAuthInvoke, MuxedAddress as _,
     },
+    Address, Env, Event as _, IntoVal, MuxedAddress, String,
     Address, Env, Event, MuxedAddress, String,
 };
 
@@ -397,8 +398,62 @@ fn test_transfer_admin_dual_auth() {
     let h = default_setup();
     let new_admin = Address::generate(&h.env);
 
+    h.env.mock_auths(&[MockAuth {
+        address: &h.admin,
+        invoke: &MockAuthInvoke {
+            contract: &h.contract_id,
+            fn_name: "transfer_admin",
+            args: (new_admin.clone(),).into_val(&h.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(h.client.try_transfer_admin(&new_admin).is_err());
+    assert_eq!(h.client.admin(), h.admin);
+
+    h.env.mock_all_auths();
     h.client.transfer_admin(&new_admin);
     assert_eq!(h.client.admin(), new_admin);
+}
+
+#[test]
+fn test_fee_accounting_and_management_accrual() {
+    let h = default_setup();
+    let alice = Address::generate(&h.env);
+    let recipient = Address::generate(&h.env);
+    h.client
+        .set_fees(&500, &500, &100, &Some(recipient.clone()));
+
+    h.env.ledger().set_timestamp(1_000);
+    // 5% deposit fee: 100 received, 5 sent to recipient, 95 held and shares issued.
+    assert_eq!(h.client.deposit(&alice, &100), 190);
+    assert_eq!(h.client.underlying_held(), 95);
+    assert_eq!(h.client.balance(&alice), 190);
+
+    h.env.ledger().set_timestamp(1_000 + 31_536_000);
+    // 1% annual management fee on 190 shares, rounded down to 1 share.
+    // Redeem 100 shares (50 underlying): a 5% fee sends 2 to the recipient.
+    assert_eq!(h.client.redeem(&alice, &100), 48);
+    assert_eq!(h.client.balance(&recipient), 1);
+    assert_eq!(h.client.underlying_held(), 45);
+}
+
+#[test]
+fn test_fee_configuration_enforces_rate_limit_and_recipient() {
+    let h = default_setup();
+    let recipient = Address::generate(&h.env);
+    assert_eq!(
+        h.client.try_set_fees(&501, &0, &0, &Some(recipient)),
+        Err(Ok(VaultError::InvalidFeeRate.into()))
+    );
+    assert_eq!(
+        h.client.try_set_fees(&1, &0, &0, &None),
+        Err(Ok(VaultError::MissingFeeRecipient.into()))
+    );
+    assert_eq!(
+        h.client
+            .try_set_fees(&1, &0, &0, &Some(h.contract_id.clone())),
+        Err(Ok(VaultError::InvalidFeeRecipient.into()))
+    );
 }
 
 // ─── 3. Amount, Balance & Allowance Validations ───────────────────────────────
@@ -629,23 +684,25 @@ fn test_unscreened_when_no_compliance_configured() {
 fn test_muxed_transfer_credits_base_account() {
     let h = default_setup();
     let alice = Address::generate(&h.env);
-    let bob = Address::generate(&h.env);
     h.set_balance(&alice, 1000);
 
-    let muxed = <MuxedAddress as soroban_sdk::testutils::MuxedAddress>::new(bob.clone(), 9999);
+    let muxed = <MuxedAddress as soroban_sdk::testutils::MuxedAddress>::generate(&h.env);
+    let bob = muxed.address();
+    let muxed_id = muxed.id().unwrap();
 
     h.client.transfer(&alice, &muxed, &300);
+    let transfer_events = h.env.events().all();
 
     assert_eq!(h.client.balance(&alice), 700);
     assert_eq!(h.client.balance(&bob), 300);
 
     assert_eq!(
-        h.env.events().all(),
+        transfer_events,
         std::vec![Transfer {
             from: alice,
             to: bob,
             amount: 300,
-            to_muxed_id: Some(9999),
+            to_muxed_id: Some(muxed_id),
         }
         .to_xdr(&h.env, &h.contract_id)],
     );
@@ -798,6 +855,13 @@ fn test_set_oracles_and_nav() {
             oracle: oracle1.clone(),
             asset: asset.clone(),
         },
+        secondary: soroban_sdk::Vec::from_array(
+            &h.env,
+            [OracleSource {
+                oracle: oracle2.clone(),
+                asset,
+            }],
+        ),
         secondary: SecondaryOracle::Some(OracleSource {
             oracle: oracle2.clone(),
             asset,
@@ -816,7 +880,7 @@ fn test_set_oracles_and_nav() {
     h.client.deposit(&alice, &100);
 
     let nav = h.client.nav();
-    assert_eq!(nav.value, 100_0000000);
+    assert_eq!(nav.value, 100);
     assert_eq!(nav.decimals, NAV_DECIMALS);
 
     let nav_per_share = h.client.nav_per_share();
@@ -849,6 +913,13 @@ fn test_oracle_divergence_and_staleness() {
             oracle: oracle1.clone(),
             asset: asset.clone(),
         },
+        secondary: soroban_sdk::Vec::from_array(
+            &h.env,
+            [OracleSource {
+                oracle: oracle2,
+                asset,
+            }],
+        ),
         secondary: SecondaryOracle::Some(OracleSource {
             oracle: oracle2,
             asset,
@@ -870,6 +941,7 @@ fn test_oracle_divergence_and_staleness() {
             oracle: oracle1.clone(),
             asset: Asset::Other(soroban_sdk::symbol_short!("USD")),
         },
+        secondary: soroban_sdk::Vec::new(&h.env),
         secondary: SecondaryOracle::None,
         max_staleness_secs: 60,
         max_divergence_bps: 100,

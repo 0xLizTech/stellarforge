@@ -48,6 +48,9 @@ pub enum SecondaryOracle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleSet {
     pub primary: OracleSource,
+    /// Zero or one additional source. Kept as a Soroban vector because the
+    /// SDK cannot encode `Option` around this nested contract type.
+    pub secondary: soroban_sdk::Vec<OracleSource>,
     pub secondary: SecondaryOracle,
     pub secondary: Option<Address>,
     pub max_staleness_secs: u64,

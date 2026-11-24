@@ -24,6 +24,8 @@ Entry template (include only applicable sections in each release):
 -->
 
 ### Added
+- Admin-configurable deposit and redemption fees (maximum 500 bps), management share accrual, fee events, and accounting tests in the vault (#230, #231).
+- Soroban-compatible representation and validation of the optional secondary vault oracle source; dual-admin authorization regression coverage for the vault (#232, #233).
 
 - `VaultClient` write-path helpers for vault `deposit` and `redeem` (`buildDepositTx`, `deposit`, `buildRedeemTx`, `redeem`, `buildSponsoredDepositTx`, `buildSponsoredRedeemTx`), unit tests covering direct and sponsored modes plus simulation error propagation, and testnet write smoke tests (#245).
 - `GovernanceClient.proposals()` async iterator in `@stellarforge-protocol/sdk`, yielding all governance proposals from `1n` through `proposalCount()` and skipping missing entries (#175).
