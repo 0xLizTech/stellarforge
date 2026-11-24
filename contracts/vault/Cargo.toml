@@ -17,6 +17,4 @@ stellarforge-common = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-rwa-asset = { path = "../rwa-asset", features = ["testutils"] }
 compliance = { path = "../compliance", features = ["testutils"] }
-oracle-adapter = { path = "../oracle-adapter", features = ["testutils"] }

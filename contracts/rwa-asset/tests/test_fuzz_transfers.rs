@@ -40,7 +40,7 @@ fn setup_fuzz_env() -> (Env, Address, Address, RwaAssetContractClient<'static>) 
         symbol: String::from_str(&env, "FUZZ"),
         decimals: 7,
         asset_class: String::from_str(&env, "fuzz"),
-        legal_doc_hash: Bytes::from_array(&env, &[0u8; 32]),
+        legal_doc_hash: Bytes::from_array(&env, &[1u8; 32]),
         max_supply: 1_000_000_000_000,
     };
 

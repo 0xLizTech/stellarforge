@@ -153,6 +153,104 @@ describe("GovernanceClient.proposalCount", () => {
   });
 });
 
+describe("GovernanceClient.proposals (#175)", () => {
+  it("yields all proposals in id order from 1 to proposalCount", async () => {
+    const spy = vi
+      .spyOn(rpc.Server.prototype, "simulateTransaction")
+      .mockResolvedValueOnce(succeeds(u64(3n)))
+      .mockResolvedValueOnce(succeeds(proposalScVal({ id: u64(1n), title: str("First") })))
+      .mockResolvedValueOnce(
+        succeeds(
+          proposalScVal({ id: u64(2n), title: str("Second"), status: enumVariant("Passed") }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        succeeds(
+          proposalScVal({ id: u64(3n), title: str("Third"), status: enumVariant("Rejected") }),
+        ),
+      );
+
+    const collected = [];
+    for await (const proposal of new GovernanceClient(govConfig).proposals()) {
+      collected.push(proposal);
+    }
+
+    expect(collected.map((p) => ({ id: p.id, title: p.title, status: p.status }))).toEqual([
+      { id: 1n, title: "First", status: "Active" },
+      { id: 2n, title: "Second", status: "Passed" },
+      { id: 3n, title: "Third", status: "Rejected" },
+    ]);
+    expect(spy).toHaveBeenCalledTimes(4);
+  });
+
+  it("yields nothing when proposalCount is zero", async () => {
+    const spy = stubSimulation(succeeds(u64(0n)));
+
+    const collected = [];
+    for await (const proposal of new GovernanceClient(govConfig).proposals()) {
+      collected.push(proposal);
+    }
+
+    expect(collected).toEqual([]);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips missing entries without stopping iteration", async () => {
+    const spy = vi
+      .spyOn(rpc.Server.prototype, "simulateTransaction")
+      .mockResolvedValueOnce(succeeds(u64(3n)))
+      .mockResolvedValueOnce(succeeds(proposalScVal({ id: u64(1n), title: str("First") })))
+      .mockResolvedValueOnce(succeeds(none()))
+      .mockResolvedValueOnce(succeeds(proposalScVal({ id: u64(3n), title: str("Third") })));
+
+    const collected = [];
+    for await (const proposal of new GovernanceClient(govConfig).proposals()) {
+      collected.push(proposal);
+    }
+
+    expect(collected.map((p) => p.id)).toEqual([1n, 3n]);
+    expect(spy).toHaveBeenCalledTimes(4);
+  });
+
+  it("stops fetching when the consumer breaks early", async () => {
+    const spy = vi
+      .spyOn(rpc.Server.prototype, "simulateTransaction")
+      .mockResolvedValueOnce(succeeds(u64(5n)))
+      .mockResolvedValueOnce(succeeds(proposalScVal({ id: u64(1n), title: str("First") })));
+
+    const collected = [];
+    for await (const proposal of new GovernanceClient(govConfig).proposals()) {
+      collected.push(proposal);
+      break;
+    }
+
+    expect(collected.map((p) => p.id)).toEqual([1n]);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces simulation errors from proposal_count", async () => {
+    stubSimulation(fails("HostError: Error(Contract, #1)"));
+
+    await expect(async () => {
+      for await (const _ of new GovernanceClient(govConfig).proposals()) {
+        // unreachable
+      }
+    }).rejects.toThrow("Simulation error: HostError: Error(Contract, #1)");
+  });
+
+  it("surfaces simulation errors from get_proposal", async () => {
+    vi.spyOn(rpc.Server.prototype, "simulateTransaction")
+      .mockResolvedValueOnce(succeeds(u64(2n)))
+      .mockResolvedValueOnce(fails("HostError: Error(Contract, #3)"));
+
+    await expect(async () => {
+      for await (const _ of new GovernanceClient(govConfig).proposals()) {
+        // unreachable
+      }
+    }).rejects.toThrow("Simulation error: HostError: Error(Contract, #3)");
+  });
+});
+
 describe("GovernanceClient.pendingAdmin (#125)", () => {
   it("decodes an address when a transfer is pending", async () => {
     stubSimulation(succeeds(addr(HOLDER)));

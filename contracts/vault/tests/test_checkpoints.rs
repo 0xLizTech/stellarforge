@@ -6,6 +6,10 @@ use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, Env, MuxedAddress, String,
 };
+use vault::{
+    Checkpoint, DataKey, Sep40OracleInterface, UnderlyingTokenClient, UnderlyingTokenInterface,
+    VaultConfig, VaultContract, VaultContractClient, VaultError,
+};
 
 #[contract]
 struct MockUnderlying;
