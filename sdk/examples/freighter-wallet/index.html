@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StellarForge SDK — Freighter Wallet Signer Example</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+      body {
+        max-width: 720px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        line-height: 1.5;
+      }
+      h1 {
+        margin-bottom: 0.25rem;
+      }
+      .subtitle {
+        opacity: 0.75;
+        margin-top: 0;
+      }
+      section {
+        border: 1px solid #8884;
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1rem;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-top: 0.75rem;
+      }
+      input,
+      select,
+      button {
+        font: inherit;
+        padding: 0.45rem 0.65rem;
+        margin-top: 0.25rem;
+      }
+      input,
+      select {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      button {
+        margin-top: 0.75rem;
+        cursor: pointer;
+      }
+      pre {
+        background: #8882;
+        padding: 0.75rem;
+        border-radius: 6px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .ok {
+        color: #16a34a;
+        font-weight: 600;
+      }
+      .warn {
+        color: #dc2626;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>StellarForge Freighter Signer Example</h1>
+    <p class="subtitle">
+      Connects Freighter, checks the network passphrase, and signs an
+      <code>rwa-asset</code> transfer with <code>FreighterSigner</code>.
+    </p>
+
+    <section>
+      <h2>1. Network &amp; Wallet</h2>
+      <label for="network">Target Network</label>
+      <select id="network">
+        <option value="testnet" selected>
+          Testnet (Test SDF Network ; September 2015)
+        </option>
+        <option value="mainnet">
+          Mainnet (Public Global Stellar Network ; September 2015)
+        </option>
+      </select>
+
+      <label for="rpcUrl">Soroban RPC URL</label>
+      <input
+        id="rpcUrl"
+        type="url"
+        value="https://soroban-testnet.stellar.org"
+      />
+
+      <button id="connectBtn" type="button">Connect Freighter</button>
+      <pre id="walletStatus">Not connected.</pre>
+    </section>
+
+    <section>
+      <h2>2. Transfer RWA Tokens</h2>
+      <label for="contractId">RWA Asset Contract ID (<code>C...</code>)</label>
+      <input id="contractId" type="text" placeholder="C..." />
+
+      <label for="recipient">Recipient Address (<code>G...</code>)</label>
+      <input id="recipient" type="text" placeholder="G..." />
+
+      <label for="amount">Amount (human-readable, e.g. <code>10.5</code>)</label>
+      <input id="amount" type="text" value="1" />
+
+      <button id="transferBtn" type="button" disabled>
+        Sign &amp; Submit Transfer
+      </button>
+      <pre id="txStatus">Connect Freighter first.</pre>
+    </section>
+
+    <script type="module">
+      import freighterApi from "https://esm.sh/@stellar/freighter-api@4";
+      import {
+        FreighterSigner,
+        MAINNET_CONFIG,
+        RwaAssetClient,
+        TESTNET_CONFIG,
+        toStroops,
+      } from "https://esm.sh/@stellarforge-protocol/sdk@0.3.0";
+
+      const networkSelect = document.getElementById("network");
+      const rpcUrlInput = document.getElementById("rpcUrl");
+      const connectBtn = document.getElementById("connectBtn");
+      const walletStatus = document.getElementById("walletStatus");
+      const contractIdInput = document.getElementById("contractId");
+      const recipientInput = document.getElementById("recipient");
+      const amountInput = document.getElementById("amount");
+      const transferBtn = document.getElementById("transferBtn");
+      const txStatus = document.getElementById("txStatus");
+
+      let connectedAddress = null;
+
+      function getSelectedNetworkConfig() {
+        const rpcUrl = rpcUrlInput.value.trim();
+        if (networkSelect.value === "mainnet") {
+          return { ...MAINNET_CONFIG, rpcUrl };
+        }
+        return { ...TESTNET_CONFIG, rpcUrl };
+      }
+
+      networkSelect.addEventListener("change", () => {
+        if (networkSelect.value === "testnet") {
+          rpcUrlInput.value = TESTNET_CONFIG.rpcUrl;
+        } else {
+          rpcUrlInput.value = "";
+          rpcUrlInput.placeholder = "https://your-mainnet-rpc-provider.example";
+        }
+      });
+
+      connectBtn.addEventListener("click", async () => {
+        walletStatus.textContent = "Checking Freighter...";
+        try {
+          const { isConnected, error: connErr } = await freighterApi.isConnected();
+          if (connErr || !isConnected) {
+            throw new Error(
+              connErr || "Freighter extension not detected. Install Freighter and reload.",
+            );
+          }
+
+          const { address, error: accessErr } = await freighterApi.requestAccess();
+          if (accessErr || !address) {
+            throw new Error(accessErr || "Freighter did not grant account access.");
+          }
+
+          const details = await freighterApi.getNetworkDetails();
+          if (details.error) {
+            throw new Error(details.error);
+          }
+
+          const expected = getSelectedNetworkConfig().networkPassphrase;
+          const matches = details.networkPassphrase === expected;
+
+          connectedAddress = address;
+          transferBtn.disabled = !matches;
+
+          walletStatus.innerHTML = [
+            `Public Key: ${address}`,
+            `Freighter Network: ${details.network}`,
+            `Freighter Passphrase: ${details.networkPassphrase}`,
+            `Expected Passphrase:  ${expected}`,
+            matches
+              ? `<span class="ok">Passphrase matches. Ready to sign.</span>`
+              : `<span class="warn">Passphrase mismatch! Switch Freighter to match the target network, then reconnect.</span>`,
+          ].join("\n");
+        } catch (err) {
+          connectedAddress = null;
+          transferBtn.disabled = true;
+          walletStatus.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      });
+
+      transferBtn.addEventListener("click", async () => {
+        if (!connectedAddress) {
+          txStatus.textContent = "Connect Freighter first.";
+          return;
+        }
+        const contractId = contractIdInput.value.trim();
+        const recipient = recipientInput.value.trim();
+        const amountText = amountInput.value.trim();
+        const networkConfig = getSelectedNetworkConfig();
+
+        if (!contractId || !recipient || !amountText || !networkConfig.rpcUrl) {
+          txStatus.textContent = "Fill in RPC URL, Contract ID, Recipient, and Amount.";
+          return;
+        }
+
+        txStatus.textContent = "Simulating and requesting Freighter signature...";
+        try {
+          const signer = new FreighterSigner(connectedAddress, (xdr, options) =>
+            freighterApi.signTransaction(xdr, options),
+          );
+
+          const client = new RwaAssetClient({
+            ...networkConfig,
+            contracts: { rwaAsset: contractId },
+            signer,
+          });
+
+          const meta = await client.metadata();
+          const stroops = toStroops(amountText, meta.decimals);
+          const result = await client.transfer(connectedAddress, recipient, stroops);
+
+          txStatus.textContent = [
+            "Transfer confirmed!",
+            `Hash:   ${result.hash}`,
+            `Ledger: ${result.ledger}`,
+          ].join("\n");
+        } catch (err) {
+          txStatus.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      });
+    </script>
+  </body>
+</html>

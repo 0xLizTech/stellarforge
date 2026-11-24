@@ -209,28 +209,27 @@ export function checkInvocationTree(
 /**
  * Formats a SorobanAuthorizedInvocation into a human-readable string.
  */
+function describeFunction(fn: xdr.SorobanAuthorizedFunction): string {
+  if (fn.type !== "sorobanAuthorizedFunctionTypeContractFn") return fn.type;
+
+  const contractFn = fn.contractFn;
+  const contractId = Address.fromScAddress(contractFn.contractAddress).toString();
+  const fnName = contractFn.functionName.toString();
+  const args = contractFn.args.map((arg) => {
+    try {
+      const native = scValToNative(arg);
+      if (typeof native === "bigint") return `${native.toString()}n`;
+      return JSON.stringify(native);
+    } catch {
+      return arg.toXdr("base64");
+    }
+  });
+  return `${contractId}.${fnName}(${args.join(", ")})`;
+}
+
 function describeInvocation(inv: xdr.SorobanAuthorizedInvocation, prefix = "", isLast = true): string[] {
   const lines: string[] = [];
-  const fn = inv.function;
-  let callDesc = "unknown";
-
-  if (fn.type === "sorobanAuthorizedFunctionTypeContractFn") {
-    const contractFn = fn.contractFn;
-    const contractId = Address.fromScAddress(contractFn.contractAddress).toString();
-    const fnName = contractFn.functionName.toString();
-    const args = contractFn.args.map((arg) => {
-      try {
-        const native = scValToNative(arg);
-        if (typeof native === "bigint") return `${native.toString()}n`;
-        return JSON.stringify(native);
-      } catch {
-        return arg.toXdr("base64");
-      }
-    });
-    callDesc = `${contractId}.${fnName}(${args.join(", ")})`;
-  } else {
-    callDesc = fn.type;
-  }
+  const callDesc = describeFunction(inv.function);
 
   const branch = isLast ? "└── " : "├── ";
   lines.push(`${prefix}${branch}${callDesc}`);
@@ -259,26 +258,7 @@ export function describeAuthTree(entry: xdr.SorobanAuthorizationEntry): string {
   const lines: string[] = [`Authorizer: ${authorizer}`];
 
   const rootInv = entry.rootInvocation;
-  const fn = rootInv.function;
-  let rootDesc = "unknown";
-
-  if (fn.type === "sorobanAuthorizedFunctionTypeContractFn") {
-    const contractFn = fn.contractFn;
-    const contractId = Address.fromScAddress(contractFn.contractAddress).toString();
-    const fnName = contractFn.functionName.toString();
-    const args = contractFn.args.map((arg) => {
-      try {
-        const native = scValToNative(arg);
-        if (typeof native === "bigint") return `${native.toString()}n`;
-        return JSON.stringify(native);
-      } catch {
-        return arg.toXdr("base64");
-      }
-    });
-    rootDesc = `${contractId}.${fnName}(${args.join(", ")})`;
-  } else {
-    rootDesc = fn.type;
-  }
+  const rootDesc = describeFunction(rootInv.function);
 
   lines.push(`Root: ${rootDesc}`);
 
@@ -317,6 +297,7 @@ export function checkSignedAuthEntry(
   } catch (err: unknown) {
     throw new Error(
       `Authorization entry ${index} authorizes a different invocation than the one built: ${(err as Error).message}`,
+      { cause: err },
     );
   }
 
