@@ -18,6 +18,7 @@
 export class TransactionExpiredError extends Error {
   readonly hash: string;
 
+  /** Creates the expired-transaction error for a submitted transaction hash. */
   constructor(hash: string) {
     super(
       `Transaction ${hash} expired without being included in a ledger. ` +
@@ -39,6 +40,7 @@ export class TransactionExpiredError extends Error {
 export class TransactionOutcomeUnknownError extends Error {
   readonly hash: string;
 
+  /** Creates the unresolved-outcome error for a submitted transaction hash. */
   constructor(hash: string) {
     super(
       `Transaction ${hash} was accepted but had not settled when polling ended, ` +
@@ -55,7 +57,7 @@ export class TransactionOutcomeUnknownError extends Error {
  */
 export class InvalidAddressError extends Error {
   readonly address: string;
-  readonly parameterName?: string;
+  readonly parameterName?: string | undefined;
 
   constructor(address: string, parameterName?: string) {
     super(
@@ -63,6 +65,6 @@ export class InvalidAddressError extends Error {
     );
     this.name = "InvalidAddressError";
     this.address = address;
-    this.parameterName = parameterName;
+    if (parameterName !== undefined) this.parameterName = parameterName;
   }
 }

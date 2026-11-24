@@ -149,6 +149,7 @@ export function tickOf(timestamp: bigint, resolution: number): bigint {
 export class OracleOverflowError extends Error {
   readonly code = OracleErrorCode.Overflow;
 
+  /** Creates the overflow error, optionally with a more specific message. */
   constructor(message = "Oracle deviation check overflowed i128") {
     super(message);
     this.name = "OracleOverflowError";
@@ -162,6 +163,7 @@ export class OracleOverflowError extends Error {
 export class OracleInvalidDeviationError extends Error {
   readonly code = OracleErrorCode.InvalidDeviation;
 
+  /** Creates the invalid-deviation error, optionally with a specific message. */
   constructor(message = "maxDeviationBps must be at least 1") {
     super(message);
     this.name = "OracleInvalidDeviationError";
@@ -267,6 +269,7 @@ export function toDecimalString(value: bigint, decimals: number): string {
  * admin management functions.
  */
 export class OracleAdapterClient extends ContractClient {
+  /** Creates an oracle adapter client for the configured deployment. */
   constructor(config: StellarForgeConfig) {
     super(config, config.contracts.oracleAdapter, "oracleAdapter");
   }
@@ -574,6 +577,7 @@ export class OracleAdapterClient extends ContractClient {
     return this.buildWriteTx(admin, "set_paused", [nativeToScVal(paused)]);
   }
 
+  /** Enables or disables the oracle contract's emergency pause. */
   async setPaused(admin: string, paused: boolean): Promise<TxResult> {
     return this.submit(await this.buildSetPausedTx(admin, paused), admin);
   }

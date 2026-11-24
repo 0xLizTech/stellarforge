@@ -2,6 +2,7 @@ import type { Transaction } from "@stellar/stellar-sdk";
 
 // ─── Core Protocol Types ──────────────────────────────────────────────────────
 
+/** Categories supported by StellarForge for real-world assets. */
 export type AssetClass =
   | "real_estate"
   | "commodity"
@@ -11,6 +12,7 @@ export type AssetClass =
   | "art"
   | "other";
 
+/** Asset identity, decimal precision, legal document hash, and supply cap. */
 export interface AssetMetadata {
   /** Human-readable name of the real-world asset */
   name: string;
@@ -26,6 +28,7 @@ export interface AssetMetadata {
   maxSupply: bigint;
 }
 
+/** Subject verification level and its jurisdiction and expiry. */
 export interface KycRecord {
   /** ISO-3166-1 alpha-2 country code */
   jurisdiction: string;
@@ -35,6 +38,7 @@ export interface KycRecord {
   expiresAt: number;
 }
 
+/** RPC endpoint and Stellar network passphrase for a client. */
 export interface NetworkConfig {
   /** "mainnet" | "testnet" | "futurenet" | custom RPC URL */
   network: "mainnet" | "testnet" | "futurenet" | (string & {});
@@ -44,6 +48,7 @@ export interface NetworkConfig {
   networkPassphrase: string;
 }
 
+/** Optional deployed contract IDs used by the client constructors. */
 export interface ContractAddresses {
   rwaAsset?: string;
   registry?: string;
@@ -53,6 +58,16 @@ export interface ContractAddresses {
   oracleAdapter?: string;
 }
 
+export interface TelemetryData {
+  method: string;
+  durationMs: number;
+  success: boolean;
+  error?: unknown;
+}
+
+export type TelemetryHook = (data: TelemetryData) => void;
+
+/** Complete shared configuration for StellarForge contract clients. */
 /** Signs a prepared transaction for the account identified by `publicKey`. */
 export interface Signer {
   /** The Stellar public key this signer controls. */
@@ -67,6 +82,10 @@ export interface StellarForgeConfig extends NetworkConfig {
   signer?: Signer;
   /** @deprecated Use `signer` with a {@link Signer} adapter instead. Server-side only. */
   signerSecret?: string;
+  /** Pluggable logger instance (defaults to SilentLogger) */
+  logger?: import("./logger.js").Logger;
+  /** Optional telemetry hook to measure client call latency and errors */
+  onCall?: TelemetryHook;
 }
 
 /** Outcome of a write transaction that was submitted and confirmed. */
@@ -96,8 +115,10 @@ export interface AssetEntry {
 
 // ─── Governance ───────────────────────────────────────────────────────────────
 
+/** Current lifecycle status of a governance proposal. */
 export type ProposalStatus = "Active" | "Passed" | "Rejected" | "Executed";
 
+/** Decoded proposal state and vote tally. */
 export interface Proposal {
   /** Contract-assigned id, counting from 1. */
   id: bigint;
@@ -119,6 +140,7 @@ export interface ProposalCreated extends TxResult {
 
 // ─── Well-known network presets ───────────────────────────────────────────────
 
+/** Default Soroban RPC URL and network passphrase for testnet clients. */
 export const TESTNET_CONFIG: Omit<NetworkConfig, "network"> & { network: "testnet" } = {
   network: "testnet",
   rpcUrl: "https://soroban-testnet.stellar.org",

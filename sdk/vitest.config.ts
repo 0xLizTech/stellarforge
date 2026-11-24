@@ -5,5 +5,12 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     exclude: ["tests/smoke.*.ts", "node_modules", "dist"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "lcov"],
+      include: ["src/**/*.ts"],
+      exclude: ["src/index.ts"],
+      thresholds: { lines: 85 },
+    },
   },
 });

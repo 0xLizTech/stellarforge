@@ -292,6 +292,7 @@ To upgrade `soroban-sdk` across the workspace:
    make build
    node scripts/check-wasm-size.cjs
    node scripts/generate-oracle-parity-table.cjs
+   node scripts/generate-vault-parity-table.cjs
    make test
    make sdk-test
    ```

@@ -34,22 +34,63 @@ function kycRecordToScVal(record: KycRecord): xdr.ScVal {
   ]);
 }
 
+// ─── SEP-41 Interface ────────────────────────────────────────────────────────
+
+/**
+ * Generic interface for Stellar Soroban tokens complying with SEP-41 (Token Interface).
+ */
+export interface Sep41TokenClient {
+  /** Balance of ownerAddress in base units (stroops). */
+  balance(ownerAddress: string): Promise<bigint>;
+  /** Remaining allowance granted to spender by owner. */
+  allowance(ownerAddress: string, spenderAddress: string): Promise<bigint>;
+  /** Set allowance for spender live through liveUntilLedger. */
+  approve(
+    owner: string,
+    spender: string,
+    amount: bigint,
+    liveUntilLedger: number,
+  ): Promise<TxResult>;
+  /** Transfer amount from from to to (accepts standard and MuxedAccount addresses). */
+  transfer(from: string, to: string, amount: bigint): Promise<TxResult>;
+  /** Transfer amount from from to to drawing on spender's allowance. */
+  transferFrom(
+    spender: string,
+    from: string,
+    to: string,
+    amount: bigint,
+  ): Promise<TxResult>;
+  /** Burn amount from from's balance. */
+  burn(from: string, amount: bigint): Promise<TxResult>;
+  /** Burn amount from from drawing on spender's allowance. */
+  burnFrom(spender: string, from: string, amount: bigint): Promise<TxResult>;
+  /** Decimals used by this token (0 to 18). */
+  decimals(): Promise<number>;
+  /** Human-readable asset name. */
+  name(): Promise<string>;
+  /** Asset ticker symbol. */
+  symbol(): Promise<string>;
+}
+
 // ─── RwaAssetClient ───────────────────────────────────────────────────────────
 
 /**
  * Minimal client for interacting with a deployed RwaAsset Soroban contract.
+ * Conforms to the standard SEP-41 Token Interface.
  *
  * For production use, transactions should be signed by a wallet (Freighter,
  * hardware wallet, etc.) rather than a raw secret. This client accepts an
  * optional `signerSecret` for automated/server contexts only.
  */
-export class RwaAssetClient extends ContractClient {
+export class RwaAssetClient extends ContractClient implements Sep41TokenClient {
+  /** Creates a token client for the configured asset deployment. */
   constructor(config: StellarForgeConfig) {
     super(config, config.contracts.rwaAsset, "rwaAsset");
   }
 
   // ── Read-only queries ──────────────────────────────────────────────────────
 
+  /** Returns the token balance held by `ownerAddress`. */
   async balance(ownerAddress: string): Promise<bigint> {
     const result = await this.simulateReadOnly("balance", [
       nativeToScVal(ownerAddress, { type: "address" }),
@@ -57,11 +98,31 @@ export class RwaAssetClient extends ContractClient {
     return scValToNative(result) as bigint;
   }
 
+  /** Returns the current circulating token supply. */
   async totalSupply(): Promise<bigint> {
     const result = await this.simulateReadOnly("total_supply", []);
     return scValToNative(result) as bigint;
   }
 
+  /** The asset's decimal places (SEP-41). */
+  async decimals(): Promise<number> {
+    const result = await this.simulateReadOnly("decimals", []);
+    return scValToNative(result) as number;
+  }
+
+  /** The asset's display name (SEP-41). */
+  async name(): Promise<string> {
+    const result = await this.simulateReadOnly("name", []);
+    return scValToNative(result) as string;
+  }
+
+  /** The asset's ticker symbol (SEP-41). */
+  async symbol(): Promise<string> {
+    const result = await this.simulateReadOnly("symbol", []);
+    return scValToNative(result) as string;
+  }
+
+  /** Returns the metadata stored by the asset contract. */
   async metadata(): Promise<AssetMetadata> {
     const result = await this.simulateReadOnly("metadata", []);
     const native = scValToNative(result) as Record<string, unknown>;
@@ -75,11 +136,13 @@ export class RwaAssetClient extends ContractClient {
     };
   }
 
+  /** Reports whether the asset contract is paused. */
   async isPaused(): Promise<boolean> {
     const result = await this.simulateReadOnly("paused", []);
     return scValToNative(result) as boolean;
   }
 
+  /** Reports whether `address` has permission to mint. */
   async isIssuer(address: string): Promise<boolean> {
     const result = await this.simulateReadOnly("is_issuer", [
       nativeToScVal(address, { type: "address" }),
@@ -87,6 +150,7 @@ export class RwaAssetClient extends ContractClient {
     return scValToNative(result) as boolean;
   }
 
+  /** Returns the live allowance from `ownerAddress` to `spenderAddress`. */
   async allowance(ownerAddress: string, spenderAddress: string): Promise<bigint> {
     const result = await this.simulateReadOnly("allowance", [
       nativeToScVal(ownerAddress, { type: "address" }),
@@ -146,6 +210,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Mints `amount` to `to`, authorized and paid for by `issuer`. */
   async mint(issuer: string, to: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildMintTx(issuer, to, amount), issuer);
   }
@@ -158,6 +223,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Burns `amount` from `from`'s balance. */
   async burn(from: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildBurnTx(from, amount), from);
   }
@@ -171,11 +237,19 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Burns from `from` using the allowance authorized by `spender`. */
   async burnFrom(spender: string, from: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildBurnFromTx(spender, from, amount), spender);
   }
 
-  /** Transfer `amount` from `from` to `to`. */
+  /**
+   * Transfer `amount` from `from` to `to`.
+   *
+   * Accepts standard Stellar addresses (G-address or contract C-address) as well as
+   * multiplexed addresses (M-address, SEP-23). When transferring to an M-address,
+   * funds are credited to the underlying G-address and the 64-bit muxed ID travels
+   * in the contract event for recipient routing.
+   */
   async buildTransferTx(from: string, to: string, amount: bigint): Promise<Transaction> {
     return this.buildWriteTx(from, "transfer", [
       nativeToScVal(from, { type: "address" }),
@@ -184,6 +258,10 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /**
+   * Transfer `amount` from `from` to `to`.
+   * Accepts standard addresses (G... or C...) and multiplexed addresses (M..., SEP-23).
+   */
   async transfer(from: string, to: string, amount: bigint): Promise<TxResult> {
     return this.submit(await this.buildTransferTx(from, to, amount), from);
   }
@@ -208,6 +286,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Sets an allowance that remains valid through `liveUntilLedger`. */
   async approve(
     owner: string,
     spender: string,
@@ -232,6 +311,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Transfers tokens using `spender`'s allowance from `from`. */
   async transferFrom(
     spender: string,
     from: string,
@@ -289,7 +369,10 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
-  /** `transfer`, authorized by `from` and paid for by `feeSource`. */
+  /**
+   * `transfer`, authorized by `from` and paid for by `feeSource`.
+   * Accepts standard addresses (G... or C...) and multiplexed addresses (M..., SEP-23) for `to`.
+   */
   async buildSponsoredTransferTx(
     from: string,
     to: string,
@@ -350,6 +433,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Grants or revokes the issuer role for `issuer`. */
   async setIssuer(admin: string, issuer: string, approved: boolean): Promise<TxResult> {
     return this.submit(await this.buildSetIssuerTx(admin, issuer, approved), admin);
   }
@@ -362,6 +446,7 @@ export class RwaAssetClient extends ContractClient {
     return this.buildWriteTx(admin, "set_paused", [nativeToScVal(paused)]);
   }
 
+  /** Enables or disables the asset's emergency pause. */
   async setPaused(admin: string, paused: boolean): Promise<TxResult> {
     return this.submit(await this.buildSetPausedTx(admin, paused), admin);
   }
@@ -378,6 +463,7 @@ export class RwaAssetClient extends ContractClient {
     return this.buildWriteTx(admin, "update_metadata", [assetMetadataToScVal(metadata)]);
   }
 
+  /** Updates mutable asset metadata, subject to contract validation. */
   async updateMetadata(admin: string, metadata: AssetMetadata): Promise<TxResult> {
     return this.submit(await this.buildUpdateMetadataTx(admin, metadata), admin);
   }
@@ -401,6 +487,7 @@ export class RwaAssetClient extends ContractClient {
     ]);
   }
 
+  /** Configures transfer screening through the compliance contract. */
   async setCompliance(
     admin: string,
     compliance: string | null,
@@ -421,6 +508,7 @@ export class RwaAssetClient extends ContractClient {
  * `buildProposeAdminTx` / `buildAcceptAdminTx` pair.
  */
 export class ComplianceClient extends ContractClient {
+  /** Creates a compliance client for the configured deployment. */
   constructor(config: StellarForgeConfig) {
     super(config, config.contracts.compliance, "compliance");
   }
@@ -485,6 +573,7 @@ export class ComplianceClient extends ContractClient {
     ]);
   }
 
+  /** Stores or replaces the compliance record for `subject`. */
   async setKyc(admin: string, subject: string, record: KycRecord): Promise<TxResult> {
     return this.submit(await this.buildSetKycTx(admin, subject, record), admin);
   }
@@ -497,6 +586,7 @@ export class ComplianceClient extends ContractClient {
     return this.buildWriteTx(admin, "revoke_kyc", [nativeToScVal(subject, { type: "address" })]);
   }
 
+  /** Removes the stored compliance record for `subject`. */
   async revokeKyc(admin: string, subject: string): Promise<TxResult> {
     return this.submit(await this.buildRevokeKycTx(admin, subject), admin);
   }
