@@ -4,13 +4,14 @@ import { Address, nativeToScVal, Networks, rpc, Transaction, xdr } from "@stella
 import { RwaAssetClient, ComplianceClient } from "../src/client.js";
 import { TransactionExpiredError, TransactionOutcomeUnknownError } from "../src/errors.js";
 import { MAINNET_CONFIG, TESTNET_CONFIG } from "../src/types.js";
-import type { AssetMetadata, KycRecord, StellarForgeConfig } from "../src/types.js";
+import type { AssetMetadata, KycRecord, Signer, StellarForgeConfig } from "../src/types.js";
 import {
   RWA_ID,
   COMPLIANCE_ID,
   HOLDER,
   SPENDER,
   SIGNER as ISSUER,
+  SIGNER_KP as ISSUER_KP,
   SIGNER_SECRET as ISSUER_SECRET,
   OTHER_KP,
   SUBMITTED_HASH,
@@ -455,6 +456,23 @@ describe("RwaAssetClient write submission", () => {
 
     const submitted = stubs.send.mock.calls[0]?.[0] as Transaction;
     expect(submitted.signatures.length).toBeGreaterThan(0);
+  });
+
+  it("submits writes through a configured custom signer", async () => {
+    const stubs = stubWritePath();
+    const signer: Signer = {
+      publicKey: ISSUER,
+      async signTransaction(transaction) {
+        transaction.sign(ISSUER_KP);
+        return transaction;
+      },
+    };
+
+    const result = await new RwaAssetClient({ ...rwaConfig, signer }).mint(ISSUER, HOLDER, 500n);
+
+    expect(result).toEqual({ hash: SUBMITTED_HASH, ledger: 42 });
+    expect(stubs.send).toHaveBeenCalledOnce();
+    expect((stubs.send.mock.calls[0]?.[0] as Transaction).signatures).toHaveLength(1);
   });
 
   it("refuses to submit without a signerSecret", async () => {

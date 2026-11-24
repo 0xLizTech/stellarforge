@@ -187,4 +187,12 @@ describe("truncateAddress", () => {
   it("does not truncate short strings", () => {
     expect(truncateAddress("GABC...DEFG")).toBe("GABC...DEFG");
   });
+
+  describe("mutation edge cases", () => {
+    it("handles zero and extreme stroop values deterministically", () => {
+      expect(toStroops("0", 7)).toBe(0n);
+      expect(fromStroops(0n, 7)).toBe("0");
+      expect(toStroops("0.0000001", 7)).toBe(1n);
+    });
+  });
 });

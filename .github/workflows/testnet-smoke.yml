@@ -12,6 +12,8 @@ name: Testnet Smoke
 # every week before it has ever passed is just noise.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
 
 # No secret is needed. Testnet accounts are funded by friendbot, so the run
 # generates a throwaway keypair and discards it with the runner.
@@ -82,8 +84,8 @@ jobs:
 
       - name: Read the deployed contract ids
         run: |
-          for key in rwaAsset compliance registry governance; do
-            id=$(jq -r ".contracts.$key" deployed-contracts.json)
+          for key in rwaAsset compliance registry governance oracleAdapter; do
+            id=$(jq -r ".contracts.$key | if type==\"object\" then .id else . end" deployed-contracts.json)
             echo "${key}=${id}" >> "$GITHUB_ENV"
             echo "$key: $id"
           done
@@ -116,6 +118,7 @@ jobs:
         env:
           SMOKE_RWA_ASSET_ID: ${{ env.rwaAsset }}
           SMOKE_COMPLIANCE_ID: ${{ env.compliance }}
+          SMOKE_ORACLE_ID: ${{ env.oracleAdapter }}
           SMOKE_HOLDER_ADDRESS: ${{ env.DEPLOYER_ADDRESS }}
         run: npm run test:smoke
 
@@ -143,6 +146,7 @@ jobs:
           SMOKE_WRITE_RWA_ASSET_ID: ${{ env.rwaAsset }}
           SMOKE_WRITE_RECIPIENT_ADDRESS: ${{ env.RECIPIENT_ADDRESS }}
           SMOKE_WRITE_COMPLIANCE_ID: ${{ env.compliance }}
+          SMOKE_WRITE_ORACLE_ID: ${{ env.oracleAdapter }}
           # Configure the fresh deployment through the SDK's operator methods.
           SMOKE_WRITE_SETUP: "true"
           SMOKE_WRITE_SCREENED: "true"
@@ -155,6 +159,39 @@ jobs:
           echo "::add-mask::$SMOKE_WRITE_SPENDER_SECRET"
           export SMOKE_WRITE_ISSUER_SECRET SMOKE_WRITE_SPENDER_SECRET
           npm run test:smoke:write
+
+      # The same throwaway deployment now exercises the published usage
+      # examples end to end, including proposal creation followed by a vote.
+      - name: Run SDK examples against testnet
+        working-directory: sdk
+        env:
+          RWA_ASSET_CONTRACT_ID: ${{ env.rwaAsset }}
+          COMPLIANCE_CONTRACT_ID: ${{ env.compliance }}
+          GOVERNANCE_CONTRACT_ID: ${{ env.governance }}
+          MINT_TO_ADDRESS: ${{ env.DEPLOYER_ADDRESS }}
+          MINT_AMOUNT: "1"
+          TRANSFER_TO_ADDRESS: ${{ env.RECIPIENT_ADDRESS }}
+          TRANSFER_AMOUNT: "1"
+          KYC_SUBJECT_ADDRESS: ${{ env.RECIPIENT_ADDRESS }}
+          KYC_LEVEL: "3"
+          KYC_JURISDICTION: "US"
+          PROPOSAL_TITLE: "SDK example smoke proposal"
+          PROPOSAL_DESCRIPTION_SHA256: "0000000000000000000000000000000000000000000000000000000000000000"
+          PROPOSAL_VOTING_PERIOD_LEDGERS: "100000"
+          VOTE_SUPPORT: "true"
+        run: |
+          SIGNER_SECRET=$(stellar keys secret "$DEPLOYER")
+          echo "::add-mask::$SIGNER_SECRET"
+          export SIGNER_SECRET
+          npx tsx examples/mint.ts
+          npx tsx examples/transfer.ts
+          npx tsx examples/kyc.ts
+          proposal_output=$(npx tsx examples/propose.ts)
+          printf '%s\n' "$proposal_output"
+          PROPOSAL_ID=$(printf '%s\n' "$proposal_output" | sed -n 's/^Proposal //p')
+          test -n "$PROPOSAL_ID"
+          export PROPOSAL_ID
+          npx tsx examples/vote.ts
 
       # The contract ids outlive the run and are useful for reproducing a
       # failure by hand against the same deployment.

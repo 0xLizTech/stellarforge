@@ -7,13 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!--
+Entry template (include only applicable sections in each release):
 ### Added
+- <new capability> (#issue)
+### Changed
+- <behavior change> (#issue)
+### Deprecated
+- <new deprecation> (#issue)
+### Removed
+- <removed capability> (#issue)
+### Fixed
+- <bug fix> (#issue)
+### Security
+- <security change> (#issue)
+-->
+
+- Added SDK migration guide template and `sdk/docs/migrations/0.2-to-0.3.md` for breaking SDK releases (#199).
+- `getEventsPaginated` helper in SDK utils for paginating through RPC events (#173).
 
 - `tooling`: added `@stellarforge-protocol/indexer-graphql` GraphQL API over the indexer exposing balances, holders, and proposals with pagination support (#206).
 - `sdk`: corrected `sdk/README.md` example snippet referencing `contracts.vault` against current `VaultConfig` API (#208).
 - `vault`: enforced maximum fractional share supply cap rejection (`ExceedsMaxSupply`), added exact boundary test verifying deposit at cap passes while cap + 1 fails (#222).
 - `vault`: documented and verified pro-rata underlying return and reconciliation between share supply and holdings on `redeem` (#219).
 
+- `contracts/vault`: verified SEP-41 share token interface entry points (`balance`, `transfer`, `approve`, `transfer_from`, `decimals`, `name`, `symbol`), added `test_sep41_share_token_events_and_allowance_flow` test, and confirmed protocol invariant on share redemption as sole exit mechanism (#217).
+- `contracts/vault`: constructor authorization validation and configuration coverage ensuring admin authentication and share cap validation (#216).
+- `docs/guides/tokenized-real-estate.md` and runnable companion script `sdk/examples/tokenized-real-estate.ts` (#210), demonstrating end-to-end tokenized commercial real estate issuance with KYC compliance screening and registry listing.
+- `testnet-smoke` workflow: added nightly cron schedule (`0 2 * * *`) and live read and write smoke test coverage for `OracleAdapterClient` against testnet deployments (#207).
+
+- Vault deposits now screen the depositor through the configured compliance contract; the vault documents and tests its pause policy and NAV-per-share calculation, including zero supply. SDK Changesets now open a Version Packages PR for queued releases (#229, #228, #227, #197).
+- The SDK includes runnable testnet examples for mint, transfer, KYC, governance proposals and voting; CI typechecks them and exercises package import/read behavior under Deno 2 and Bun 1 (#188, #185).
+- The SDK's public TypeScript API now requires TSDoc comments in lint, and the NAV reporter's `--json` mode has CLI tests guaranteeing machine-readable stdout with diagnostics on stderr (#187, #190).
+
+- Stage 3 SDK maturity enhancements (#181, #182, #183, #184):
+  - ESM and CommonJS import and type resolution tests from packed tarball (`scripts/test-package-imports.mjs`, `tests/package-import.test.ts`), wired into `.github/workflows/sdk-ci.yml` and `.github/workflows/publish-sdk.yml` (#181).
+  - Bundle size tracking via `size-limit` with configured budgets and regression checks (`tests/bundle-size.test.ts`, `npm run size`), integrated into the SDK build CI workflow (#182).
+  - Tree-shakeable SDK packaging with `"sideEffects": false`, granular subpath exports (`./client`, `./governance`, `./registry`, `./vault`, `./oracle`, `./sponsored`, `./errors`, `./types`, `./utils`, `./base`), multi-entrypoint `tsup` build, and esbuild bundler verification (`tests/treeshaking.test.ts`) (#183).
+  - Browser compatibility test suite (`tests/browser-compatibility.test.ts`) using `happy-dom`, verifying all client instantiations and pure utilities in browser runtimes with zero silent polyfills, and browser support documentation in `sdk/README.md` (#184).
+- SDK V8 line coverage with an 85% threshold and Codecov reporting, plus generated bash, zsh, and fish completions and `sforge.config.json` support for the NAV reporter CLI (#194, #192, #191).
+- Adds Rust-generated parity coverage for vault deposit and redemption arithmetic (#196).
+
+### Added
+- Admin-configurable deposit and redemption fees (maximum 500 bps), management share accrual, fee events, and accounting tests in the vault (#230, #231).
+- Soroban-compatible representation and validation of the optional secondary vault oracle source; dual-admin authorization regression coverage for the vault (#232, #233).
+
+- `VaultClient` write-path helpers for vault `deposit` and `redeem` (`buildDepositTx`, `deposit`, `buildRedeemTx`, `redeem`, `buildSponsoredDepositTx`, `buildSponsoredRedeemTx`), unit tests covering direct and sponsored modes plus simulation error propagation, and testnet write smoke tests (#245).
+- `GovernanceClient.proposals()` async iterator in `@stellarforge-protocol/sdk`, yielding all governance proposals from `1n` through `proposalCount()` and skipping missing entries (#175).
+- `VaultClient` in `@stellarforge-protocol/sdk`: completed contract coverage with `checkpointCount`, `supplyCheckpointCount`, `buildTransferAdminTx`/`transferAdmin`, aligned `VaultErrorCode` (1..26) with `contracts/vault/src/error.rs`, added `VaultError.fromCode`, `parseVaultError`, `AdminTransferredEvent`/`FeeEvent` decoding, and unit tests (#244).
+- Vault unit tests for deposit and redeem rounding covering first deposit, tiny and huge amounts, dust shares, overflow boundaries, and multi-holder rounding sequences (#234).
+- A pull-request changelog template and CI check requiring a new `[Unreleased]` entry for code changes (#154).
 - `deny.toml` and a `cargo-deny` job in `.github/workflows/security.yml` (#91), enforcing permissive dependency licenses (`Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `Unicode-3.0`), rejecting copyleft/GPL dependencies, and denying unknown registries and git sources. Findings, assumptions, and residual risks are documented in `docs/SECURITY.md`.
 - `contracts/size-budget.json` (#94) and `scripts/check-wasm-size.cjs` wired into `.github/workflows/contracts-ci.yml` (#93), recording the compiled `.wasm` byte size of all five contracts (`rwa-asset`, `registry`, `compliance`, `governance`, `oracle-adapter`), posting a size delta report on pull requests, and failing CI if any contract exceeds its configured byte budget.
 - `scripts/check-soroban-sdk-version.cjs`, run in `.github/workflows/contracts-ci.yml`, rejecting per-crate `soroban-sdk` version overrides or duplicate `soroban-sdk` lockfile versions, plus the workspace SDK upgrade procedure in `CONTRIBUTING.md` (#95).

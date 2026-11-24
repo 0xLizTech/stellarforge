@@ -62,7 +62,24 @@ If a deployment process terminates unexpectedly, re-running the command derives 
 
 ---
 
-## 4. Bytecode Provenance Verification
+## 4. Emergency Pause and NAV-per-Share Policy
+
+The admin can pause and unpause the vault with `set_paused`. While paused, the
+vault rejects deposits, redemptions, share transfers, and approvals.
+Redemptions remain paused as well: the emergency stop freezes holder operations
+while the admin investigates an incident. Admin configuration and recovery
+operations, including oracle updates and unpausing, remain available. The pause
+does not add an emergency withdrawal path. After resolving the cause, the admin
+may call `set_paused(false)` to resume normal operations. Read-only views,
+including NAV, balances, and pause state, remain available.
+
+`nav_per_share` returns zero when total share supply is zero. Otherwise, it
+calculates NAV per share from total NAV and total supply, applying the share
+decimal scale while keeping the result at the fixed seven-decimal NAV precision.
+
+---
+
+## 5. Bytecode Provenance Verification
 
 Run the verification tool to confirm on-chain contract code against CI build checksums:
 
@@ -87,7 +104,7 @@ The script prints a provenance report:
 
 ---
 
-## 5. Troubleshooting Reference
+## 6. Troubleshooting Reference
 
 ### VaultError Codes (`contracts/vault`)
 

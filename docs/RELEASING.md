@@ -66,6 +66,20 @@ mark steps outside the release scope as inapplicable with a reason.
    to publish if the tag and `sdk/package.json` disagree.
 3. Approve the `npm-publish` deployment when the workflow run asks for it.
 
+## Proposing an SDK release
+
+For each user-facing SDK change, run `npm run changeset` from `sdk/`, select
+`@stellarforge-protocol/sdk` and a semver bump, and commit the generated file in
+`sdk/.changeset/` with the code change. When that change reaches `main`,
+`.github/workflows/changesets.yml` opens or updates a **Version Packages** PR.
+Review and merge it to update the SDK version and changelog. That workflow does
+not publish or create release tags. Publish only through the GitHub Release or
+manual dry-run/publish flow above.
+
+Repository administrators must allow GitHub Actions to create pull requests in
+**Settings → Actions → General → Workflow permissions** for the version PR
+automation to work.
+
 ## Reproducing Contract WASM Byte-for-Byte
 
 To independently verify that release WASM binaries match the audited source repository byte-for-byte across machines:
