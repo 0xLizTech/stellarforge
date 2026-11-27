@@ -53,6 +53,8 @@ Entry template (include only applicable sections in each release):
 
 - Typed contract error mapping in `@stellarforge-protocol/sdk` (`ContractError`, `RwaAssetError`, `ComplianceError`, `RegistryError`, `GovernanceError`, `OracleAdapterError`, `VaultContractError`, and their corresponding `*ErrorCode` enums), automatically mapping Soroban `Error(Contract, #N)` failures to named error classes while preserving the numeric code (#159).
 ### Added
+
+- Add `total_assets` query view to `vault` contract returning total AUM in base asset terms, and exposed via SDK `VaultClient.totalAssets` (#252).
 - Admin-configurable deposit and redemption fees (maximum 500 bps), management share accrual, fee events, and accounting tests in the vault (#230, #231).
 - Soroban-compatible representation and validation of the optional secondary vault oracle source; dual-admin authorization regression coverage for the vault (#232, #233).
 

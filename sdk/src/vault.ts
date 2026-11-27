@@ -758,6 +758,14 @@ export class VaultClient extends ContractClient {
   }
 
   /**
+   * Queries total assets under management (AUM) in base asset terms.
+   */
+  async totalAssets(): Promise<bigint> {
+    const result = await this.simulateReadOnly("total_assets", []);
+    return scValToNative(result) as bigint;
+  }
+
+  /**
    * Queries the latest Net Asset Value per fractional share.
    *
    * @throws NavRefusalError if the oracle valuation is unavailable or refused.
