@@ -13,7 +13,7 @@ exclude = ["contracts/vault/fuzz"]
 resolver = "2"
 
 [workspace.dependencies]
-soroban-sdk = { version = "29.0.1" }
+soroban-sdk = { version = "30.0.0" }
 stellarforge-common = { path = "contracts/common" }
 
 [profile.release]
