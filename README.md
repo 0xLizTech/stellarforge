@@ -414,6 +414,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started. Areas where we especiall
 
 Full details in [ROADMAP.md](ROADMAP.md).
 
+> **SDK snippet accuracy:** All TypeScript examples in this README are compiled against `@stellarforge-protocol/sdk@1.0` in CI. If a snippet fails to compile, please [open an issue](https://github.com/0xLizTech/stellarforge/issues).
+
 ---
 
 ## License
